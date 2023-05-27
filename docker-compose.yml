@@ -1,0 +1,47 @@
+version: "3.9"
+services:
+
+  # namenode-format:
+  #   image: apache/hadoop:3
+  #   volumes:
+  #     - ./dev/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
+  #     - ./dev/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+  #     - ./dev/log4j.properties:/opt/hadoop/etc/hadoop/log4j.properties
+  #     - ./dev/format-namenode.sh:/format-namenode.sh
+  #     - data:/data
+  #   command:
+  #     - hdfs
+  #     - namenode
+  #     - -format
+  #   profiles:
+  #     - format
+
+  hadoop:
+    image: apache/hadoop:3
+    ports:
+      - 9000:9000
+      - 9866:9866
+      # - 9867:9867
+    volumes:
+      - ./dev/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
+      - ./dev/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+      - ./dev/log4j.properties:/opt/hadoop/etc/hadoop/log4j.properties
+      - ./dev/start-hdfs.sh:/start-hdfs.sh
+      - data:/data
+    command:
+      - /start-hdfs.sh
+
+  # datanode:
+  #   image: apache/hadoop:3
+  #   network_mode: host
+  #   volumes:
+  #     - ./dev/core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
+  #     - ./dev/hdfs-site.xml:/opt/hadoop/etc/hadoop/hdfs-site.xml
+  #     - ./dev/log4j.properties:/opt/hadoop/etc/hadoop/log4j.properties
+  #     - data:/data
+  #   command:
+  #     - hdfs
+  #     - datanode
+
+volumes:
+  data:
