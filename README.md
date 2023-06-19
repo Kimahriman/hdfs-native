@@ -25,6 +25,7 @@ Here is a list of currently supported and unsupported but possible future featur
 - [x] NameNode RPC encryption
 - [ ] DataNode RPC encryption
 - [ ] DataNode data transfer encryption
+- [ ] Encryption at rest (KMS support)
 
 ### Other improvements
 - [ ] Better error handling
