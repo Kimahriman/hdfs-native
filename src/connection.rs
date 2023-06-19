@@ -1,81 +1,139 @@
 use std::collections::HashMap;
 use std::default::Default;
 use std::io::prelude::*;
-use std::io::Result;
-use std::io::{BufReader, BufWriter};
-use std::marker::PhantomData;
+use std::io::{BufReader, BufWriter, Error, ErrorKind, Result};
 use std::net::TcpStream;
-use std::result;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::sync::Condvar;
 use std::sync::Mutex;
 use std::thread;
+use std::thread::JoinHandle;
 
 use bytes::Bytes;
 use bytes::BytesMut;
-use prost::DecodeError;
+use log::{debug, warn};
 use prost::Message;
 use uuid::Uuid;
 
+use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
 use crate::proto::{common, hdfs};
-use crate::security::sasl::SaslClient;
+use crate::security::sasl::{AuthMethod, SaslRpcClient};
+use crate::security::user::User;
 
 const PROTOCOL: &'static str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
 const DATA_TRANSFER_VERSION: u16 = 28;
 
-pub trait RpcEngine {
-    fn call<T: Message + Default>(
-        &self,
-        method_name: &str,
-        message: &impl Message,
-    ) -> Result<CallResult<T>>;
+// #[derive(Debug)]
+// struct RemoteError {
+//     error_code: Option<RpcErrorCodeProto>,
+//     error_msg: Option<String>,
+//     exception_class_name: Option<String>,
+// }
+
+// impl From<RpcResponseHeaderProto> for RemoteError {
+//     fn from(value: RpcResponseHeaderProto) -> Self {
+//         RemoteError {
+//             error_code: RpcErrorCodeProto::from_i32(value.error_detail.unwrap_or(0)),
+//             error_msg: value.error_msg,
+//             exception_class_name: value.exception_class_name,
+//         }
+//     }
+// }
+
+// impl Display for RemoteError {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         todo!()
+//     }
+// }
+
+pub(crate) struct AlignmentContext {
+    state_id: AtomicI64,
+    router_federated_state: Option<Arc<Mutex<Vec<u8>>>>,
+}
+
+impl Default for AlignmentContext {
+    fn default() -> Self {
+        Self {
+            state_id: AtomicI64::new(i64::MIN),
+            router_federated_state: None,
+        }
+    }
+}
+
+pub(crate) trait RpcEngine {
+    fn call(&self, method_name: &str, message: &[u8]) -> Result<CallResult>;
+}
+
+struct CallData {
+    finished: bool,
+    data: Option<Bytes>,
+    error: Option<Error>,
+}
+
+impl Default for CallData {
+    fn default() -> Self {
+        CallData {
+            finished: false,
+            data: None,
+            error: None,
+        }
+    }
 }
 
 struct Call {
-    result: Mutex<Option<Bytes>>,
+    result: Mutex<CallData>,
     cond: Condvar,
 }
 
 impl Call {
     fn new() -> Self {
         Call {
-            result: Mutex::new(None),
+            result: Mutex::new(CallData::default()),
             cond: Condvar::new(),
         }
     }
 }
 
-pub struct CallResult<T: Message + Default> {
+pub struct CallResult {
     call: Arc<Call>,
-    phantom: PhantomData<T>,
 }
 
-impl<T: Message + Default> CallResult<T> {
+impl CallResult {
     fn new(call: Arc<Call>) -> Self {
-        CallResult {
-            call,
-            phantom: PhantomData,
-        }
+        CallResult { call }
     }
 
-    pub fn get(&mut self) -> result::Result<T, DecodeError> {
+    pub fn get(&mut self) -> Result<Bytes> {
         let call = &*self.call;
         let mut result = call
             .cond
-            .wait_while(call.result.lock().unwrap(), |result| result.is_none())
+            .wait_while(call.result.lock().unwrap(), |result| !result.finished)
             .unwrap();
-        let buf = result.take().unwrap();
-        T::decode_length_delimited(buf)
+
+        if let Some(error) = result.error.take() {
+            Err(error)
+        } else {
+            Ok(result.data.take().unwrap())
+        }
     }
 }
 
-struct RpcConnection {
-    client: SaslClient,
+pub(crate) struct RpcConnection {
+    client_id: Vec<u8>,
+    next_call_id: AtomicI32,
+    client: Mutex<SaslRpcClient>,
+    alignment_context: Arc<AlignmentContext>,
+    call_map: Arc<Mutex<HashMap<i32, Arc<Call>>>>,
+    listener: Option<JoinHandle<()>>,
 }
 
 impl RpcConnection {
-    pub fn connect(url: String) -> Result<Self> {
+    pub fn connect(url: &str, alignment_context: Arc<AlignmentContext>) -> Result<Self> {
+        let client_id = Uuid::new_v4().to_bytes_le().to_vec();
+        let next_call_id = AtomicI32::new(0);
+        let call_map = Arc::new(Mutex::new(HashMap::new()));
+
         let mut stream = TcpStream::connect(url)?;
         stream.write("hrpc".as_bytes())?;
         // Current version
@@ -85,113 +143,43 @@ impl RpcConnection {
         // Auth protocol
         stream.write(&(-33i8).to_be_bytes())?;
 
-        let client = SaslClient::create(stream)?;
-        Ok(RpcConnection { client })
-    }
+        let mut client = SaslRpcClient::create(stream);
+        let auth_method = client.negotiate()?;
 
-    pub fn try_clone(&self) -> Result<Self> {
-        Ok(RpcConnection {
-            client: self.client.try_clone()?,
-        })
-    }
-}
-
-impl Read for RpcConnection {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        self.client.read(buf)
-    }
-}
-
-impl Write for RpcConnection {
-    fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        self.client.write(buf)
-    }
-
-    fn flush(&mut self) -> Result<()> {
-        self.client.flush()
-    }
-}
-
-pub struct NamenodeConnection {
-    client_id: Vec<u8>,
-    next_call_id: Mutex<AtomicI32>,
-    stream: Mutex<RpcConnection>,
-    call_map: Arc<Mutex<HashMap<i32, Arc<Call>>>>,
-}
-
-impl NamenodeConnection {
-    pub fn connect(url: String) -> Result<Self> {
-        let client_id = Uuid::new_v4().to_bytes_le().to_vec();
-        let next_call_id = Mutex::new(AtomicI32::new(0));
-        let call_map = Arc::new(Mutex::new(HashMap::new()));
-        let stream = Mutex::new(RpcConnection::connect(url)?);
-
-        let mut conn = NamenodeConnection {
+        let mut conn = RpcConnection {
             client_id,
             next_call_id,
-            stream,
+            client: Mutex::new(client),
+            alignment_context,
             call_map,
+            listener: None,
         };
-        conn.initialize()?;
+
+        let context_header = conn
+            .get_connection_header(-3, -1)
+            .encode_length_delimited_to_vec();
+        let context_msg = conn
+            .get_connection_context(auth_method)
+            .encode_length_delimited_to_vec();
+        conn.write_messages(&[&context_header, &context_msg])?;
+        let listener = conn.start_listener()?;
+        conn.listener = Some(listener);
+
         Ok(conn)
     }
 
-    fn initialize(&mut self) -> std::io::Result<()> {
-        let context_header = self
-            .get_connection_header(-3, -1)
-            .encode_length_delimited_to_vec();
-        let context_msg = self
-            .get_connection_context()
-            .encode_length_delimited_to_vec();
-        self.write_messages(&[&context_header, &context_msg])?;
-        self.start_listener()?;
-
-        Ok(())
-    }
-
-    fn start_listener(&mut self) -> std::io::Result<()> {
+    fn start_listener(&mut self) -> std::io::Result<JoinHandle<()>> {
         let call_map = Arc::clone(&self.call_map);
-        let mut stream = self.stream.lock().unwrap().try_clone()?;
-        thread::spawn(move || loop {
-            let mut buf = [0u8; 4];
-            let size = stream.read(&mut buf).unwrap();
-
-            let msg_length = u32::from_be_bytes(buf);
-
-            let mut buf: Vec<u8> = Vec::new();
-            buf.resize(msg_length as usize, 0);
-
-            let size = stream.read(&mut buf).unwrap();
-
-            let mut bytes = Bytes::from(buf);
-            let rpc_response =
-                common::RpcResponseHeaderProto::decode_length_delimited(&mut bytes).unwrap();
-
-            let call_id = rpc_response.call_id as i32;
-
-            let mut call_map_data = call_map.lock().unwrap();
-            let call = call_map_data.remove(&call_id);
-            drop(call_map_data);
-
-            match call {
-                Some(call) => {
-                    let mut call_result = call.result.lock().unwrap();
-                    *call_result = Some(bytes);
-                    call.cond.notify_one();
-                }
-                None => {
-                    println!("Call not found in map, ignoring");
-                }
-            }
+        let stream = self.client.lock().unwrap().try_clone()?;
+        let alignment_context = self.alignment_context.clone();
+        let listener = thread::spawn(move || {
+            RpcListener::new(call_map, stream, alignment_context).start();
         });
-        Ok(())
+        Ok(listener)
     }
 
     fn get_next_call_id(&self) -> i32 {
-        self.next_call_id
-            .lock()
-            .unwrap()
-            .fetch_add(1, Ordering::SeqCst)
+        self.next_call_id.fetch_add(1, Ordering::SeqCst)
     }
 
     fn get_connection_header(
@@ -206,17 +194,28 @@ impl NamenodeConnection {
         request_header.call_id = call_id;
         request_header.client_id = self.client_id.clone();
         request_header.retry_count = Some(retry_count);
+        request_header.state_id = Some(self.alignment_context.state_id.load(Ordering::SeqCst));
+        request_header.router_federated_state = self
+            .alignment_context
+            .router_federated_state
+            .as_ref()
+            .map(|state| state.lock().unwrap().clone());
         request_header
     }
 
-    fn get_connection_context(&self) -> common::IpcConnectionContextProto {
+    fn get_connection_context(&self, auth_method: AuthMethod) -> common::IpcConnectionContextProto {
         let mut context = common::IpcConnectionContextProto::default();
         context.protocol = Some(PROTOCOL.to_string());
 
+        let user = User::get()
+            .get_user_info(auth_method)
+            .expect("Unable to get user for auth method");
+
         let mut user_info = common::UserInformationProto::default();
-        user_info.effective_user = Some("hadoop".to_string());
-        // user_info.real_user = Some("hadoop".to_string());
+        user_info.effective_user = user.effective_user;
+        user_info.real_user = user.real_user;
         context.user_info = Some(user_info);
+        debug!("Connection context: {:?}", context);
         context
     }
 
@@ -226,37 +225,36 @@ impl NamenodeConnection {
             size += msg.len() as u32;
         }
 
-        let mut stream = self.stream.lock().unwrap();
+        let mut client = self.client.lock().unwrap();
 
-        stream.write(&size.to_be_bytes())?;
+        client.write(&size.to_be_bytes())?;
         for msg in messages.iter() {
-            stream.write(&msg)?;
+            client.write(&msg)?;
         }
 
         Ok(())
     }
 }
 
-impl RpcEngine for NamenodeConnection {
-    fn call<T: Message + std::default::Default>(
-        &self,
-        method_name: &str,
-        message: &impl Message,
-    ) -> Result<CallResult<T>> {
+impl RpcEngine for RpcConnection {
+    fn call(&self, method_name: &str, message: &[u8]) -> Result<CallResult> {
         let call_id = self.get_next_call_id();
-        let conn_header = self
-            .get_connection_header(call_id, 0)
-            .encode_length_delimited_to_vec();
+        let conn_header = self.get_connection_header(call_id, 0);
+
+        debug!("RPC connection header: {:?}", conn_header);
+
+        let conn_header_buf = conn_header.encode_length_delimited_to_vec();
 
         let mut msg_header = common::RequestHeaderProto::default();
         msg_header.method_name = method_name.to_string();
         msg_header.declaring_class_protocol_name = PROTOCOL.to_string();
         msg_header.client_protocol_version = 1;
 
-        let header_buf = msg_header.encode_length_delimited_to_vec();
-        let msg_buf = message.encode_length_delimited_to_vec();
+        debug!("RPC request header: {:?}", msg_header);
 
-        let size = (conn_header.len() + header_buf.len() + msg_buf.len()) as u32;
+        let header_buf = msg_header.encode_length_delimited_to_vec();
+
+        let size = (conn_header_buf.len() + header_buf.len() + message.len()) as u32;
 
         let call = Arc::new(Call::new());
 
@@ -265,15 +263,102 @@ impl RpcEngine for NamenodeConnection {
             .unwrap()
             .insert(call_id, Arc::clone(&call));
 
-        let mut stream = self.stream.lock().unwrap();
+        let mut stream = self.client.lock().unwrap();
 
         stream.write(&size.to_be_bytes())?;
-        stream.write(&conn_header)?;
+        stream.write(&conn_header_buf)?;
         stream.write(&header_buf)?;
-        stream.write(&msg_buf)?;
+        stream.write(&message)?;
         stream.flush()?;
 
         Ok(CallResult::new(call))
+    }
+}
+
+struct RpcListener {
+    call_map: Arc<Mutex<HashMap<i32, Arc<Call>>>>,
+    stream: SaslRpcClient,
+    alive: bool,
+    alignment_context: Arc<AlignmentContext>,
+}
+
+impl RpcListener {
+    fn new(
+        call_map: Arc<Mutex<HashMap<i32, Arc<Call>>>>,
+        stream: SaslRpcClient,
+        alignment_context: Arc<AlignmentContext>,
+    ) -> Self {
+        RpcListener {
+            call_map,
+            stream,
+            alive: true,
+            alignment_context,
+        }
+    }
+
+    fn start(&mut self) {
+        loop {
+            if let Err(error) = self.read_response() {
+                match error.kind() {
+                    ErrorKind::UnexpectedEof => break,
+                    _ => panic!("{:?}", error),
+                }
+            }
+        }
+        self.alive = false;
+    }
+
+    fn read_response(&mut self) -> Result<()> {
+        // Read the size of the message
+        let mut buf = [0u8; 4];
+        self.stream.read_exact(&mut buf)?;
+        let msg_length = u32::from_be_bytes(buf);
+
+        // Read the whole message
+        let mut buf = BytesMut::zeroed(msg_length as usize);
+        self.stream.read_exact(&mut buf)?;
+
+        let mut bytes = buf.freeze();
+        let rpc_response =
+            common::RpcResponseHeaderProto::decode_length_delimited(&mut bytes).unwrap();
+
+        debug!("RPC header response: {:?}", rpc_response);
+
+        if let Some(RpcStatusProto::Fatal) = RpcStatusProto::from_i32(rpc_response.status) {
+            warn!("RPC fatal error: {:?}", rpc_response.error_msg);
+            return Err(Error::new(
+                ErrorKind::ConnectionAborted,
+                rpc_response.error_msg(),
+            ));
+        }
+
+        let call_id = rpc_response.call_id as i32;
+
+        let call = self.call_map.lock().unwrap().remove(&call_id);
+
+        if let Some(call) = call {
+            let mut result = call.result.lock().unwrap();
+            match RpcStatusProto::from_i32(rpc_response.status) {
+                Some(RpcStatusProto::Error) => {
+                    result.error = Some(Error::new(ErrorKind::Other, rpc_response.error_msg()));
+                }
+                Some(RpcStatusProto::Success) => {
+                    if let Some(state_id) = rpc_response.state_id {
+                        self.alignment_context
+                            .state_id
+                            .fetch_max(state_id, Ordering::SeqCst);
+                    }
+                    if let Some(_router_federation_state) = rpc_response.router_federated_state {
+                        todo!();
+                    }
+                    result.data = Some(bytes);
+                }
+                _ => todo!(),
+            }
+            result.finished = true;
+            call.cond.notify_one();
+        }
+        Ok(())
     }
 }
 
@@ -305,6 +390,7 @@ impl Packet {
     }
 }
 
+#[derive(Debug)]
 pub struct DatanodeConnection {
     client_name: String,
     reader: BufReader<TcpStream>,

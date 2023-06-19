@@ -25,7 +25,11 @@ impl HdfsFileReader {
     /// Read file data into an existing buffer. Buffer will be extended by the length of the file.
     pub fn read_buf(&self, buf: &mut impl BufMut, offset: usize, len: usize) -> Result<()> {
         let mut block_readers = self.create_block_readers(offset, len);
+        let mut block_num = 1;
         for reader in block_readers.iter_mut() {
+            println!("Reading block {}", block_num);
+            block_num += 1;
+            println!("Block reader: {:?}", reader);
             reader.read(buf)?;
         }
 
@@ -37,12 +41,13 @@ impl HdfsFileReader {
             .blocks
             .iter()
             .flat_map(|block| {
+                println!("Reading block {:?}", block);
                 let block_file_start = block.offset as usize;
                 let block_file_end = block_file_start + block.b.num_bytes.unwrap() as usize;
 
-                if block_file_start <= (offset + len) && block_file_end >= offset {
+                if block_file_start <= (offset + len) && block_file_end > offset {
                     // We need to read this block
-                    let block_start = offset - block_file_start;
+                    let block_start = offset - usize::min(offset, block_file_start);
                     let block_end = usize::min(offset + len, block_file_end) - block_file_start;
                     Some(BlockReader::new(
                         block.clone(),

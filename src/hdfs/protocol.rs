@@ -1,41 +1,51 @@
-use std::io::Result;
+use std::io;
 
-use bytes::{BufMut, Bytes, BytesMut};
+use prost::Message;
 
-use crate::connection::Op;
-use crate::connection::{CallResult, DatanodeConnection, RpcEngine};
-use crate::proto::common;
 use crate::proto::hdfs;
 
-pub struct NamenodeProtocol<T: RpcEngine> {
+use super::proxy::ProxyEngine;
+
+pub(crate) struct NamenodeProtocol<T: ProxyEngine> {
     engine: T,
 }
 
-impl<T: RpcEngine> NamenodeProtocol<T> {
-    pub fn new(engine: T) -> Self {
+impl<T: ProxyEngine> NamenodeProtocol<T> {
+    pub(crate) fn new(engine: T) -> Self {
         NamenodeProtocol { engine }
     }
 
-    pub fn get_listing(
+    pub(crate) fn get_listing(
         &self,
         src: &str,
         start_after: Vec<u8>,
         need_location: bool,
-    ) -> Result<CallResult<hdfs::GetListingResponseProto>> {
+    ) -> io::Result<hdfs::GetListingResponseProto> {
         let mut message = hdfs::GetListingRequestProto::default();
         message.src = src.to_string();
         message.start_after = start_after;
         message.need_location = need_location;
-        self.engine.call("getListing", &message)
+
+        let response = self
+            .engine
+            .call("getListing", message.encode_length_delimited_to_vec())?;
+        hdfs::GetListingResponseProto::decode_length_delimited(response)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to decode message"))
     }
 
-    pub fn get_located_file_info(
+    pub(crate) fn get_located_file_info(
         &self,
         src: &str,
-    ) -> Result<CallResult<hdfs::GetLocatedFileInfoResponseProto>> {
+    ) -> io::Result<hdfs::GetLocatedFileInfoResponseProto> {
         let mut message = hdfs::GetLocatedFileInfoRequestProto::default();
         message.src = Some(src.to_string());
         message.need_block_token = Some(true);
-        self.engine.call("getLocatedFileInfo", &message)
+
+        let response = self.engine.call(
+            "getLocatedFileInfo",
+            message.encode_length_delimited_to_vec(),
+        )?;
+        hdfs::GetLocatedFileInfoResponseProto::decode_length_delimited(response)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to decode message"))
     }
 }

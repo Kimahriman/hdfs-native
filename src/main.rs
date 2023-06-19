@@ -1,6 +1,6 @@
 use std::str;
 
-use hdfs_native::{client::Client, common::config::Configuration};
+use hdfs_native::client::Client;
 
 fn main() -> std::io::Result<()> {
     let client = Client::new("hdfs://127.0.0.1:9000")?;

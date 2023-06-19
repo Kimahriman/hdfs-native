@@ -7,6 +7,7 @@ use crate::{
     proto::hdfs,
 };
 
+#[derive(Debug)]
 pub struct BlockReader {
     block: hdfs::LocatedBlockProto,
     offset: usize,
@@ -16,6 +17,7 @@ pub struct BlockReader {
 
 impl BlockReader {
     pub fn new(block: hdfs::LocatedBlockProto, offset: usize, len: usize) -> Self {
+        assert!(len > 0);
         BlockReader {
             block,
             offset,
@@ -44,7 +46,6 @@ impl BlockReader {
         message.offset = self.offset as u64;
         message.len = self.len as u64;
         message.send_checksums = Some(false);
-        println!("{:?}", message);
 
         conn.send(Op::ReadBlock, &message)?;
         let response = conn.read_block_op_response()?;
@@ -52,7 +53,6 @@ impl BlockReader {
 
         // First handle the offset into the first packet
         let mut packet = conn.read_packet()?;
-        println!("{:?}", packet.header);
         let packet_offset = self.offset - packet.header.offset_in_block as usize;
         let data_len = packet.header.data_len as usize - packet_offset;
         let data_to_read = usize::min(data_len, self.len);
@@ -65,7 +65,6 @@ impl BlockReader {
 
         while data_left > 0 {
             packet = conn.read_packet()?;
-            println!("{:?}", packet.header);
             // TODO: Error checking
             let data_to_read = usize::min(data_left, packet.header.data_len as usize);
             buf.put(packet.data.slice(0..data_to_read));
@@ -73,8 +72,7 @@ impl BlockReader {
         }
 
         // There should be one last empty packet after we are done
-        packet = conn.read_packet()?;
-        println!("{:?}", packet.header);
+        conn.read_packet()?;
 
         Ok(())
     }

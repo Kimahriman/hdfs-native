@@ -1,12 +1,17 @@
 use std::collections::HashMap;
 use std::env;
-use std::error::Error;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use log::debug;
+
 const HADOOP_CONF_DIR: &str = "HADOOP_CONF_DIR";
 const HADOOP_HOME: &str = "HADOOP_HOME";
+
+const HADOOP_SECURITY_AUTHENTICATION: &str = "hadoop.security.authentication";
+const HA_NAMENODES_PREFIX: &str = "dfs.ha.namenodes";
+const HA_NAMENODE_RPC_ADDRESS_PREFIX: &str = "dfs.namenode.rpc-address";
 
 #[derive(Debug)]
 pub struct Configuration {
@@ -19,10 +24,9 @@ impl Configuration {
 
         match Self::get_conf_dir() {
             Some(conf_dir) => {
-                for file in ["core_site.xml", "hdfs-site.xml"] {
+                for file in ["core-site.xml", "hdfs-site.xml"] {
                     let config_path = conf_dir.join(file);
                     if config_path.as_path().exists() {
-                        println!("Reading from {:?}", config_path);
                         Self::read_from_file(config_path.as_path())?
                             .into_iter()
                             .for_each(|(key, value)| {
@@ -35,6 +39,35 @@ impl Configuration {
         }
 
         Ok(Configuration { map })
+    }
+
+    /// Get a value from the config, returning None if the key wasn't defined.
+    pub fn get(&self, key: &str) -> Option<String> {
+        self.map.get(key).map(|v| v.clone())
+    }
+
+    // Shortcut helper functions
+    pub fn is_security_enabled(&self) -> bool {
+        self.map
+            .get(HADOOP_SECURITY_AUTHENTICATION)
+            .is_some_and(|v| v.to_lowercase() == "kerberos")
+    }
+
+    pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Vec<String> {
+        self.map
+            .get(&format!("{}.{}", HA_NAMENODES_PREFIX, nameservice))
+            .into_iter()
+            .flat_map(|namenodes| {
+                namenodes.split(",").flat_map(|namenode_id| {
+                    self.map
+                        .get(&format!(
+                            "{}.{}.{}",
+                            HA_NAMENODE_RPC_ADDRESS_PREFIX, nameservice, namenode_id
+                        ))
+                        .map(|s| s.to_string())
+                })
+            })
+            .collect()
     }
 
     fn read_from_file(path: &Path) -> io::Result<Vec<(String, String)>> {

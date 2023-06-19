@@ -1,0 +1,3 @@
+[submodule "rsasl2"]
+	path = rsasl2
+	url = git@github.com:Kimahriman/rsasl.git
