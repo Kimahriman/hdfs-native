@@ -1,9 +1,9 @@
 pub(crate) mod minidfs;
 
-use hdfs_native::client::Client;
+use hdfs_native::{client::Client, Result};
 use std::collections::HashSet;
 use std::env;
-use std::io::{BufWriter, Result, Write};
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use tempfile::NamedTempFile;

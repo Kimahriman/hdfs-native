@@ -3,12 +3,11 @@ use std::sync::Arc;
 use url::Url;
 
 use crate::common::config::Configuration;
+use crate::error::{HdfsError, Result};
 use crate::hdfs::file::HdfsFileReader;
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
-use crate::{connection::RpcConnection, proto::hdfs::hdfs_file_status_proto::FileType};
-
-use std::io::{Error, ErrorKind, Result};
+use crate::proto::hdfs::hdfs_file_status_proto::FileType;
 
 use crate::proto::hdfs::HdfsFileStatusProto;
 
@@ -85,12 +84,7 @@ impl Client {
         loop {
             let partial_listing = self.protocol.get_listing(path, start_after, true)?;
             match partial_listing.dir_list {
-                None => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "File not found",
-                    ))
-                }
+                None => return Err(HdfsError::FileNotFound),
                 Some(dir_list) => {
                     start_after = dir_list
                         .partial_listing
@@ -116,7 +110,7 @@ impl Client {
         let located_info = self.protocol.get_located_file_info(path)?;
         match located_info.fs {
             Some(status) => Ok(HdfsFileReader::new(status.locations.unwrap())),
-            None => Err(Error::new(ErrorKind::NotFound, "File not found")),
+            None => Err(HdfsError::FileNotFound),
         }
     }
 }

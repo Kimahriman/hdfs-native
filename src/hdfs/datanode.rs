@@ -1,45 +1,51 @@
-use std::io::Result;
-
 use bytes::BufMut;
+use log::{debug, warn};
 
 use crate::{
     connection::{DatanodeConnection, Op},
     proto::hdfs,
+    Result,
 };
 
 #[derive(Debug)]
-pub struct BlockReader {
+pub(crate) struct BlockReader {
     block: hdfs::LocatedBlockProto,
     offset: usize,
     len: usize,
-    current_datanode: Option<DatanodeConnection>,
 }
 
 impl BlockReader {
     pub fn new(block: hdfs::LocatedBlockProto, offset: usize, len: usize) -> Self {
         assert!(len > 0);
-        BlockReader {
-            block,
-            offset,
-            len,
-            current_datanode: None,
+        BlockReader { block, offset, len }
+    }
+
+    /// Select a best order to try the datanodes in
+    fn choose_datanodes(&self) -> Vec<&hdfs::DatanodeIdProto> {
+        self.block.locs.iter().map(|l| &l.id).collect()
+    }
+
+    pub(crate) fn read(&self, buf: &mut impl BufMut) -> Result<()> {
+        let datanodes = self.choose_datanodes();
+        let mut index = 0;
+        loop {
+            let result = self.read_from_datanode(datanodes[index], buf);
+            if result.is_ok() || index >= datanodes.len() - 1 {
+                return Ok(result?);
+            } else {
+                warn!("{}", result.unwrap_err());
+            }
+            index += 1;
         }
     }
 
-    fn choose_datanode(&mut self) -> Result<()> {
-        let datanode = &self.block.locs.first().unwrap().id;
-        let conn =
+    fn read_from_datanode(
+        &self,
+        datanode: &hdfs::DatanodeIdProto,
+        buf: &mut impl BufMut,
+    ) -> Result<()> {
+        let mut conn =
             DatanodeConnection::connect(format!("{}:{}", datanode.ip_addr, datanode.xfer_port))?;
-        self.current_datanode = Some(conn);
-        Ok(())
-    }
-
-    pub fn read(&mut self, buf: &mut impl BufMut) -> Result<()> {
-        if self.current_datanode.is_none() {
-            self.choose_datanode()?;
-        }
-
-        let conn = self.current_datanode.as_mut().unwrap();
 
         let mut message = hdfs::OpReadBlockProto::default();
         message.header = conn.build_header(&self.block.b, Some(self.block.block_token.clone()));
@@ -49,7 +55,7 @@ impl BlockReader {
 
         conn.send(Op::ReadBlock, &message)?;
         let response = conn.read_block_op_response()?;
-        println!("{:?}", response);
+        debug!("{:?}", response);
 
         // First handle the offset into the first packet
         let mut packet = conn.read_packet()?;

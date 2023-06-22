@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::default::Default;
 use std::io::prelude::*;
-use std::io::{BufReader, BufWriter, Error, ErrorKind, Result};
+use std::io::{BufReader, BufWriter, ErrorKind};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::sync::Arc;
@@ -20,32 +20,10 @@ use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
 use crate::proto::{common, hdfs};
 use crate::security::sasl::{AuthMethod, SaslRpcClient};
 use crate::security::user::User;
+use crate::{HdfsError, Result};
 
 const PROTOCOL: &'static str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
 const DATA_TRANSFER_VERSION: u16 = 28;
-
-// #[derive(Debug)]
-// struct RemoteError {
-//     error_code: Option<RpcErrorCodeProto>,
-//     error_msg: Option<String>,
-//     exception_class_name: Option<String>,
-// }
-
-// impl From<RpcResponseHeaderProto> for RemoteError {
-//     fn from(value: RpcResponseHeaderProto) -> Self {
-//         RemoteError {
-//             error_code: RpcErrorCodeProto::from_i32(value.error_detail.unwrap_or(0)),
-//             error_msg: value.error_msg,
-//             exception_class_name: value.exception_class_name,
-//         }
-//     }
-// }
-
-// impl Display for RemoteError {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         todo!()
-//     }
-// }
 
 pub(crate) struct AlignmentContext {
     state_id: AtomicI64,
@@ -68,7 +46,7 @@ pub(crate) trait RpcEngine {
 struct CallData {
     finished: bool,
     data: Option<Bytes>,
-    error: Option<Error>,
+    error: Option<HdfsError>,
 }
 
 impl Default for CallData {
@@ -168,7 +146,7 @@ impl RpcConnection {
         Ok(conn)
     }
 
-    fn start_listener(&mut self) -> std::io::Result<JoinHandle<()>> {
+    fn start_listener(&mut self) -> Result<JoinHandle<()>> {
         let call_map = Arc::clone(&self.call_map);
         let stream = self.client.lock().unwrap().try_clone()?;
         let alignment_context = self.alignment_context.clone();
@@ -299,8 +277,8 @@ impl RpcListener {
     fn start(&mut self) {
         loop {
             if let Err(error) = self.read_response() {
-                match error.kind() {
-                    ErrorKind::UnexpectedEof => break,
+                match error {
+                    HdfsError::IOError(e) if e.kind() == ErrorKind::UnexpectedEof => break,
                     _ => panic!("{:?}", error),
                 }
             }
@@ -319,16 +297,14 @@ impl RpcListener {
         self.stream.read_exact(&mut buf)?;
 
         let mut bytes = buf.freeze();
-        let rpc_response =
-            common::RpcResponseHeaderProto::decode_length_delimited(&mut bytes).unwrap();
+        let rpc_response = common::RpcResponseHeaderProto::decode_length_delimited(&mut bytes)?;
 
         debug!("RPC header response: {:?}", rpc_response);
 
         if let Some(RpcStatusProto::Fatal) = RpcStatusProto::from_i32(rpc_response.status) {
             warn!("RPC fatal error: {:?}", rpc_response.error_msg);
-            return Err(Error::new(
-                ErrorKind::ConnectionAborted,
-                rpc_response.error_msg(),
+            return Err(HdfsError::FatalRPCError(
+                rpc_response.error_msg().to_string(),
             ));
         }
 
@@ -340,7 +316,7 @@ impl RpcListener {
             let mut result = call.result.lock().unwrap();
             match RpcStatusProto::from_i32(rpc_response.status) {
                 Some(RpcStatusProto::Error) => {
-                    result.error = Some(Error::new(ErrorKind::Other, rpc_response.error_msg()));
+                    result.error = Some(HdfsError::RPCError(rpc_response.error_msg().to_string()));
                 }
                 Some(RpcStatusProto::Success) => {
                     if let Some(state_id) = rpc_response.state_id {
@@ -353,7 +329,11 @@ impl RpcListener {
                     }
                     result.data = Some(bytes);
                 }
-                _ => todo!(),
+                _ => {
+                    return Err(HdfsError::RPCError(
+                        "Unknown RPC response status".to_string(),
+                    ));
+                }
             }
             result.finished = true;
             call.cond.notify_one();
@@ -437,7 +417,7 @@ impl DatanodeConnection {
     }
 
     pub fn read_block_op_response(&mut self) -> Result<hdfs::BlockOpResponseProto> {
-        let buf = self.reader.fill_buf().unwrap();
+        let buf = self.reader.fill_buf()?;
         let msg_length = prost::decode_length_delimiter(buf)?;
         let total_size = msg_length + prost::length_delimiter_len(msg_length);
 

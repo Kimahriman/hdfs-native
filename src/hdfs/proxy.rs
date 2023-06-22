@@ -15,10 +15,11 @@ use crate::{
     common::config::Configuration,
     connection::{AlignmentContext, CallResult, RpcConnection, RpcEngine},
     proto::hdfs,
+    Result,
 };
 
 pub(crate) trait ProxyEngine {
-    fn call(&self, method_name: &'static str, message: Vec<u8>) -> io::Result<Bytes>;
+    fn call(&self, method_name: &'static str, message: Vec<u8>) -> Result<Bytes>;
 }
 
 /// Lazily creates a connection to a host, and recreates the connection
@@ -38,7 +39,7 @@ impl ProxyConnection {
         }
     }
 
-    fn get_connection(&mut self) -> io::Result<&RpcConnection> {
+    fn get_connection(&mut self) -> Result<&RpcConnection> {
         if self.inner.is_none() {
             self.inner = Some(RpcConnection::connect(
                 &self.url,
@@ -48,7 +49,7 @@ impl ProxyConnection {
         Ok(self.inner.as_ref().unwrap())
     }
 
-    fn call(&mut self, method_name: &str, message: &[u8]) -> io::Result<CallResult> {
+    fn call(&mut self, method_name: &str, message: &[u8]) -> Result<CallResult> {
         self.get_connection()?.call(method_name, message)
     }
 }
@@ -100,7 +101,7 @@ impl NameServiceProxy {
 }
 
 impl ProxyEngine for NameServiceProxy {
-    fn call(&self, method_name: &'static str, message: Vec<u8>) -> io::Result<Bytes> {
+    fn call(&self, method_name: &'static str, message: Vec<u8>) -> Result<Bytes> {
         self.msync_if_needed();
 
         let mut proxy_index = self.current_index.load(Ordering::SeqCst);
@@ -114,7 +115,7 @@ impl ProxyEngine for NameServiceProxy {
 
             if result.is_ok() || attempts >= self.proxy_connections.len() - 1 {
                 self.current_index.store(proxy_index, Ordering::SeqCst);
-                return result;
+                return Ok(result?);
             } else {
                 warn!("{}", result.unwrap_err());
             }

@@ -1,8 +1,8 @@
-use std::io::Result;
-
 use bytes::{BufMut, Bytes, BytesMut};
+use log::debug;
 
 use crate::proto::hdfs;
+use crate::Result;
 
 use super::datanode::BlockReader;
 
@@ -16,7 +16,7 @@ impl HdfsFileReader {
         HdfsFileReader { located_blocks }
     }
 
-    pub fn read(&self, offset: usize, len: usize) -> std::io::Result<Bytes> {
+    pub fn read(&self, offset: usize, len: usize) -> Result<Bytes> {
         let mut buf = BytesMut::with_capacity(len);
         self.read_buf(&mut buf, offset, len)?;
         Ok(buf.freeze())
@@ -27,9 +27,8 @@ impl HdfsFileReader {
         let mut block_readers = self.create_block_readers(offset, len);
         let mut block_num = 1;
         for reader in block_readers.iter_mut() {
-            println!("Reading block {}", block_num);
             block_num += 1;
-            println!("Block reader: {:?}", reader);
+            debug!("Block reader: {:?}", reader);
             reader.read(buf)?;
         }
 
@@ -41,7 +40,6 @@ impl HdfsFileReader {
             .blocks
             .iter()
             .flat_map(|block| {
-                println!("Reading block {:?}", block);
                 let block_file_start = block.offset as usize;
                 let block_file_end = block_file_start + block.b.num_bytes.unwrap() as usize;
 

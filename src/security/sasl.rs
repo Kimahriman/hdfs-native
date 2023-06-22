@@ -1,8 +1,9 @@
-use std::io::{Cursor, Error, ErrorKind, Read, Result, Write};
+use std::io::{self, Cursor, Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use log::debug;
 use prost::Message;
 
 use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
@@ -10,6 +11,7 @@ use crate::proto::common::rpc_sasl_proto::{SaslAuth, SaslState};
 use crate::proto::common::{
     RpcKindProto, RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto,
 };
+use crate::{HdfsError, Result};
 #[cfg(feature = "rsasl1")]
 use rsasl::{
     DiscardOnDrop, Property, Session,
@@ -134,7 +136,7 @@ impl SaslRpcClient {
         request_header
     }
 
-    fn send_sasl_message(&mut self, message: &RpcSaslProto) -> Result<()> {
+    fn send_sasl_message(&mut self, message: &RpcSaslProto) -> io::Result<()> {
         let header_buf = Self::create_request_header().encode_length_delimited_to_vec();
         let message_buf = message.encode_length_delimited_to_vec();
         let size = (header_buf.len() + message_buf.len()) as u32;
@@ -147,7 +149,7 @@ impl SaslRpcClient {
         Ok(())
     }
 
-    fn read_response(&mut self) -> Result<RpcSaslProto> {
+    fn read_response(&mut self) -> io::Result<RpcSaslProto> {
         let mut buf = [0u8; 4];
         self.stream.read_exact(&mut buf)?;
 
@@ -157,8 +159,8 @@ impl SaslRpcClient {
         self.stream.read_exact(&mut buf)?;
 
         let mut bytes = buf.freeze();
-        let rpc_response = RpcResponseHeaderProto::decode_length_delimited(&mut bytes).unwrap();
-        println!("{:?}", rpc_response);
+        let rpc_response = RpcResponseHeaderProto::decode_length_delimited(&mut bytes)?;
+        debug!("{:?}", rpc_response);
 
         match RpcStatusProto::from_i32(rpc_response.status).unwrap() {
             RpcStatusProto::Error => {
@@ -170,7 +172,7 @@ impl SaslRpcClient {
             _ => (),
         }
 
-        let sasl_response = RpcSaslProto::decode_length_delimited(&mut bytes).unwrap();
+        let sasl_response = RpcSaslProto::decode_length_delimited(&mut bytes)?;
         Ok(sasl_response)
     }
 
@@ -397,10 +399,7 @@ impl SaslRpcClient {
                 _ => (),
             }
         }
-        Err(Error::new(
-            ErrorKind::Unsupported,
-            "No valid authentication method found.",
-        ))
+        Err(HdfsError::NoSASLMechanism)
     }
 
     pub fn try_clone(&self) -> Result<SaslRpcClient> {
@@ -419,7 +418,7 @@ impl Read for SaslRpcClient {
     /// If the session uses security, we load the next SASL message if our buffer is empty,
     /// and then return the entire buffer up to the amount the client expects. We rely on
     /// read_exact to call this multiple times as needed to get data from multiple SASL messages.
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.session.is_some() {
             if !self.buffer.has_remaining() {
                 let response = self.read_response()?;
@@ -450,7 +449,7 @@ impl Read for SaslRpcClient {
 impl Write for SaslRpcClient {
     /// If we are using security, encodes the provided buffer and sends the SASL message.
     /// TODO: Respect max size for a SASL message
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.session.is_some() {
             let mut rpc_sasl = RpcSaslProto::default();
             rpc_sasl.state = SaslState::Wrap as i32;
@@ -473,7 +472,7 @@ impl Write for SaslRpcClient {
         }
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         self.stream.flush()
     }
 }

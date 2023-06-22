@@ -1,8 +1,9 @@
 use std::str;
 
 use hdfs_native::client::Client;
+use hdfs_native::error::Result;
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<()> {
     let client = Client::new("hdfs://127.0.0.1:9000")?;
 
     let file = client.read("/Cargo.lock")?;
