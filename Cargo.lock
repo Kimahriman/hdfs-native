@@ -351,6 +351,8 @@ checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 [[package]]
 name = "gsasl-sys"
 version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd377f206007e661591b4c6a6ba9907a75ae24e2a9ef40f3d0750a1db6bd5dbd"
 dependencies = [
  "bindgen 0.55.1",
 ]
@@ -814,6 +816,8 @@ dependencies = [
 [[package]]
 name = "rsasl"
 version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00658df565e044eeb2d0358bf370eb597c7089daf7d5021aa142b91f2524f641"
 dependencies = [
  "discard",
  "gsasl-sys",

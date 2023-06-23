@@ -12,7 +12,7 @@ bytes = "1"
 prost = "0.11"
 prost-types = "0.11"
 roxmltree = "0.18"
-rsasl = { version = "1", path = "./rsasl1", optional = true }
+rsasl = { version = "1", optional = true }
 rsasl2 = { version = "2.0.0", features = ["gssapi", "provider", "registry_static", "unstable_custom_mechanism"], path = "./rsasl2", package = "rsasl", optional = true }
 uuid = { version = "1.3", features = ["v4"] }
 url = "2.3"
