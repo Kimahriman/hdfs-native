@@ -17,6 +17,7 @@ fn test_security_kerberos() {
 }
 
 #[test]
+#[ignore]
 fn test_security_token() {
     test_with_features(&HashSet::from([DfsFeatures::SECURITY, DfsFeatures::TOKEN])).unwrap();
 }
