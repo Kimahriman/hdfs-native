@@ -1,14 +1,19 @@
 use std::collections::HashMap;
 use std::default::Default;
-use std::io::prelude::*;
-use std::io::{BufReader, BufWriter, ErrorKind};
-use std::net::TcpStream;
+use std::io::ErrorKind;
 use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::sync::Arc;
-use std::sync::Condvar;
 use std::sync::Mutex;
-use std::thread;
-use std::thread::JoinHandle;
+
+use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpStream,
+    },
+    task::{self, JoinHandle},
+};
 
 use bytes::Bytes;
 use bytes::BytesMut;
@@ -18,13 +23,14 @@ use uuid::Uuid;
 
 use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
 use crate::proto::{common, hdfs};
-use crate::security::sasl::{AuthMethod, SaslRpcClient};
+use crate::security::sasl::{AuthMethod, SaslReader, SaslRpcClient, SaslWriter};
 use crate::security::user::User;
 use crate::{HdfsError, Result};
 
 const PROTOCOL: &'static str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
 const DATA_TRANSFER_VERSION: u16 = 28;
 
+#[derive(Debug)]
 pub(crate) struct AlignmentContext {
     state_id: AtomicI64,
     router_federated_state: Option<Arc<Mutex<Vec<u8>>>>,
@@ -39,99 +45,51 @@ impl Default for AlignmentContext {
     }
 }
 
-pub(crate) trait RpcEngine {
-    fn call(&self, method_name: &str, message: &[u8]) -> Result<CallResult>;
-}
+type CallResult = oneshot::Sender<Result<Bytes>>;
 
-struct CallData {
-    finished: bool,
-    data: Option<Bytes>,
-    error: Option<HdfsError>,
-}
-
-impl Default for CallData {
-    fn default() -> Self {
-        CallData {
-            finished: false,
-            data: None,
-            error: None,
-        }
-    }
-}
-
-struct Call {
-    result: Mutex<CallData>,
-    cond: Condvar,
-}
-
-impl Call {
-    fn new() -> Self {
-        Call {
-            result: Mutex::new(CallData::default()),
-            cond: Condvar::new(),
-        }
-    }
-}
-
-pub struct CallResult {
-    call: Arc<Call>,
-}
-
-impl CallResult {
-    fn new(call: Arc<Call>) -> Self {
-        CallResult { call }
-    }
-
-    pub fn get(&mut self) -> Result<Bytes> {
-        let call = &*self.call;
-        let mut result = call
-            .cond
-            .wait_while(call.result.lock().unwrap(), |result| !result.finished)
-            .unwrap();
-
-        if let Some(error) = result.error.take() {
-            Err(error)
-        } else {
-            Ok(result.data.take().unwrap())
-        }
-    }
-}
-
+#[derive(Debug)]
 pub(crate) struct RpcConnection {
     client_id: Vec<u8>,
     next_call_id: AtomicI32,
-    client: Mutex<SaslRpcClient>,
     alignment_context: Arc<AlignmentContext>,
-    call_map: Arc<Mutex<HashMap<i32, Arc<Call>>>>,
+    call_map: Arc<Mutex<HashMap<i32, CallResult>>>,
+    sender: mpsc::Sender<Vec<u8>>,
     listener: Option<JoinHandle<()>>,
 }
 
 impl RpcConnection {
-    pub fn connect(url: &str, alignment_context: Arc<AlignmentContext>) -> Result<Self> {
+    pub(crate) async fn connect(
+        url: &str,
+        alignment_context: Arc<AlignmentContext>,
+    ) -> Result<Self> {
         let client_id = Uuid::new_v4().to_bytes_le().to_vec();
         let next_call_id = AtomicI32::new(0);
         let call_map = Arc::new(Mutex::new(HashMap::new()));
 
-        let mut stream = TcpStream::connect(url)?;
-        stream.write("hrpc".as_bytes())?;
+        let mut stream = TcpStream::connect(url).await?;
+        stream.write("hrpc".as_bytes()).await?;
         // Current version
-        stream.write(&[9u8])?;
+        stream.write(&[9u8]).await?;
         // Service class
-        stream.write(&[0u8])?;
+        stream.write(&[0u8]).await?;
         // Auth protocol
-        stream.write(&(-33i8).to_be_bytes())?;
+        stream.write(&(-33i8).to_be_bytes()).await?;
 
         let mut client = SaslRpcClient::create(stream);
-        let auth_method = client.negotiate()?;
+        let auth_method = client.negotiate().await?;
+        let (reader, writer) = client.split();
+        let (sender, receiver) = mpsc::channel::<Vec<u8>>(1000);
 
         let mut conn = RpcConnection {
             client_id,
             next_call_id,
-            client: Mutex::new(client),
             alignment_context,
             call_map,
             listener: None,
+            sender,
         };
+
+        conn.start_sender(receiver, writer);
 
         let context_header = conn
             .get_connection_header(-3, -1)
@@ -139,19 +97,32 @@ impl RpcConnection {
         let context_msg = conn
             .get_connection_context(auth_method)
             .encode_length_delimited_to_vec();
-        conn.write_messages(&[&context_header, &context_msg])?;
-        let listener = conn.start_listener()?;
+        conn.write_messages(&[&context_header, &context_msg])
+            .await?;
+        let listener = conn.start_listener(reader)?;
         conn.listener = Some(listener);
 
         Ok(conn)
     }
 
-    fn start_listener(&mut self) -> Result<JoinHandle<()>> {
+    fn start_sender(&mut self, mut rx: mpsc::Receiver<Vec<u8>>, mut writer: SaslWriter) {
+        task::spawn(async move {
+            while let Some(msg) = rx.recv().await {
+                match writer.write(&msg).await {
+                    Ok(_) => (),
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    fn start_listener(&mut self, reader: SaslReader) -> Result<JoinHandle<()>> {
         let call_map = Arc::clone(&self.call_map);
-        let stream = self.client.lock().unwrap().try_clone()?;
         let alignment_context = self.alignment_context.clone();
-        let listener = thread::spawn(move || {
-            RpcListener::new(call_map, stream, alignment_context).start();
+        let listener = task::spawn(async move {
+            RpcListener::new(call_map, reader, alignment_context)
+                .start()
+                .await;
         });
         Ok(listener)
     }
@@ -197,25 +168,31 @@ impl RpcConnection {
         context
     }
 
-    pub fn write_messages(&self, messages: &[&Vec<u8>]) -> Result<()> {
+    pub(crate) fn is_alive(&self) -> bool {
+        self.listener
+            .as_ref()
+            .is_some_and(|handle| !handle.is_finished())
+    }
+
+    pub(crate) async fn write_messages(&self, messages: &[&[u8]]) -> Result<()> {
         let mut size = 0u32;
         for msg in messages.iter() {
             size += msg.len() as u32;
         }
 
-        let mut client = self.client.lock().unwrap();
+        let mut buf: Vec<u8> = Vec::with_capacity(size as usize + 4);
 
-        client.write(&size.to_be_bytes())?;
+        buf.extend(size.to_be_bytes());
         for msg in messages.iter() {
-            client.write(&msg)?;
+            buf.extend(*msg);
         }
+
+        let _ = self.sender.send(buf).await;
 
         Ok(())
     }
-}
 
-impl RpcEngine for RpcConnection {
-    fn call(&self, method_name: &str, message: &[u8]) -> Result<CallResult> {
+    pub(crate) async fn call(&self, method_name: &str, message: &[u8]) -> Result<Bytes> {
         let call_id = self.get_next_call_id();
         let conn_header = self.get_connection_header(call_id, 0);
 
@@ -232,51 +209,41 @@ impl RpcEngine for RpcConnection {
 
         let header_buf = msg_header.encode_length_delimited_to_vec();
 
-        let size = (conn_header_buf.len() + header_buf.len() + message.len()) as u32;
+        let (sender, receiver) = oneshot::channel::<Result<Bytes>>();
 
-        let call = Arc::new(Call::new());
+        self.call_map.lock().unwrap().insert(call_id, sender);
 
-        self.call_map
-            .lock()
-            .unwrap()
-            .insert(call_id, Arc::clone(&call));
+        self.write_messages(&[&conn_header_buf, &header_buf, message])
+            .await?;
 
-        let mut stream = self.client.lock().unwrap();
-
-        stream.write(&size.to_be_bytes())?;
-        stream.write(&conn_header_buf)?;
-        stream.write(&header_buf)?;
-        stream.write(&message)?;
-        stream.flush()?;
-
-        Ok(CallResult::new(call))
+        receiver.await.unwrap()
     }
 }
 
 struct RpcListener {
-    call_map: Arc<Mutex<HashMap<i32, Arc<Call>>>>,
-    stream: SaslRpcClient,
+    call_map: Arc<Mutex<HashMap<i32, CallResult>>>,
+    reader: SaslReader,
     alive: bool,
     alignment_context: Arc<AlignmentContext>,
 }
 
 impl RpcListener {
     fn new(
-        call_map: Arc<Mutex<HashMap<i32, Arc<Call>>>>,
-        stream: SaslRpcClient,
+        call_map: Arc<Mutex<HashMap<i32, CallResult>>>,
+        reader: SaslReader,
         alignment_context: Arc<AlignmentContext>,
     ) -> Self {
         RpcListener {
             call_map,
-            stream,
+            reader,
             alive: true,
             alignment_context,
         }
     }
 
-    fn start(&mut self) {
+    async fn start(&mut self) {
         loop {
-            if let Err(error) = self.read_response() {
+            if let Err(error) = self.read_response().await {
                 match error {
                     HdfsError::IOError(e) if e.kind() == ErrorKind::UnexpectedEof => break,
                     _ => panic!("{:?}", error),
@@ -286,15 +253,15 @@ impl RpcListener {
         self.alive = false;
     }
 
-    fn read_response(&mut self) -> Result<()> {
+    async fn read_response(&mut self) -> Result<()> {
         // Read the size of the message
         let mut buf = [0u8; 4];
-        self.stream.read_exact(&mut buf)?;
+        self.reader.read_exact(&mut buf).await?;
         let msg_length = u32::from_be_bytes(buf);
 
         // Read the whole message
         let mut buf = BytesMut::zeroed(msg_length as usize);
-        self.stream.read_exact(&mut buf)?;
+        self.reader.read_exact(&mut buf).await?;
 
         let mut bytes = buf.freeze();
         let rpc_response = common::RpcResponseHeaderProto::decode_length_delimited(&mut bytes)?;
@@ -313,10 +280,11 @@ impl RpcListener {
         let call = self.call_map.lock().unwrap().remove(&call_id);
 
         if let Some(call) = call {
-            let mut result = call.result.lock().unwrap();
             match RpcStatusProto::from_i32(rpc_response.status) {
                 Some(RpcStatusProto::Error) => {
-                    result.error = Some(HdfsError::RPCError(rpc_response.error_msg().to_string()));
+                    call.send(Err(HdfsError::RPCError(
+                        rpc_response.error_msg().to_string(),
+                    )));
                 }
                 Some(RpcStatusProto::Success) => {
                     if let Some(state_id) = rpc_response.state_id {
@@ -327,7 +295,7 @@ impl RpcListener {
                     if let Some(_router_federation_state) = rpc_response.router_federated_state {
                         todo!();
                     }
-                    result.data = Some(bytes);
+                    call.send(Ok(bytes));
                 }
                 _ => {
                     return Err(HdfsError::RPCError(
@@ -335,14 +303,12 @@ impl RpcListener {
                     ));
                 }
             }
-            result.finished = true;
-            call.cond.notify_one();
         }
         Ok(())
     }
 }
 
-pub enum Op {
+pub(crate) enum Op {
     ReadBlock,
 }
 
@@ -354,14 +320,15 @@ impl Op {
     }
 }
 
-pub struct Packet {
+pub(crate) struct Packet {
     pub header: hdfs::PacketHeaderProto,
+    #[allow(dead_code)]
     pub checksum: Bytes,
     pub data: Bytes,
 }
 
 impl Packet {
-    pub fn new(header: hdfs::PacketHeaderProto, checksum: Bytes, data: Bytes) -> Self {
+    fn new(header: hdfs::PacketHeaderProto, checksum: Bytes, data: Bytes) -> Self {
         Packet {
             header,
             checksum,
@@ -373,35 +340,37 @@ impl Packet {
 #[derive(Debug)]
 pub struct DatanodeConnection {
     client_name: String,
-    reader: BufReader<TcpStream>,
-    writer: BufWriter<TcpStream>,
+    reader: BufReader<OwnedReadHalf>,
+    writer: OwnedWriteHalf,
 }
 
 impl DatanodeConnection {
-    pub fn connect(url: String) -> Result<Self> {
-        let stream = TcpStream::connect(url)?;
+    pub(crate) async fn connect(url: String) -> Result<Self> {
+        let stream = TcpStream::connect(url).await?;
 
-        let reader = BufReader::new(stream.try_clone()?);
-        let writer = BufWriter::new(stream);
+        let (reader, writer) = stream.into_split();
 
         let conn = DatanodeConnection {
             client_name: Uuid::new_v4().to_string(),
-            reader,
+            reader: BufReader::new(reader),
             writer,
         };
         Ok(conn)
     }
 
-    pub fn send(&mut self, op: Op, message: &impl Message) -> Result<()> {
-        self.writer.write(&DATA_TRANSFER_VERSION.to_be_bytes())?;
-        self.writer.write(&[op.value()])?;
+    pub(crate) async fn send(&mut self, op: Op, message: &impl Message) -> Result<()> {
         self.writer
-            .write(&message.encode_length_delimited_to_vec())?;
-        self.writer.flush()?;
+            .write(&DATA_TRANSFER_VERSION.to_be_bytes())
+            .await?;
+        self.writer.write(&[op.value()]).await?;
+        self.writer
+            .write(&message.encode_length_delimited_to_vec())
+            .await?;
+        self.writer.flush().await?;
         Ok(())
     }
 
-    pub fn build_header(
+    pub(crate) fn build_header(
         &self,
         block: &hdfs::ExtendedBlockProto,
         token: Option<common::TokenProto>,
@@ -416,29 +385,29 @@ impl DatanodeConnection {
         header
     }
 
-    pub fn read_block_op_response(&mut self) -> Result<hdfs::BlockOpResponseProto> {
-        let buf = self.reader.fill_buf()?;
+    pub(crate) async fn read_block_op_response(&mut self) -> Result<hdfs::BlockOpResponseProto> {
+        let buf = self.reader.fill_buf().await?;
         let msg_length = prost::decode_length_delimiter(buf)?;
         let total_size = msg_length + prost::length_delimiter_len(msg_length);
 
         let mut response_buf = BytesMut::zeroed(total_size);
-        self.reader.read_exact(&mut response_buf)?;
+        self.reader.read_exact(&mut response_buf).await?;
 
         let response = hdfs::BlockOpResponseProto::decode_length_delimited(response_buf.freeze())?;
         Ok(response)
     }
 
-    pub fn read_packet(&mut self) -> Result<Packet> {
+    pub(crate) async fn read_packet(&mut self) -> Result<Packet> {
         let mut payload_len_buf = [0u8; 4];
         let mut header_len_buf = [0u8; 2];
-        self.reader.read_exact(&mut payload_len_buf)?;
-        self.reader.read_exact(&mut header_len_buf)?;
+        self.reader.read_exact(&mut payload_len_buf).await?;
+        self.reader.read_exact(&mut header_len_buf).await?;
 
         let payload_length = u32::from_be_bytes(payload_len_buf) as usize;
         let header_length = u16::from_be_bytes(header_len_buf) as usize;
 
         let mut remaining_buf = BytesMut::zeroed(payload_length - 4 + header_length);
-        self.reader.read_exact(&mut remaining_buf)?;
+        self.reader.read_exact(&mut remaining_buf).await?;
 
         let bytes = remaining_buf.freeze();
 

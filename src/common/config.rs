@@ -4,8 +4,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use log::debug;
-
 const HADOOP_CONF_DIR: &str = "HADOOP_CONF_DIR";
 const HADOOP_HOME: &str = "HADOOP_HOME";
 

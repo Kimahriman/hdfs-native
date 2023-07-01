@@ -1,0 +1,25 @@
+[package]
+name = "hdfs-native-python"
+version = "0.9.0"
+authors = ["Qingping Hou <dave2008713@gmail.com>"]
+homepage = "https://github.com/delta-io/delta-rs"
+license = "Apache-2.0"
+description = "Native Delta Lake Python binding based on delta-rs with Pandas integration"
+readme = "README.md"
+edition = "2021"
+keywords = ["deltalake", "delta", "datalake", "pandas", "arrow"]
+
+[lib]
+name = "hdfs-native"
+crate-type = ["cdylib"]
+doc = false
+
+[package.metadata.maturin]
+name = "deltalake._internal"
+
+[dependencies]
+futures = "0.3"
+hdfs-native = { version = "0", path = "../" }
+pyo3 = { version = "0.18", features = ["extension-module", "abi3", "abi3-py37"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+

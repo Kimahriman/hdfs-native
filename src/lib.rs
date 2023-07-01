@@ -9,3 +9,6 @@ pub mod security;
 pub use client::Client;
 pub use error::HdfsError;
 pub use error::Result;
+
+#[cfg(feature = "object_store")]
+pub mod object_store;

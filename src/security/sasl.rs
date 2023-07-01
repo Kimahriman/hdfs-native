@@ -1,6 +1,11 @@
-use std::io::{self, Cursor, Read, Write};
-use std::net::TcpStream;
+use std::io::{self, Cursor, Write};
 use std::sync::{Arc, Mutex};
+use tokio::net::tcp::OwnedWriteHalf;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::tcp::OwnedReadHalf,
+    net::TcpStream,
+};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use log::debug;
@@ -27,8 +32,8 @@ use {
     rsasl2::mechanisms::gssapi::properties::{GssSecurityLayer, GssService, SecurityLayer},
     rsasl2::mechanisms::gssapi::GSSAPI,
     rsasl2::prelude::*,
-    rsasl2::property::{DigestMD5HashedPassword, Hostname, Password, Realm},
-    rsasl2::registry::{distributed_slice, Matches, Named, Side, MECHANISMS},
+    rsasl2::property::{Hostname, Password},
+    rsasl2::registry::{Matches, Named, Side},
 };
 
 use super::user::User;
@@ -39,8 +44,6 @@ const SASL_CALL_ID: i32 = -33;
 static KERBEROS_MECHANISMS: &[Mechanism] = &[GSSAPI];
 #[cfg(feature = "rsasl2")]
 static TOKEN_MECHANISMS: &[Mechanism] = &[DIGEST_MD5];
-
-static EMPTY: &[u8] = &[0u8; 0];
 
 pub(crate) enum AuthMethod {
     SIMPLE,
@@ -109,85 +112,35 @@ type SaslSession = DiscardOnDrop<Session<()>>;
 type SaslSession = Session;
 
 pub struct SaslRpcClient {
-    stream: TcpStream,
+    reader: SaslReader,
+    writer: SaslWriter,
     #[cfg(feature = "rsasl2")]
     session: Option<Arc<Mutex<SaslSession>>>,
-    buffer: Bytes,
 }
 
 impl SaslRpcClient {
     pub fn create(stream: TcpStream) -> SaslRpcClient {
+        let (reader, writer) = stream.into_split();
         SaslRpcClient {
-            stream,
+            reader: SaslReader::new(reader),
+            writer: SaslWriter::new(writer),
             #[cfg(feature = "rsasl2")]
             session: None,
-            buffer: Bytes::new(),
         }
     }
 
-    fn create_request_header() -> RpcRequestHeaderProto {
-        let mut request_header = RpcRequestHeaderProto::default();
-        request_header.rpc_kind = Some(RpcKindProto::RpcProtocolBuffer as i32);
-        // RPC_FINAL_PACKET
-        request_header.rpc_op = Some(0);
-        request_header.call_id = SASL_CALL_ID;
-        request_header.client_id = Vec::new();
-        request_header.retry_count = Some(-1);
-        request_header
-    }
-
-    fn send_sasl_message(&mut self, message: &RpcSaslProto) -> io::Result<()> {
-        let header_buf = Self::create_request_header().encode_length_delimited_to_vec();
-        let message_buf = message.encode_length_delimited_to_vec();
-        let size = (header_buf.len() + message_buf.len()) as u32;
-
-        self.stream.write(&size.to_be_bytes())?;
-        self.stream.write(&header_buf)?;
-        self.stream.write(&message_buf)?;
-        self.stream.flush()?;
-
-        Ok(())
-    }
-
-    fn read_response(&mut self) -> io::Result<RpcSaslProto> {
-        let mut buf = [0u8; 4];
-        self.stream.read_exact(&mut buf)?;
-
-        let msg_length = u32::from_be_bytes(buf);
-
-        let mut buf = BytesMut::zeroed(msg_length as usize);
-        self.stream.read_exact(&mut buf)?;
-
-        let mut bytes = buf.freeze();
-        let rpc_response = RpcResponseHeaderProto::decode_length_delimited(&mut bytes)?;
-        debug!("{:?}", rpc_response);
-
-        match RpcStatusProto::from_i32(rpc_response.status).unwrap() {
-            RpcStatusProto::Error => {
-                todo!()
-            }
-            RpcStatusProto::Fatal => {
-                todo!()
-            }
-            _ => (),
-        }
-
-        let sasl_response = RpcSaslProto::decode_length_delimited(&mut bytes)?;
-        Ok(sasl_response)
-    }
-
-    pub(crate) fn negotiate(&mut self) -> Result<AuthMethod> {
+    pub(crate) async fn negotiate(&mut self) -> Result<AuthMethod> {
         let mut rpc_sasl = RpcSaslProto::default();
         rpc_sasl.state = SaslState::Negotiate as i32;
 
-        self.send_sasl_message(&rpc_sasl)?;
+        self.writer.send_sasl_message(&rpc_sasl).await?;
 
         let mut done = false;
         let mut selected_method: Option<AuthMethod> = None;
         let mut session: Option<SaslSession> = None;
         while !done {
             let mut response: Option<RpcSaslProto> = None;
-            let message = self.read_response()?;
+            let message = self.reader.read_response().await?;
             println!("{:?}", message);
             match SaslState::from_i32(message.state).unwrap() {
                 SaslState::Negotiate => {
@@ -284,8 +237,8 @@ impl SaslRpcClient {
             }
 
             if let Some(r) = response {
-                println!("Sending SASL response {:?}", r);
-                self.send_sasl_message(&r)?;
+                debug!("Sending SASL response {:?}", r);
+                self.writer.send_sasl_message(&r).await?;
             }
         }
 
@@ -402,54 +355,151 @@ impl SaslRpcClient {
         Err(HdfsError::NoSASLMechanism)
     }
 
-    pub fn try_clone(&self) -> Result<SaslRpcClient> {
-        let stream = self.stream.try_clone()?;
-        let client = SaslRpcClient {
-            stream,
-            #[cfg(feature = "rsasl2")]
-            session: self.session.as_ref().map(Arc::clone),
-            buffer: Bytes::new(),
-        };
-        Ok(client)
+    pub(crate) fn split(self) -> (SaslReader, SaslWriter) {
+        let mut reader = self.reader;
+        let mut writer = self.writer;
+        if let Some(session) = self.session {
+            reader.set_session(Arc::clone(&session));
+            writer.set_session(session);
+        }
+        (reader, writer)
     }
 }
 
-impl Read for SaslRpcClient {
-    /// If the session uses security, we load the next SASL message if our buffer is empty,
-    /// and then return the entire buffer up to the amount the client expects. We rely on
-    /// read_exact to call this multiple times as needed to get data from multiple SASL messages.
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.session.is_some() {
-            if !self.buffer.has_remaining() {
-                let response = self.read_response()?;
-                if response.state() != SaslState::Wrap {
-                    todo!();
-                }
+pub(crate) struct SaslReader {
+    stream: OwnedReadHalf,
+    session: Option<Arc<Mutex<Session>>>,
+    buffer: Bytes,
+}
 
-                let mut writer = BytesMut::with_capacity(response.token().len()).writer();
-                self.session
-                    .as_ref()
-                    .unwrap()
-                    .lock()
-                    .unwrap()
-                    .decode(response.token(), &mut writer)
-                    .unwrap_or_else(|_| todo!());
-                self.buffer = writer.into_inner().freeze();
+impl SaslReader {
+    fn new(stream: OwnedReadHalf) -> Self {
+        SaslReader {
+            stream,
+            session: None,
+            buffer: Bytes::new(),
+        }
+    }
+
+    fn set_session(&mut self, session: Arc<Mutex<Session>>) {
+        self.session = Some(session);
+    }
+
+    async fn read_response(&mut self) -> io::Result<RpcSaslProto> {
+        let mut buf = [0u8; 4];
+        self.stream.read_exact(&mut buf).await?;
+
+        let msg_length = u32::from_be_bytes(buf);
+
+        let mut buf = BytesMut::zeroed(msg_length as usize);
+        self.stream.read_exact(&mut buf).await?;
+
+        let mut bytes = buf.freeze();
+        let rpc_response = RpcResponseHeaderProto::decode_length_delimited(&mut bytes)?;
+        debug!("{:?}", rpc_response);
+
+        match RpcStatusProto::from_i32(rpc_response.status).unwrap() {
+            RpcStatusProto::Error => {
+                todo!()
             }
-            let read_len = usize::min(buf.len(), self.buffer.remaining());
-            self.buffer.copy_to_slice(&mut buf[0..read_len]);
+            RpcStatusProto::Fatal => {
+                todo!()
+            }
+            _ => (),
+        }
+
+        let sasl_response = RpcSaslProto::decode_length_delimited(&mut bytes)?;
+        Ok(sasl_response)
+    }
+
+    pub(crate) async fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.session.is_some() {
+            let read_len = buf.len();
+            let mut bytes_remaining = read_len;
+            while bytes_remaining > 0 {
+                if !self.buffer.has_remaining() {
+                    let response = self.read_response().await?;
+                    if response.state() != SaslState::Wrap {
+                        todo!();
+                    }
+
+                    let mut writer = BytesMut::with_capacity(response.token().len()).writer();
+                    self.session
+                        .as_ref()
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .decode(response.token(), &mut writer)
+                        .unwrap_or_else(|_| todo!());
+                    self.buffer = writer.into_inner().freeze();
+                }
+                let copy_len = usize::min(bytes_remaining, self.buffer.remaining());
+                let copy_start = read_len - bytes_remaining;
+                self.buffer
+                    .copy_to_slice(&mut buf[copy_start..(copy_start + copy_len)]);
+                bytes_remaining -= copy_len;
+            }
 
             Ok(read_len)
         } else {
-            self.stream.read(buf)
+            self.stream.read_exact(buf).await
         }
     }
 }
 
-impl Write for SaslRpcClient {
-    /// If we are using security, encodes the provided buffer and sends the SASL message.
-    /// TODO: Respect max size for a SASL message
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+// TODO: Can we implement this?
+// impl AsyncRead for SaslReader {
+//     fn poll_read(
+//         self: Pin<&mut Self>,
+//         cx: &mut task::Context<'_>,
+//         buf: &mut ReadBuf<'_>,
+//     ) -> Poll<io::Result<()>> {
+//         todo!()
+//     }
+// }
+
+pub(crate) struct SaslWriter {
+    stream: OwnedWriteHalf,
+    session: Option<Arc<Mutex<Session>>>,
+}
+
+impl SaslWriter {
+    fn new(stream: OwnedWriteHalf) -> Self {
+        SaslWriter {
+            stream,
+            session: None,
+        }
+    }
+
+    fn set_session(&mut self, session: Arc<Mutex<Session>>) {
+        self.session = Some(session);
+    }
+
+    fn create_request_header() -> RpcRequestHeaderProto {
+        let mut request_header = RpcRequestHeaderProto::default();
+        request_header.rpc_kind = Some(RpcKindProto::RpcProtocolBuffer as i32);
+        // RPC_FINAL_PACKET
+        request_header.rpc_op = Some(0);
+        request_header.call_id = SASL_CALL_ID;
+        request_header.client_id = Vec::new();
+        request_header.retry_count = Some(-1);
+        request_header
+    }
+
+    async fn send_sasl_message(&mut self, message: &RpcSaslProto) -> io::Result<()> {
+        let header_buf = Self::create_request_header().encode_length_delimited_to_vec();
+        let message_buf = message.encode_length_delimited_to_vec();
+        let size = (header_buf.len() + message_buf.len()) as u32;
+
+        self.stream.write(&size.to_be_bytes()).await?;
+        self.stream.write(&header_buf).await?;
+        self.stream.write(&message_buf).await?;
+        self.stream.flush().await?;
+
+        Ok(())
+    }
+
+    pub(crate) async fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.session.is_some() {
             let mut rpc_sasl = RpcSaslProto::default();
             rpc_sasl.state = SaslState::Wrap as i32;
@@ -465,17 +515,53 @@ impl Write for SaslRpcClient {
 
             rpc_sasl.token = Some(writer.into_inner());
 
-            self.send_sasl_message(&rpc_sasl)?;
+            self.send_sasl_message(&rpc_sasl).await?;
             Ok(buf.len())
         } else {
-            self.stream.write(buf)
+            self.stream.write(buf).await
         }
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        self.stream.flush()
+    pub(crate) async fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush().await
     }
 }
+
+impl std::fmt::Debug for SaslWriter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SaslWriter")
+            .field("stream", &self.stream)
+            .finish()
+    }
+}
+
+// TODO: Can we implement this?
+// impl AsyncWrite for SaslWriter {
+//     fn poll_write(
+//         self: Pin<&mut Self>,
+//         cx: &mut task::Context<'_>,
+//         buf: &[u8],
+//     ) -> Poll<result::Result<usize, io::Error>> {
+//         let mut stream = self.stream;
+//         Pin::new(&mut stream).poll_write(cx, buf)
+//     }
+
+//     fn poll_flush(
+//         self: Pin<&mut Self>,
+//         cx: &mut task::Context<'_>,
+//     ) -> Poll<result::Result<(), io::Error>> {
+//         let mut stream = self.stream;
+//         Pin::new(&mut stream).poll_flush(cx)
+//     }
+
+//     fn poll_shutdown(
+//         self: Pin<&mut Self>,
+//         cx: &mut task::Context<'_>,
+//     ) -> Poll<result::Result<(), io::Error>> {
+//         let mut stream = self.stream;
+//         Pin::new(&mut stream).poll_shutdown(cx)
+//     }
+// }
 
 #[cfg(feature = "rsasl2")]
 #[cfg_attr(feature = "registry_static", distributed_slice(MECHANISMS))]
@@ -512,7 +598,7 @@ impl Authentication for DigestMD5 {
         &mut self,
         session: &mut rsasl2::mechanism::MechanismData,
         input: Option<&[u8]>,
-        writer: &mut dyn Write,
+        _writer: &mut dyn Write,
     ) -> std::result::Result<State, SessionError> {
         println!("{:?}", session);
         println!("{:?}", input);

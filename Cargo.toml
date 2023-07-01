@@ -1,11 +1,7 @@
 [package]
-name = "hdfs_native"
+name = "hdfs-native"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-[lib]
-name = "hdfs_native"
 
 [dependencies]
 bytes = "1"
@@ -20,6 +16,11 @@ libgssapi = { version = "0.6.4", default_features = false }
 users = { version = "0.11", default_features = false }
 thiserror = "1.0"
 log = "0.4"
+futures = "0.3"
+tokio = { version = "1.28", features = ["rt", "net", "io-util", "macros"] }
+object_store = { version = "0.6", optional = true }
+async-trait = { version = "0.1", optional = true }
+chrono = { version = "0.4.26", optional = true }
 
 [build-dependencies]
 prost-build = { version = "0.11" }
@@ -31,7 +32,8 @@ tempfile = "3.5"
 which = "4.4"
 
 [features]
-default = ["rsasl2"]
+default = ["rsasl2", "object_store"]
+object_store = ["dep:object_store", "dep:async-trait", "dep:chrono"]
 rsasl1 = ["dep:rsasl"]
 rsasl2 = ["dep:rsasl2"]
 

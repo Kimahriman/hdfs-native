@@ -1,4 +1,5 @@
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
+use futures::future::join_all;
 use log::debug;
 
 use crate::proto::hdfs;
@@ -12,24 +13,34 @@ pub struct HdfsFileReader {
 }
 
 impl HdfsFileReader {
-    pub fn new(located_blocks: hdfs::LocatedBlocksProto) -> Self {
+    pub(crate) fn new(located_blocks: hdfs::LocatedBlocksProto) -> Self {
         HdfsFileReader { located_blocks }
     }
 
-    pub fn read(&self, offset: usize, len: usize) -> Result<Bytes> {
-        let mut buf = BytesMut::with_capacity(len);
-        self.read_buf(&mut buf, offset, len)?;
+    pub async fn read(&self, offset: usize, len: usize) -> Result<Bytes> {
+        let mut buf = BytesMut::zeroed(len);
+        self.read_buf(&mut buf, offset, len).await?;
         Ok(buf.freeze())
     }
 
     /// Read file data into an existing buffer. Buffer will be extended by the length of the file.
-    pub fn read_buf(&self, buf: &mut impl BufMut, offset: usize, len: usize) -> Result<()> {
-        let mut block_readers = self.create_block_readers(offset, len);
-        let mut block_num = 1;
-        for reader in block_readers.iter_mut() {
-            block_num += 1;
+    pub async fn read_buf(&self, buf: &mut [u8], offset: usize, len: usize) -> Result<()> {
+        assert!(buf.len() >= len);
+        let block_readers = self.create_block_readers(offset, len);
+
+        let mut futures = Vec::new();
+
+        let mut remaining = buf;
+
+        for reader in block_readers.iter() {
             debug!("Block reader: {:?}", reader);
-            reader.read(buf)?;
+            let (left, right) = remaining.split_at_mut(reader.len);
+            futures.push(reader.read(left));
+            remaining = right;
+        }
+
+        for future in join_all(futures).await.into_iter() {
+            future?;
         }
 
         Ok(())

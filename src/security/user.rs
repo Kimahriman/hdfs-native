@@ -20,14 +20,16 @@ const HADOOP_TOKEN_FILE_LOCATION: &str = "HADOOP_TOKEN_FILE_LOCATION";
 const TOKEN_STORAGE_MAGIC: &[u8] = "HDTS".as_bytes();
 
 #[derive(Clone)]
-pub enum LoginMethod {
+#[allow(dead_code)]
+pub(crate) enum LoginMethod {
     SIMPLE,
     KERBEROS,
     TOKEN,
 }
 
 #[derive(Debug)]
-pub struct Token {
+#[allow(dead_code)]
+pub(crate) struct Token {
     alias: String,
     identifier: Vec<u8>,
     password: Vec<u8>,
@@ -71,7 +73,7 @@ impl Token {
         }
     }
 
-    fn parse_writable(reader: impl Buf) -> io::Result<Vec<Token>> {
+    fn parse_writable(_reader: impl Buf) -> io::Result<Vec<Token>> {
         // let token_count = prost::decode_length_delimiter(reader)?;
         // let mut tokens: Vec<Token> = Vec::new();
 
@@ -111,7 +113,8 @@ pub(crate) struct UserInfo {
 }
 
 #[derive(Debug)]
-pub struct User {
+pub(crate) struct User {
+    #[allow(dead_code)]
     tokens: Vec<Token>,
 }
 

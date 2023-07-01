@@ -1,5 +1,6 @@
 pub(crate) mod minidfs;
 
+use hdfs_native::object_store::HdfsObjectStore;
 use hdfs_native::{client::Client, Result};
 use std::collections::HashSet;
 use std::env;
@@ -81,22 +82,35 @@ fn setup(features: &HashSet<DfsFeatures>) -> MiniDfs {
     dfs
 }
 
-pub(crate) fn test_with_features(features: &HashSet<DfsFeatures>) -> Result<()> {
+pub(crate) async fn test_with_features(features: &HashSet<DfsFeatures>) -> Result<()> {
     let _ = env_logger::builder().is_test(true).try_init();
 
     let _dfs = setup(features);
-
-    // Check listing
     let client = Client::new(&_dfs.url)?;
-    let statuses = client.list_status("/")?;
+
+    test_listing(&client).await?;
+    test_read(&client).await?;
+    test_rename(&client).await?;
+
+    #[cfg(feature = "object_store")]
+    test_object_store(client).await.unwrap();
+
+    Ok(())
+}
+
+async fn test_listing(client: &Client) -> Result<()> {
+    let statuses = client.list_status("/").await?;
     assert_eq!(statuses.len(), 1);
     let status = &statuses[0];
     assert_eq!(status.path, "testfile");
     assert_eq!(status.length, TEST_FILE_INTS * 4);
+    Ok(())
+}
 
+async fn test_read(client: &Client) -> Result<()> {
     // Read the whole file
-    let reader = client.read("/testfile")?;
-    let buf = reader.read(0, status.length as usize)?;
+    let reader = client.read("/testfile").await?;
+    let buf = reader.read(0, TEST_FILE_INTS * 4).await?;
     for i in 0..TEST_FILE_INTS as i32 {
         let mut dst = [0u8; 4];
         let offset = (i * 4) as usize;
@@ -105,9 +119,35 @@ pub(crate) fn test_with_features(features: &HashSet<DfsFeatures>) -> Result<()> 
     }
 
     // Read a single integer from the file
-    let buf = reader.read(TEST_FILE_INTS as usize / 2 * 4, 4)?;
+    let buf = reader.read(TEST_FILE_INTS as usize / 2 * 4, 4).await?;
     let mut dst = [0u8; 4];
     dst.copy_from_slice(&buf[..]);
     assert_eq!(i32::from_be_bytes(dst), TEST_FILE_INTS as i32 / 2);
+    Ok(())
+}
+
+async fn test_rename(client: &Client) -> Result<()> {
+    client.rename("/testfile", "/testfile2", false).await?;
+
+    assert!(client.list_status("/testfile").await.is_err());
+    assert_eq!(client.list_status("/testfile2").await?.len(), 1);
+
+    client.rename("/testfile2", "/testfile", false).await?;
+    assert!(client.list_status("/testfile2").await.is_err());
+    assert_eq!(client.list_status("/testfile").await?.len(), 1);
+
+    Ok(())
+}
+
+#[cfg(feature = "object_store")]
+async fn test_object_store(client: Client) -> object_store::Result<()> {
+    use object_store::{path::Path, ObjectStore};
+
+    let store = HdfsObjectStore::new(client);
+
+    store
+        .rename(&Path::from("/testfile"), &Path::from("/testfile2"))
+        .await?;
+
     Ok(())
 }

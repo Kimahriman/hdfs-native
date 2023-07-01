@@ -11,6 +11,78 @@ use crate::proto::hdfs::hdfs_file_status_proto::FileType;
 
 use crate::proto::hdfs::HdfsFileStatusProto;
 
+#[derive(Debug)]
+pub struct Client {
+    protocol: Arc<NamenodeProtocol>,
+}
+
+impl Client {
+    /// Creates a new HDFS Client. The URL must include the protocol and host, and optionally a port.
+    /// If a port is included, the host is treated as a single NameNode. If no port is included, the
+    /// host is treated as a name service that will be resolved using the HDFS config.
+    ///
+    /// viewfs schemes and name services are not currently supported.
+    pub fn new(url: &str) -> Result<Self> {
+        let parsed_url = Url::parse(url).expect("Failed to parse provided URL");
+
+        assert_eq!(
+            parsed_url.scheme(),
+            "hdfs",
+            "Only hdfs:// scheme is currently supported"
+        );
+        assert!(parsed_url.host().is_some(), "Host must be specified");
+
+        let config = Configuration::new()?;
+
+        let proxy = NameServiceProxy::new(&parsed_url, &config);
+        let protocol = Arc::new(NamenodeProtocol::new(proxy));
+        Ok(Client { protocol })
+    }
+
+    /// Retrieves a list of file status for all files in `path`. This does not recurse into directories.
+    pub async fn list_status(&self, path: &str) -> Result<Vec<FileStatus>> {
+        let mut results = Vec::<FileStatus>::new();
+        let mut start_after = Vec::<u8>::new();
+        loop {
+            let partial_listing = self.protocol.get_listing(path, start_after, true).await?;
+            match partial_listing.dir_list {
+                None => return Err(HdfsError::FileNotFound),
+                Some(dir_list) => {
+                    start_after = dir_list
+                        .partial_listing
+                        .last()
+                        .map(|p| p.path.clone())
+                        .unwrap_or(Vec::new());
+                    let file_statuses = dir_list.partial_listing.into_iter().map(FileStatus::from);
+                    results.extend(file_statuses);
+                    if dir_list.remaining_entries == 0 {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(results)
+    }
+
+    // pub fn list_status_iterator(&self, path: &str) -> ListStatusIterator {
+    //     ListStatusIterator::new(path.to_string(), self.protocol.clone())
+    // }
+
+    /// Opens a file reader for the file at `path`. Path should not include a scheme.
+    pub async fn read(&self, path: &str) -> Result<HdfsFileReader> {
+        let located_info = self.protocol.get_located_file_info(path).await?;
+        match located_info.fs {
+            Some(status) => Ok(HdfsFileReader::new(status.locations.unwrap())),
+            None => Err(HdfsError::FileNotFound),
+        }
+    }
+
+    /// Renames `src` to `dst`. Returns Ok(()) on success, and Err otherwise.
+    pub async fn rename(&self, src: &str, dst: &str, overwrite: bool) -> Result<()> {
+        self.protocol.rename(src, dst, overwrite).await.map(|_| ())
+    }
+}
+
 // pub struct ListStatusIterator {
 //     path: String,
 //     protocol: Arc<NamenodeProtocol<NamenodeConnection>>,
@@ -50,70 +122,6 @@ use crate::proto::hdfs::HdfsFileStatusProto;
 //         }
 //     }
 // }
-
-pub struct Client {
-    protocol: Arc<NamenodeProtocol<NameServiceProxy>>,
-}
-
-impl Client {
-    /// Creates a new HDFS Client. The URL must include the protocol and host, and optionally a port.
-    /// If a port is included, the host is treated as a single NameNode. If no port is included, the
-    /// host is treated as a name service that will be resolved using the HDFS config.
-    ///
-    /// viewfs schemes and name services are not currently supported.
-    pub fn new(url: &str) -> Result<Self> {
-        let parsed_url = Url::parse(url).expect("Failed to parse provided URL");
-
-        assert_eq!(
-            parsed_url.scheme(),
-            "hdfs",
-            "Only hdfs:// scheme is currently supported"
-        );
-        assert!(parsed_url.host().is_some(), "Host must be specified");
-
-        let config = Configuration::new()?;
-
-        let proxy = NameServiceProxy::new(&parsed_url, &config);
-        let protocol = Arc::new(NamenodeProtocol::new(proxy));
-        Ok(Client { protocol })
-    }
-
-    pub fn list_status(&self, path: &str) -> Result<Vec<FileStatus>> {
-        let mut results = Vec::<FileStatus>::new();
-        let mut start_after = Vec::<u8>::new();
-        loop {
-            let partial_listing = self.protocol.get_listing(path, start_after, true)?;
-            match partial_listing.dir_list {
-                None => return Err(HdfsError::FileNotFound),
-                Some(dir_list) => {
-                    start_after = dir_list
-                        .partial_listing
-                        .last()
-                        .map(|p| p.path.clone())
-                        .unwrap_or(Vec::new());
-                    let file_statuses = dir_list.partial_listing.into_iter().map(FileStatus::from);
-                    results.extend(file_statuses);
-                    if dir_list.remaining_entries == 0 {
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(results)
-    }
-
-    // pub fn list_status_iterator(&self, path: &str) -> ListStatusIterator {
-    //     ListStatusIterator::new(path.to_string(), self.protocol.clone())
-    // }
-
-    pub fn read(&self, path: &str) -> Result<HdfsFileReader> {
-        let located_info = self.protocol.get_located_file_info(path)?;
-        match located_info.fs {
-            Some(status) => Ok(HdfsFileReader::new(status.locations.unwrap())),
-            None => Err(HdfsError::FileNotFound),
-        }
-    }
-}
 
 pub struct FileStatus {
     pub path: String,
