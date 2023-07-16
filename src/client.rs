@@ -74,8 +74,18 @@ impl Client {
         Ok(results)
     }
 
-    pub fn list_status_iterator(&self, path: &str) -> ListStatusIterator {
-        ListStatusIterator::new(path.to_string(), self.protocol.clone())
+    pub fn list_status_iterator(
+        &self,
+        path: &str,
+        files_only: bool,
+        recursive: bool,
+    ) -> ListStatusIterator {
+        ListStatusIterator::new(
+            path.to_string(),
+            self.protocol.clone(),
+            files_only,
+            recursive,
+        )
     }
 
     /// Opens a file reader for the file at `path`. Path should not include a scheme.
@@ -97,6 +107,8 @@ impl Client {
 pub struct ListStatusIterator {
     path: String,
     protocol: Arc<NamenodeProtocol>,
+    files_only: bool,
+    recursive: bool,
     partial_listing: VecDeque<HdfsFileStatusProto>,
     listing_position: usize,
     remaining: u32,
@@ -104,10 +116,17 @@ pub struct ListStatusIterator {
 }
 
 impl ListStatusIterator {
-    fn new(path: String, protocol: Arc<NamenodeProtocol>) -> Self {
+    fn new(
+        path: String,
+        protocol: Arc<NamenodeProtocol>,
+        files_only: bool,
+        recursive: bool,
+    ) -> Self {
         ListStatusIterator {
             path,
             protocol,
+            files_only,
+            recursive,
             partial_listing: VecDeque::new(),
             listing_position: 0,
             remaining: 1,
@@ -128,7 +147,11 @@ impl ListStatusIterator {
                 .unwrap_or(Vec::new());
             self.listing_position = 0;
             self.remaining = dir_list.remaining_entries;
-            self.partial_listing = VecDeque::from(dir_list.partial_listing);
+            self.partial_listing = dir_list
+                .partial_listing
+                .into_iter()
+                .filter(|s| s.file_type() != FileType::IsDir)
+                .collect();
             Ok(self.partial_listing.len() > 0)
         } else {
             Ok(false)

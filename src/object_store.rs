@@ -21,8 +21,12 @@ impl HdfsObjectStore {
     }
 
     /// ObjectStore paths always remove the leading slash, so add it back
-    fn make_absolute(path: &Path) -> String {
+    fn make_absolute_file(path: &Path) -> String {
         format!("/{}", path.as_ref())
+    }
+
+    fn make_absolute_dir(path: &Path) -> String {
+        format!("/{}/", path.as_ref())
     }
 }
 
@@ -79,7 +83,10 @@ impl ObjectStore for HdfsObjectStore {
             return Err(object_store::Error::NotImplemented);
         }
 
-        let reader = self.client.read(&Self::make_absolute(location)).await?;
+        let reader = self
+            .client
+            .read(&Self::make_absolute_file(location))
+            .await?;
         let bytes = if let Some(range) = options.range {
             reader
                 .read_range(range.start, range.end - range.start)
@@ -97,7 +104,7 @@ impl ObjectStore for HdfsObjectStore {
     async fn head(&self, location: &Path) -> Result<ObjectMeta> {
         let status = self
             .client
-            .get_file_info(&Self::make_absolute(location))
+            .get_file_info(&Self::make_absolute_file(location))
             .await?;
 
         Ok(ObjectMeta {
@@ -122,12 +129,14 @@ impl ObjectStore for HdfsObjectStore {
     /// `foo/bar_baz/x`.
     ///
     /// Note: the order of returned [`ObjectMeta`] is not guaranteed
-    /// TODO: Make this lazy with a ListStatusIterator and needs to be recursive?
+    /// TODO: needs to be recursive?
     async fn list(&self, prefix: Option<&Path>) -> Result<BoxStream<'_, Result<ObjectMeta>>> {
         let iter = self.client.list_status_iterator(
             &prefix
-                .map(|p| Self::make_absolute(p))
+                .map(|p| Self::make_absolute_dir(p))
                 .unwrap_or("".to_string()),
+            true,
+            true,
         );
 
         let stream = stream::unfold(iter, |mut state| async move {
@@ -157,26 +166,39 @@ impl ObjectStore for HdfsObjectStore {
     ///
     /// Prefixes are evaluated on a path segment basis, i.e. `foo/bar/` is a prefix of `foo/bar/x` but not of
     /// `foo/bar_baz/x`.
-    async fn list_with_delimiter(&self, _prefix: Option<&Path>) -> Result<ListResult> {
-        todo!()
-        // let statuses = self
-        //     .client
-        //     .list_status(prefix.map(|p| p.to_string().as_ref()).unwrap_or(""))
-        //     .await
-        //     .unwrap();
+    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> Result<ListResult> {
+        let statuses = self
+            .client
+            .list_status(
+                &prefix
+                    .map(|p| Self::make_absolute_dir(p))
+                    .unwrap_or("".to_string()),
+            )
+            .await?;
 
-        // Ok(futures::stream::iter(statuses.iter().map(|status| {
-        //     Ok(ObjectMeta {
-        //         location: Path::from(status.path),
-        //         last_modified: DateTime::<Utc>::from_utc(
-        //             NaiveDateTime::from_timestamp_opt(status.modification_time, 0).unwrap(),
-        //             Utc,
-        //         ),
-        //         size: status.length,
-        //         e_tag: None,
-        //     })
-        // }))
-        // .boxed())
+        let dirs: Vec<Path> = statuses
+            .iter()
+            .filter(|s| s.isdir)
+            .map(|s| Path::from(s.path.as_ref()))
+            .collect();
+        let files: Vec<ObjectMeta> = statuses
+            .iter()
+            .filter(|s| !s.isdir)
+            .map(|status| ObjectMeta {
+                location: Path::from(status.path.as_ref()),
+                last_modified: DateTime::<Utc>::from_utc(
+                    NaiveDateTime::from_timestamp_opt(status.modification_time as i64, 0).unwrap(),
+                    Utc,
+                ),
+                size: status.length,
+                e_tag: None,
+            })
+            .collect();
+
+        Ok(ListResult {
+            common_prefixes: dirs,
+            objects: files,
+        })
     }
 
     /// Copy an object from one path to another in the same object store.
@@ -189,14 +211,22 @@ impl ObjectStore for HdfsObjectStore {
     async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
         Ok(self
             .client
-            .rename(&Self::make_absolute(from), &Self::make_absolute(to), false)
+            .rename(
+                &Self::make_absolute_file(from),
+                &Self::make_absolute_file(to),
+                false,
+            )
             .await?)
     }
 
     async fn rename_if_not_exists(&self, from: &Path, to: &Path) -> Result<()> {
         Ok(self
             .client
-            .rename(&Self::make_absolute(from), &Self::make_absolute(to), false)
+            .rename(
+                &Self::make_absolute_file(from),
+                &Self::make_absolute_file(to),
+                false,
+            )
             .await?)
     }
 
