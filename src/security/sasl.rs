@@ -1,4 +1,7 @@
+use std::ffi::CString;
 use std::io::{self, Cursor, Write};
+use std::ptr;
+use std::sync::atomic::AtomicPtr;
 use std::sync::{Arc, Mutex};
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::{
@@ -7,8 +10,9 @@ use tokio::{
     net::TcpStream,
 };
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-use log::debug;
+use base64::{engine::general_purpose, Engine as _};
+use bytes::{Buf, Bytes, BytesMut};
+use log::{debug, warn};
 use prost::Message;
 
 use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
@@ -17,33 +21,31 @@ use crate::proto::common::{
     RpcKindProto, RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto,
 };
 use crate::{HdfsError, Result};
-#[cfg(feature = "rsasl1")]
-use rsasl::{
-    DiscardOnDrop, Property, Session,
-    Step::{Done, NeedsMore},
-    SASL,
-};
-#[cfg(feature = "rsasl1")]
-use std::ffi::CString;
-#[cfg(feature = "rsasl2")]
+#[cfg(feature = "token")]
+use gsasl_sys as gsasl;
+use libc::{c_char, c_void, memcpy};
+#[cfg(feature = "kerberos")]
 use {
-    rsasl2::callback::{Context, Request, SessionCallback, SessionData},
-    rsasl2::mechanism::Authentication,
-    rsasl2::mechanisms::gssapi::properties::{GssSecurityLayer, GssService, SecurityLayer},
-    rsasl2::mechanisms::gssapi::GSSAPI,
-    rsasl2::prelude::*,
-    rsasl2::property::{Hostname, Password},
-    rsasl2::registry::{Matches, Named, Side},
+    rsasl::callback::{Context, Request, SessionCallback, SessionData},
+    rsasl::mechanism::Authentication,
+    rsasl::mechanisms::gssapi::properties::{GssSecurityLayer, GssService, SecurityLayer},
+    rsasl::mechanisms::gssapi::GSSAPI,
+    rsasl::prelude::*,
+    rsasl::property::{Hostname, Password},
+    rsasl::registry::{Matches, Named, Side},
 };
 
+use super::user::Token;
+#[cfg(feature = "kerberos")]
 use super::user::User;
 
 const SASL_CALL_ID: i32 = -33;
+const HDFS_DELEGATION_TOKEN: &str = "HDFS_DELEGATION_TOKEN";
 
-#[cfg(feature = "rsasl2")]
+#[cfg(feature = "kerberos")]
 static KERBEROS_MECHANISMS: &[Mechanism] = &[GSSAPI];
-#[cfg(feature = "rsasl2")]
-static TOKEN_MECHANISMS: &[Mechanism] = &[DIGEST_MD5];
+// #[cfg(feature = "kerberos")]
+// static TOKEN_MECHANISMS: &[Mechanism] = &[DIGEST_MD5];
 
 pub(crate) enum AuthMethod {
     SIMPLE,
@@ -60,13 +62,13 @@ impl AuthMethod {
         }
     }
 }
-
+#[cfg(feature = "kerberos")]
 struct KerberosCallback {
     service: String,
     hostname: String,
 }
 
-#[cfg(feature = "rsasl2")]
+#[cfg(feature = "kerberos")]
 impl SessionCallback for KerberosCallback {
     fn callback(
         &self,
@@ -87,9 +89,10 @@ impl SessionCallback for KerberosCallback {
     }
 }
 
+#[cfg(feature = "kerberos")]
 struct TokenCallback {}
 
-#[cfg(feature = "rsasl2")]
+#[cfg(feature = "kerberos")]
 impl SessionCallback for TokenCallback {
     fn callback(
         &self,
@@ -106,16 +109,22 @@ impl SessionCallback for TokenCallback {
     }
 }
 
-#[cfg(feature = "rsasl1")]
-type SaslSession = DiscardOnDrop<Session<()>>;
-#[cfg(feature = "rsasl2")]
-type SaslSession = Session;
+trait SaslSession: Send + Sync {
+    fn step(&mut self, token: Option<&[u8]>) -> Result<(Vec<u8>, bool)>;
+
+    fn has_security_layer(&self) -> bool {
+        false
+    }
+
+    fn encode(&mut self, buf: &[u8]) -> Result<Vec<u8>>;
+
+    fn decode(&mut self, buf: &[u8]) -> Result<Vec<u8>>;
+}
 
 pub struct SaslRpcClient {
     reader: SaslReader,
     writer: SaslWriter,
-    #[cfg(feature = "rsasl2")]
-    session: Option<Arc<Mutex<SaslSession>>>,
+    session: Option<Arc<Mutex<Box<dyn SaslSession>>>>,
 }
 
 impl SaslRpcClient {
@@ -124,12 +133,13 @@ impl SaslRpcClient {
         SaslRpcClient {
             reader: SaslReader::new(reader),
             writer: SaslWriter::new(writer),
-            #[cfg(feature = "rsasl2")]
             session: None,
         }
     }
 
-    pub(crate) async fn negotiate(&mut self) -> Result<AuthMethod> {
+    /// Service should be the connection host:port for a single NameNode connection, or the
+    /// name service name when connecting to HA NameNodes.
+    pub(crate) async fn negotiate(&mut self, service: &str) -> Result<AuthMethod> {
         let mut rpc_sasl = RpcSaslProto::default();
         rpc_sasl.state = SaslState::Negotiate as i32;
 
@@ -137,45 +147,34 @@ impl SaslRpcClient {
 
         let mut done = false;
         let mut selected_method: Option<AuthMethod> = None;
-        let mut session: Option<SaslSession> = None;
+        let mut session: Option<Box<dyn SaslSession>> = None;
         while !done {
             let mut response: Option<RpcSaslProto> = None;
             let message = self.reader.read_response().await?;
-            println!("{:?}", message);
+            debug!("Handling SASL message: {:?}", message);
             match SaslState::from_i32(message.state).unwrap() {
                 SaslState::Negotiate => {
-                    let (selected_auth, selected_session) = self.select_method(&message.auths)?;
+                    let (mut selected_auth, selected_session) =
+                        self.select_method(&message.auths, service)?;
                     session = selected_session;
                     selected_method = AuthMethod::parse(&selected_auth.method);
 
                     let token = if let Some(session) = session.as_mut() {
-                        #[cfg(feature = "rsasl1")]
-                        {
-                            let challenge =
-                                selected_auth.challenge.as_ref().map_or(EMPTY, |c| &c[..]);
-                            println!("Stepping! {:?}", selected_auth);
-                            let result = session.step(challenge).unwrap();
-                            println!("Stepped! {:?}", result);
-                            match result {
-                                Done(buffer) => Some(buffer.to_vec()),
-                                NeedsMore(buffer) => Some(buffer.to_vec()),
-                            }
+                        let (token, finished) =
+                            session.step(selected_auth.challenge.as_ref().map(|c| &c[..]))?;
+                        if finished {
+                            return Err(HdfsError::SASLError(
+                                "SASL negotiation finished too soon".to_string(),
+                            ));
                         }
-                        #[cfg(feature = "rsasl2")]
-                        {
-                            let mut cursor = Cursor::new(Vec::new());
-                            session
-                                .step(
-                                    selected_auth.challenge.as_ref().map(|x| &x[..]),
-                                    &mut cursor,
-                                )
-                                .unwrap();
-                            Some(cursor.into_inner())
-                        }
+                        Some(token)
                     } else {
                         done = true;
                         None
                     };
+
+                    // Response shouldn't contain the challenge
+                    selected_auth.challenge = None;
 
                     let mut r = RpcSaslProto::default();
                     r.state = SaslState::Initiate as i32;
@@ -184,53 +183,25 @@ impl SaslRpcClient {
                     response = Some(r);
                 }
                 SaslState::Challenge => {
-                    println!("Starting challenge: {:?}", message);
-                    #[cfg(feature = "rsasl1")]
-                    let token = {
-                        let challenge =
-                            Box::into_raw(Box::new(message.token.unwrap_or(Vec::new())));
-                        println!("Passing challenge: {:?}", challenge);
-                        let result = unsafe {
-                            session
-                                .as_mut()
-                                .unwrap()
-                                .step(challenge.as_ref().unwrap().as_slice())
-                        };
-                        println!("Got result");
-                        println!("Got result {:?}", result);
-                        match result.unwrap() {
-                            Done(buffer) => Some(buffer.to_vec()),
-                            NeedsMore(buffer) => Some(buffer.to_vec()),
-                        }
-                    };
-                    #[cfg(feature = "rsasl2")]
-                    let token = {
-                        let mut cursor = Cursor::new(Vec::new());
-                        session
-                            .as_mut()
-                            .unwrap()
-                            .step(message.token.as_ref().map(|t| &t[..]), &mut cursor)
-                            .unwrap();
-
-                        Some(cursor.into_inner())
-                    };
+                    let (token, _) = session
+                        .as_mut()
+                        .unwrap()
+                        .step(message.token.as_ref().map(|t| &t[..]))?;
 
                     let mut r = RpcSaslProto::default();
                     r.state = SaslState::Response as i32;
-                    r.token = token;
+                    r.token = Some(token);
                     response = Some(r);
                 }
                 SaslState::Success => {
-                    // let mut token = Cursor::new(Vec::new());
-                    // self.session
-                    //     .as_ref()
-                    //     .unwrap()
-                    //     .lock()
-                    //     .unwrap()
-                    //     .step(message.token.as_ref().map(|t| &t[..]), &mut token)
-                    //     .unwrap();
-
-                    // assert!(token.into_inner().is_empty());
+                    if let Some(token) = message.token.as_ref() {
+                        let (_, finished) = session.as_mut().unwrap().step(Some(&token[..]))?;
+                        if !finished {
+                            return Err(HdfsError::SASLError(
+                                "Client not finished after server success".to_string(),
+                            ));
+                        }
+                    }
                     done = true;
                 }
                 _ => todo!(),
@@ -242,112 +213,42 @@ impl SaslRpcClient {
             }
         }
 
-        #[cfg(feature = "rsasl2")]
-        {
-            self.session = session
-                .filter(|x| x.has_security_layer())
-                .map(|s| Arc::new(Mutex::new(s)));
-        }
-
-        println!(
-            "Has security layer: {:?}",
-            self.session
-                .as_ref()
-                .map(|s| s.lock().unwrap().has_security_layer())
-        );
+        self.session = session
+            .filter(|x| {
+                debug!("Has security layer: {:?}", x.has_security_layer());
+                x.has_security_layer()
+            })
+            .map(|s| Arc::new(Mutex::new(s)));
 
         Ok(selected_method.expect("SASL finished but no method selected"))
     }
 
-    fn select_method(&mut self, auths: &Vec<SaslAuth>) -> Result<(SaslAuth, Option<SaslSession>)> {
+    fn select_method(
+        &mut self,
+        auths: &Vec<SaslAuth>,
+        service: &str,
+    ) -> Result<(SaslAuth, Option<Box<dyn SaslSession>>)> {
+        let user = User::get();
         for auth in auths.iter() {
-            match AuthMethod::parse(&auth.method) {
-                Some(AuthMethod::SIMPLE) => {
+            match (
+                AuthMethod::parse(&auth.method),
+                user.get_token(HDFS_DELEGATION_TOKEN, service),
+            ) {
+                (Some(AuthMethod::SIMPLE), _) => {
                     return Ok((auth.clone(), None));
                 }
-                #[cfg(feature = "rsasl1")]
-                Some(AuthMethod::KERBEROS) if User::get_kerberos_user().is_some() => {
-                    let mut sasl = SASL::new_untyped().unwrap();
-                    let mut session = sasl.client_start("GSSAPI").unwrap();
+                #[cfg(feature = "kerberos")]
+                (Some(AuthMethod::KERBEROS), _) if User::get_kerberos_user().is_some() => {
+                    let session = RSaslSession::new(auth.protocol(), auth.server_id())?;
 
-                    unsafe {
-                        session.set_property(
-                            Property::GSASL_HOSTNAME,
-                            Box::into_raw(Box::new(
-                                CString::new(auth.server_id())
-                                    .unwrap()
-                                    .as_bytes_with_nul()
-                                    .to_vec(),
-                            ))
-                            .as_ref()
-                            .unwrap(),
-                        );
-                        session.set_property(
-                            Property::GSASL_SERVICE,
-                            Box::into_raw(Box::new(
-                                CString::new(auth.protocol())
-                                    .unwrap()
-                                    .as_bytes_with_nul()
-                                    .to_vec(),
-                            ))
-                            .as_ref()
-                            .unwrap(),
-                        );
-                    }
-                    // self.session = Some(Arc::new(Mutex::new(session)));
-                    return Ok((auth.clone(), Some(session)));
+                    return Ok((auth.clone(), Some(Box::new(session))));
                 }
-                #[cfg(feature = "rsasl1")]
-                Some(AuthMethod::TOKEN) if false => {
-                    let mut sasl = SASL::new_untyped().unwrap();
-                    let mut session = sasl.client_start("DIGEST-MD5").unwrap();
-                    session.set_property(
-                        Property::GSASL_HOSTNAME,
-                        auth.server_id().to_string().as_bytes(),
-                    );
-                    session.set_property(
-                        Property::GSASL_SERVICE,
-                        auth.protocol().to_string().as_bytes(),
-                    );
-                    // self.session = Some(Arc::new(Mutex::new(session)));
-                    return Ok((auth.clone(), Some(session)));
-                }
-                #[cfg(feature = "rsasl2")]
-                Some(AuthMethod::KERBEROS) if User::get_kerberos_user().is_some() => {
-                    let config = SASLConfig::builder()
-                        .with_registry(Registry::with_mechanisms(KERBEROS_MECHANISMS))
-                        .with_callback(KerberosCallback {
-                            service: auth.protocol().to_string(),
-                            hostname: auth.server_id().to_string(),
-                        })
-                        .unwrap();
+                #[cfg(feature = "token")]
+                (Some(AuthMethod::TOKEN), Some(token)) => {
+                    debug!("Using token {:?}", token);
+                    let session = GSASLSession::new(auth.protocol(), auth.server_id(), token)?;
 
-                    let sasl = SASLClient::new(config);
-                    let offered_mechs = [Mechname::parse(b"GSSAPI").unwrap()];
-
-                    let session = sasl
-                        .start_suggested_iter(offered_mechs)
-                        .expect("no shared mechanism");
-
-                    // self.session = Some(Arc::new(Mutex::new(session)));
-
-                    return Ok((auth.clone(), Some(session)));
-                }
-                #[cfg(feature = "rsasl2")]
-                Some(AuthMethod::TOKEN) if false => {
-                    let config = SASLConfig::builder()
-                        .with_registry(Registry::with_mechanisms(TOKEN_MECHANISMS))
-                        .with_callback(TokenCallback {})
-                        .unwrap();
-
-                    let sasl = SASLClient::new(config);
-                    let offered_mechs = [Mechname::parse(b"DIGEST-MD5").unwrap()];
-
-                    let session = sasl
-                        .start_suggested_iter(offered_mechs)
-                        .expect("no shared mechanism");
-
-                    return Ok((auth.clone(), Some(session)));
+                    return Ok((auth.clone(), Some(Box::new(session))));
                 }
                 _ => (),
             }
@@ -368,7 +269,7 @@ impl SaslRpcClient {
 
 pub(crate) struct SaslReader {
     stream: OwnedReadHalf,
-    session: Option<Arc<Mutex<Session>>>,
+    session: Option<Arc<Mutex<Box<dyn SaslSession>>>>,
     buffer: Bytes,
 }
 
@@ -381,11 +282,11 @@ impl SaslReader {
         }
     }
 
-    fn set_session(&mut self, session: Arc<Mutex<Session>>) {
+    fn set_session(&mut self, session: Arc<Mutex<Box<dyn SaslSession>>>) {
         self.session = Some(session);
     }
 
-    async fn read_response(&mut self) -> io::Result<RpcSaslProto> {
+    async fn read_response(&mut self) -> Result<RpcSaslProto> {
         let mut buf = [0u8; 4];
         self.stream.read_exact(&mut buf).await?;
 
@@ -400,10 +301,13 @@ impl SaslReader {
 
         match RpcStatusProto::from_i32(rpc_response.status).unwrap() {
             RpcStatusProto::Error => {
-                todo!()
+                return Err(HdfsError::RPCError(rpc_response.error_msg().to_string()));
             }
             RpcStatusProto::Fatal => {
-                todo!()
+                warn!("RPC fatal error: {:?}", rpc_response.error_msg);
+                return Err(HdfsError::FatalRPCError(
+                    rpc_response.error_msg().to_string(),
+                ));
             }
             _ => (),
         }
@@ -412,7 +316,7 @@ impl SaslReader {
         Ok(sasl_response)
     }
 
-    pub(crate) async fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    pub(crate) async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
         if self.session.is_some() {
             let read_len = buf.len();
             let mut bytes_remaining = read_len;
@@ -423,15 +327,16 @@ impl SaslReader {
                         todo!();
                     }
 
-                    let mut writer = BytesMut::with_capacity(response.token().len()).writer();
-                    self.session
+                    // let mut writer = BytesMut::with_capacity(response.token().len()).writer();
+                    let decoded = self
+                        .session
                         .as_ref()
                         .unwrap()
                         .lock()
                         .unwrap()
-                        .decode(response.token(), &mut writer)
+                        .decode(response.token())
                         .unwrap_or_else(|_| todo!());
-                    self.buffer = writer.into_inner().freeze();
+                    self.buffer = Bytes::from(decoded)
                 }
                 let copy_len = usize::min(bytes_remaining, self.buffer.remaining());
                 let copy_start = read_len - bytes_remaining;
@@ -442,7 +347,7 @@ impl SaslReader {
 
             Ok(read_len)
         } else {
-            self.stream.read_exact(buf).await
+            Ok(self.stream.read_exact(buf).await?)
         }
     }
 }
@@ -460,7 +365,7 @@ impl SaslReader {
 
 pub(crate) struct SaslWriter {
     stream: OwnedWriteHalf,
-    session: Option<Arc<Mutex<Session>>>,
+    session: Option<Arc<Mutex<Box<dyn SaslSession>>>>,
 }
 
 impl SaslWriter {
@@ -471,7 +376,7 @@ impl SaslWriter {
         }
     }
 
-    fn set_session(&mut self, session: Arc<Mutex<Session>>) {
+    fn set_session(&mut self, session: Arc<Mutex<Box<dyn SaslSession>>>) {
         self.session = Some(session);
     }
 
@@ -504,26 +409,23 @@ impl SaslWriter {
             let mut rpc_sasl = RpcSaslProto::default();
             rpc_sasl.state = SaslState::Wrap as i32;
 
-            let mut writer = Vec::with_capacity(buf.len()).writer();
-            self.session
+            // let mut writer = Vec::with_capacity(buf.len()).writer();
+            let encoded = self
+                .session
                 .as_ref()
                 .unwrap()
                 .lock()
                 .unwrap()
-                .encode(buf, &mut writer)
+                .encode(buf)
                 .unwrap_or_else(|_| todo!());
 
-            rpc_sasl.token = Some(writer.into_inner());
+            rpc_sasl.token = Some(encoded);
 
             self.send_sasl_message(&rpc_sasl).await?;
             Ok(buf.len())
         } else {
             self.stream.write(buf).await
         }
-    }
-
-    pub(crate) async fn flush(&mut self) -> io::Result<()> {
-        self.stream.flush().await
     }
 }
 
@@ -563,7 +465,7 @@ impl std::fmt::Debug for SaslWriter {
 //     }
 // }
 
-#[cfg(feature = "rsasl2")]
+#[cfg(feature = "kerberos")]
 #[cfg_attr(feature = "registry_static", distributed_slice(MECHANISMS))]
 pub static DIGEST_MD5: Mechanism = Mechanism::build(
     Mechname::const_new(b"DIGEST-MD5"),
@@ -575,9 +477,9 @@ pub static DIGEST_MD5: Mechanism = Mechanism::build(
     |_| true,
 );
 
-#[cfg(feature = "rsasl2")]
+#[cfg(feature = "kerberos")]
 struct Select;
-#[cfg(feature = "rsasl2")]
+#[cfg(feature = "kerberos")]
 impl Named for Select {
     fn mech() -> &'static Mechanism {
         &DIGEST_MD5
@@ -592,11 +494,11 @@ impl Default for DigestMD5 {
     }
 }
 
-#[cfg(feature = "rsasl2")]
+#[cfg(feature = "kerberos")]
 impl Authentication for DigestMD5 {
     fn step(
         &mut self,
-        session: &mut rsasl2::mechanism::MechanismData,
+        session: &mut rsasl::mechanism::MechanismData,
         input: Option<&[u8]>,
         _writer: &mut dyn Write,
     ) -> std::result::Result<State, SessionError> {
@@ -604,5 +506,185 @@ impl Authentication for DigestMD5 {
         println!("{:?}", input);
         println!("{:?}", std::str::from_utf8(input.unwrap()).unwrap());
         todo!()
+    }
+}
+
+#[cfg(feature = "kerberos")]
+struct RSaslSession {
+    inner: Session,
+}
+
+impl RSaslSession {
+    fn new(service: &str, hostname: &str) -> Result<Self> {
+        let config = SASLConfig::builder()
+            .with_registry(Registry::with_mechanisms(KERBEROS_MECHANISMS))
+            .with_callback(KerberosCallback {
+                service: service.to_string(),
+                hostname: hostname.to_string(),
+            })
+            .unwrap();
+
+        let sasl = SASLClient::new(config);
+        let offered_mechs = [Mechname::parse(b"GSSAPI").unwrap()];
+
+        let inner = sasl.start_suggested_iter(offered_mechs)?;
+        Ok(Self { inner })
+    }
+}
+
+#[cfg(feature = "kerberos")]
+impl SaslSession for RSaslSession {
+    fn step(&mut self, token: Option<&[u8]>) -> Result<(Vec<u8>, bool)> {
+        let mut cursor = Cursor::new(Vec::new());
+        let state = self.inner.step(token, &mut cursor)?;
+
+        Ok((cursor.into_inner(), state != State::Running))
+    }
+
+    fn encode(&mut self, buf: &[u8]) -> Result<Vec<u8>> {
+        let mut writer = Cursor::new(Vec::with_capacity(buf.len()));
+        self.inner.encode(buf, &mut writer)?;
+        Ok(writer.into_inner())
+    }
+
+    fn decode(&mut self, buf: &[u8]) -> Result<Vec<u8>> {
+        let mut writer = Cursor::new(Vec::with_capacity(buf.len()));
+        self.inner.decode(buf, &mut writer)?;
+        Ok(writer.into_inner())
+    }
+
+    fn has_security_layer(&self) -> bool {
+        self.inner.has_security_layer()
+    }
+}
+
+#[cfg(feature = "token")]
+struct GSASLSession {
+    ctx: AtomicPtr<gsasl::Gsasl>,
+    conn: AtomicPtr<gsasl::Gsasl_session>,
+}
+
+#[cfg(feature = "token")]
+impl GSASLSession {
+    fn new(service: &str, hostname: &str, token: &Token) -> Result<Self> {
+        let mut ctx = ptr::null_mut::<gsasl::Gsasl>();
+
+        let ret = unsafe { gsasl::gsasl_init(&mut ctx) };
+        if ret != gsasl::Gsasl_rc::GSASL_OK as i32 {
+            return Err(HdfsError::SASLError(
+                "Failed to initialize SASL".to_string(),
+            ));
+        }
+
+        let mut conn = ptr::null_mut::<gsasl::Gsasl_session>();
+        let mechanism = CString::new("DIGEST-MD5").unwrap();
+
+        let ret = unsafe { gsasl::gsasl_client_start(ctx, mechanism.as_ptr(), &mut conn) };
+        if ret != gsasl::Gsasl_rc::GSASL_OK as i32 {
+            return Err(HdfsError::SASLError(
+                "Failed to create new SASL client".to_string(),
+            ));
+        }
+
+        debug!("Started SASL: {:?}, {:?}", conn, mechanism);
+
+        if ret != gsasl::Gsasl_rc::GSASL_OK as i32 {
+            return Err(HdfsError::SASLError(format!(
+                "Failed to start SASL client: {}",
+                ret
+            )));
+        }
+
+        let service_c = CString::new(service).unwrap();
+        let hostname_c = CString::new(hostname).unwrap();
+
+        unsafe {
+            gsasl::gsasl_property_set(
+                conn,
+                gsasl::Gsasl_property::GSASL_SERVICE,
+                service_c.as_ptr(),
+            );
+            gsasl::gsasl_property_set(
+                conn,
+                gsasl::Gsasl_property::GSASL_HOSTNAME,
+                hostname_c.as_ptr(),
+            );
+            let identifier =
+                CString::new(general_purpose::STANDARD.encode(&token.identifier)).unwrap();
+            let password = CString::new(general_purpose::STANDARD.encode(&token.password)).unwrap();
+
+            gsasl::gsasl_property_set(
+                conn,
+                gsasl::Gsasl_property::GSASL_AUTHID,
+                identifier.as_ptr(),
+            );
+            gsasl::gsasl_property_set(
+                conn,
+                gsasl::Gsasl_property::GSASL_PASSWORD,
+                password.as_ptr(),
+            );
+        }
+
+        Ok(Self {
+            ctx: AtomicPtr::new(ctx),
+            conn: AtomicPtr::new(conn),
+        })
+    }
+}
+
+#[cfg(feature = "token")]
+impl SaslSession for GSASLSession {
+    fn step(&mut self, token: Option<&[u8]>) -> Result<(Vec<u8>, bool)> {
+        let mut clientout = ptr::null_mut::<c_char>();
+        let mut clientoutlen: u64 = 0;
+        let ret = unsafe {
+            gsasl::gsasl_step(
+                self.conn.load(std::sync::atomic::Ordering::SeqCst),
+                token.map(|t| t.as_ptr()).unwrap_or(ptr::null_mut()) as *const i8,
+                token.map(|t| t.len()).unwrap_or(0) as u64,
+                &mut clientout,
+                &mut clientoutlen,
+            )
+        };
+
+        debug!("SASL step response: {}", ret);
+
+        if ret != gsasl::Gsasl_rc::GSASL_OK as i32
+            && ret != gsasl::Gsasl_rc::GSASL_NEEDS_MORE as i32
+        {
+            return Err(HdfsError::SASLError(format!(
+                "Failed to make SASL client step: {}",
+                ret
+            )));
+        }
+
+        let vec = unsafe {
+            let mut vec = vec![0u8; clientoutlen as usize];
+            memcpy(
+                vec.as_mut_ptr() as *mut c_void,
+                clientout as *const c_void,
+                vec.len(),
+            );
+            vec
+        };
+
+        Ok((vec, ret == gsasl::Gsasl_rc::GSASL_OK as i32))
+    }
+
+    fn encode(&mut self, _buf: &[u8]) -> Result<Vec<u8>> {
+        todo!()
+    }
+
+    fn decode(&mut self, _buf: &[u8]) -> Result<Vec<u8>> {
+        todo!()
+    }
+}
+
+impl Drop for GSASLSession {
+    fn drop(&mut self) {
+        unsafe {
+            gsasl::gsasl_finish(self.conn.load(std::sync::atomic::Ordering::SeqCst));
+            gsasl::gsasl_done(self.ctx.load(std::sync::atomic::Ordering::SeqCst))
+        }
     }
 }

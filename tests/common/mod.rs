@@ -1,5 +1,7 @@
 pub(crate) mod minidfs;
 
+use futures::StreamExt;
+#[cfg(feature = "object_store")]
 use hdfs_native::object_store::HdfsObjectStore;
 use hdfs_native::{client::Client, Result};
 use std::collections::HashSet;
@@ -110,7 +112,7 @@ async fn test_listing(client: &Client) -> Result<()> {
 async fn test_read(client: &Client) -> Result<()> {
     // Read the whole file
     let reader = client.read("/testfile").await?;
-    let buf = reader.read(0, TEST_FILE_INTS * 4).await?;
+    let buf = reader.read_range(0, TEST_FILE_INTS * 4).await?;
     for i in 0..TEST_FILE_INTS as i32 {
         let mut dst = [0u8; 4];
         let offset = (i * 4) as usize;
@@ -119,7 +121,9 @@ async fn test_read(client: &Client) -> Result<()> {
     }
 
     // Read a single integer from the file
-    let buf = reader.read(TEST_FILE_INTS as usize / 2 * 4, 4).await?;
+    let buf = reader
+        .read_range(TEST_FILE_INTS as usize / 2 * 4, 4)
+        .await?;
     let mut dst = [0u8; 4];
     dst.copy_from_slice(&buf[..]);
     assert_eq!(i32::from_be_bytes(dst), TEST_FILE_INTS as i32 / 2);
@@ -141,13 +145,81 @@ async fn test_rename(client: &Client) -> Result<()> {
 
 #[cfg(feature = "object_store")]
 async fn test_object_store(client: Client) -> object_store::Result<()> {
+    let store = HdfsObjectStore::new(client);
+
+    test_object_store_head(&store).await?;
+    test_object_store_list(&store).await?;
+    test_object_store_rename(&store).await?;
+    test_object_store_read(&store).await?;
+
+    Ok(())
+}
+
+#[cfg(feature = "object_store")]
+async fn test_object_store_head(store: &HdfsObjectStore) -> object_store::Result<()> {
     use object_store::{path::Path, ObjectStore};
 
-    let store = HdfsObjectStore::new(client);
+    assert!(store.head(&Path::from("/testfile")).await.is_ok());
+    assert!(store.head(&Path::from("/testfile2")).await.is_err());
+
+    Ok(())
+}
+
+#[cfg(feature = "object_store")]
+async fn test_object_store_list(store: &HdfsObjectStore) -> object_store::Result<()> {
+    use object_store::{path::Path, ObjectMeta, ObjectStore};
+
+    let list: Vec<object_store::Result<ObjectMeta>> = store
+        .list(Some(&Path::from("/testfile")))
+        .await?
+        .collect()
+        .await;
+
+    assert_eq!(list.len(), 1);
+
+    Ok(())
+}
+
+#[cfg(feature = "object_store")]
+async fn test_object_store_rename(store: &HdfsObjectStore) -> object_store::Result<()> {
+    use object_store::{path::Path, ObjectStore};
 
     store
         .rename(&Path::from("/testfile"), &Path::from("/testfile2"))
         .await?;
 
+    assert!(store.head(&Path::from("/testfile2")).await.is_ok());
+    assert!(store.head(&Path::from("/testfile")).await.is_err());
+
+    store
+        .rename(&Path::from("/testfile2"), &Path::from("/testfile"))
+        .await?;
+
+    assert!(store.head(&Path::from("/testfile")).await.is_ok());
+    assert!(store.head(&Path::from("/testfile2")).await.is_err());
+
+    Ok(())
+}
+
+#[cfg(feature = "object_store")]
+async fn test_object_store_read(store: &HdfsObjectStore) -> object_store::Result<()> {
+    use object_store::{path::Path, ObjectStore};
+
+    let location = Path::from("/testfile");
+
+    let buf = store.get(&location).await?.bytes().await?;
+    for i in 0..TEST_FILE_INTS as i32 {
+        let mut dst = [0u8; 4];
+        let offset = (i * 4) as usize;
+        dst.copy_from_slice(&buf.slice(offset..offset + 4)[..]);
+        assert_eq!(i32::from_be_bytes(dst), i);
+    }
+
+    // Read a single integer from the file
+    let offset = TEST_FILE_INTS as usize / 2 * 4;
+    let buf = store.get_range(&location, offset..(offset + 4)).await?;
+    let mut dst = [0u8; 4];
+    dst.copy_from_slice(&buf[..]);
+    assert_eq!(i32::from_be_bytes(dst), TEST_FILE_INTS as i32 / 2);
     Ok(())
 }

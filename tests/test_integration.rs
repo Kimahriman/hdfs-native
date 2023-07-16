@@ -19,7 +19,6 @@ async fn test_security_kerberos() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_security_token() {
     test_with_features(&HashSet::from([DfsFeatures::SECURITY, DfsFeatures::TOKEN]))
         .await
@@ -27,7 +26,19 @@ async fn test_security_token() {
 }
 
 #[tokio::test]
-async fn test_security_privacy() {
+#[ignore]
+async fn test_privacy_token() {
+    test_with_features(&HashSet::from([
+        DfsFeatures::SECURITY,
+        DfsFeatures::TOKEN,
+        DfsFeatures::PRIVACY,
+    ]))
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn test_privacy_kerberos() {
     test_with_features(&HashSet::from([
         DfsFeatures::SECURITY,
         DfsFeatures::PRIVACY,
@@ -48,6 +59,17 @@ async fn test_security_privacy_ha() {
     test_with_features(&HashSet::from([
         DfsFeatures::SECURITY,
         DfsFeatures::PRIVACY,
+        DfsFeatures::HA,
+    ]))
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn test_security_token_ha() {
+    test_with_features(&HashSet::from([
+        DfsFeatures::SECURITY,
+        DfsFeatures::TOKEN,
         DfsFeatures::HA,
     ]))
     .await

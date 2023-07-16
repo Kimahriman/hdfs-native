@@ -61,6 +61,7 @@ impl RpcConnection {
     pub(crate) async fn connect(
         url: &str,
         alignment_context: Arc<AlignmentContext>,
+        nameservice: Option<&str>,
     ) -> Result<Self> {
         let client_id = Uuid::new_v4().to_bytes_le().to_vec();
         let next_call_id = AtomicI32::new(0);
@@ -76,7 +77,11 @@ impl RpcConnection {
         stream.write(&(-33i8).to_be_bytes()).await?;
 
         let mut client = SaslRpcClient::create(stream);
-        let auth_method = client.negotiate().await?;
+
+        let service = nameservice
+            .map(|ns| format!("ha-hdfs:{ns}"))
+            .unwrap_or(url.to_string());
+        let auth_method = client.negotiate(service.as_str()).await?;
         let (reader, writer) = client.split();
         let (sender, receiver) = mpsc::channel::<Vec<u8>>(1000);
 
@@ -282,7 +287,7 @@ impl RpcListener {
         if let Some(call) = call {
             match RpcStatusProto::from_i32(rpc_response.status) {
                 Some(RpcStatusProto::Error) => {
-                    call.send(Err(HdfsError::RPCError(
+                    let _ = call.send(Err(HdfsError::RPCError(
                         rpc_response.error_msg().to_string(),
                     )));
                 }
@@ -295,7 +300,7 @@ impl RpcListener {
                     if let Some(_router_federation_state) = rpc_response.router_federated_state {
                         todo!();
                     }
-                    call.send(Ok(bytes));
+                    let _ = call.send(Ok(bytes));
                 }
                 _ => {
                     return Err(HdfsError::RPCError(

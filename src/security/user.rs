@@ -28,13 +28,12 @@ pub(crate) enum LoginMethod {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
-pub(crate) struct Token {
-    alias: String,
-    identifier: Vec<u8>,
-    password: Vec<u8>,
-    kind: String,
-    service: String,
+pub struct Token {
+    pub alias: String,
+    pub identifier: Vec<u8>,
+    pub password: Vec<u8>,
+    pub kind: String,
+    pub service: String,
 }
 
 impl Token {
@@ -122,6 +121,12 @@ impl User {
     pub(crate) fn get() -> Self {
         let tokens = Token::load_tokens();
         User { tokens }
+    }
+
+    pub(crate) fn get_token(&self, kind: &str, service: &str) -> Option<&Token> {
+        self.tokens
+            .iter()
+            .find(|t| t.kind == kind && t.service == service)
     }
 
     pub(crate) fn get_user_info(&self, auth_method: AuthMethod) -> Option<UserInfo> {

@@ -1,5 +1,7 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 
+use log::debug;
 use url::Url;
 
 use crate::common::config::Configuration;
@@ -39,6 +41,14 @@ impl Client {
         Ok(Client { protocol })
     }
 
+    /// Retrieve the file status for the file at `src`.
+    pub async fn get_file_info(&self, path: &str) -> Result<FileStatus> {
+        match self.protocol.get_file_info(path).await?.fs {
+            Some(status) => Ok(FileStatus::from(status)),
+            None => Err(HdfsError::FileNotFound(path.to_string())),
+        }
+    }
+
     /// Retrieves a list of file status for all files in `path`. This does not recurse into directories.
     pub async fn list_status(&self, path: &str) -> Result<Vec<FileStatus>> {
         let mut results = Vec::<FileStatus>::new();
@@ -46,7 +56,7 @@ impl Client {
         loop {
             let partial_listing = self.protocol.get_listing(path, start_after, true).await?;
             match partial_listing.dir_list {
-                None => return Err(HdfsError::FileNotFound),
+                None => return Err(HdfsError::FileNotFound(path.to_string())),
                 Some(dir_list) => {
                     start_after = dir_list
                         .partial_listing
@@ -64,64 +74,80 @@ impl Client {
         Ok(results)
     }
 
-    // pub fn list_status_iterator(&self, path: &str) -> ListStatusIterator {
-    //     ListStatusIterator::new(path.to_string(), self.protocol.clone())
-    // }
+    pub fn list_status_iterator(&self, path: &str) -> ListStatusIterator {
+        ListStatusIterator::new(path.to_string(), self.protocol.clone())
+    }
 
     /// Opens a file reader for the file at `path`. Path should not include a scheme.
     pub async fn read(&self, path: &str) -> Result<HdfsFileReader> {
         let located_info = self.protocol.get_located_file_info(path).await?;
         match located_info.fs {
             Some(status) => Ok(HdfsFileReader::new(status.locations.unwrap())),
-            None => Err(HdfsError::FileNotFound),
+            None => Err(HdfsError::FileNotFound(path.to_string())),
         }
     }
 
     /// Renames `src` to `dst`. Returns Ok(()) on success, and Err otherwise.
     pub async fn rename(&self, src: &str, dst: &str, overwrite: bool) -> Result<()> {
+        debug!("Renaming {} to {}", src, dst);
         self.protocol.rename(src, dst, overwrite).await.map(|_| ())
     }
 }
 
-// pub struct ListStatusIterator {
-//     path: String,
-//     protocol: Arc<NamenodeProtocol<NamenodeConnection>>,
-//     partial_listing: Vec<hdfs::HdfsFileStatusProto>,
-//     listing_position: usize,
-//     has_more: bool,
-//     last_seen: Vec<u8>,
-// }
+pub struct ListStatusIterator {
+    path: String,
+    protocol: Arc<NamenodeProtocol>,
+    partial_listing: VecDeque<HdfsFileStatusProto>,
+    listing_position: usize,
+    remaining: u32,
+    last_seen: Vec<u8>,
+}
 
-// impl ListStatusIterator {
-//     fn new(path: String, protocol: Arc<NamenodeProtocol<NamenodeConnection>>) -> Self {
-//         ListStatusIterator {
-//             path,
-//             protocol,
-//             partial_listing: Vec::new(),
-//             listing_position: 0,
-//             has_more: true,
-//             last_seen: Vec::new(),
-//         }
-//     }
-// }
+impl ListStatusIterator {
+    fn new(path: String, protocol: Arc<NamenodeProtocol>) -> Self {
+        ListStatusIterator {
+            path,
+            protocol,
+            partial_listing: VecDeque::new(),
+            listing_position: 0,
+            remaining: 1,
+            last_seen: Vec::new(),
+        }
+    }
 
-// impl Iterator for ListStatusIterator {
+    async fn get_next_batch(&mut self) -> Result<bool> {
+        let listing = self
+            .protocol
+            .get_listing(&self.path, self.last_seen.clone(), false)
+            .await?;
+        if let Some(dir_list) = listing.dir_list {
+            self.last_seen = dir_list
+                .partial_listing
+                .last()
+                .map(|p| p.path.clone())
+                .unwrap_or(Vec::new());
+            self.listing_position = 0;
+            self.remaining = dir_list.remaining_entries;
+            self.partial_listing = VecDeque::from(dir_list.partial_listing);
+            Ok(self.partial_listing.len() > 0)
+        } else {
+            Ok(false)
+        }
+    }
 
-//     type Item = hdfs::HdfsFileStatusProto;
-
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if self.listing_position >= self.partial_listing.len() && self.has_more {
-
-//             let listing = self.protocol.get_listing(&self.path, self.last_seen, false)?.get()?;
-//             match listing {
-//                 None => Err(std::io::Error(ErrorKind::NotFound, "File not found"))
-//                 Some(partial_listing) => {
-
-//                 }
-//             }
-//         }
-//     }
-// }
+    pub async fn next(&mut self) -> Option<Result<FileStatus>> {
+        if self.partial_listing.len() == 0 && self.remaining > 0 {
+            if let Err(error) = self.get_next_batch().await {
+                return Some(Err(error));
+            }
+        }
+        if let Some(next) = self.partial_listing.pop_front() {
+            Some(Ok(FileStatus::from(next)))
+        } else {
+            None
+        }
+    }
+}
 
 pub struct FileStatus {
     pub path: String,

@@ -15,6 +15,19 @@ impl NamenodeProtocol {
         NamenodeProtocol { proxy }
     }
 
+    pub(crate) async fn get_file_info(&self, src: &str) -> Result<hdfs::GetFileInfoResponseProto> {
+        let mut message = hdfs::GetFileInfoRequestProto::default();
+        message.src = src.to_string();
+
+        let response = self
+            .proxy
+            .call("getFileInfo", message.encode_length_delimited_to_vec())
+            .await?;
+        Ok(hdfs::GetFileInfoResponseProto::decode_length_delimited(
+            response,
+        )?)
+    }
+
     pub(crate) async fn get_listing(
         &self,
         src: &str,

@@ -292,12 +292,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "discard"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "212d0f5754cb6769937f4501cc0e67f4f4483c8d2c3e1e922ee9edbe4ab4c7c0"
-
-[[package]]
 name = "doc-comment"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -521,6 +515,8 @@ dependencies = [
  "chrono",
  "env_logger 0.10.0",
  "futures",
+ "gsasl-sys",
+ "libc",
  "libgssapi",
  "log",
  "object_store",
@@ -528,8 +524,7 @@ dependencies = [
  "prost-build",
  "prost-types",
  "roxmltree",
- "rsasl 1.4.2",
- "rsasl 2.0.0",
+ "rsasl",
  "tempfile",
  "thiserror",
  "tokio",
@@ -697,9 +692,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.144"
+version = "0.2.147"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b00cc1c228a6782d0f076e7b232802e0c5689d41bb5df366f2a6b6621cfdfe1"
+checksum = "b4668fb0ea861c1df094127ac5f1da3409a82116a4ba74fca2e58ef927159bb3"
 
 [[package]]
 name = "libgssapi"
@@ -1082,17 +1077,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8f595a457b6b8c6cda66a48503e92ee8d19342f905948f29c383200ec9eb1d8"
 dependencies = [
  "xmlparser",
-]
-
-[[package]]
-name = "rsasl"
-version = "1.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00658df565e044eeb2d0358bf370eb597c7089daf7d5021aa142b91f2524f641"
-dependencies = [
- "discard",
- "gsasl-sys",
- "libc",
 ]
 
 [[package]]

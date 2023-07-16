@@ -23,21 +23,33 @@ struct ProxyConnection {
     url: String,
     inner: Option<RpcConnection>,
     alignment_context: Arc<AlignmentContext>,
+    nameservice: Option<String>,
 }
 
 impl ProxyConnection {
-    fn new(url: String, alignment_context: Arc<AlignmentContext>) -> Self {
+    fn new(
+        url: String,
+        alignment_context: Arc<AlignmentContext>,
+        nameservice: Option<String>,
+    ) -> Self {
         ProxyConnection {
             url,
             inner: None,
             alignment_context,
+            nameservice,
         }
     }
 
     async fn get_connection(&mut self) -> Result<&RpcConnection> {
         if self.inner.is_none() || !self.inner.as_ref().unwrap().is_alive() {
-            self.inner =
-                Some(RpcConnection::connect(&self.url, self.alignment_context.clone()).await?);
+            self.inner = Some(
+                RpcConnection::connect(
+                    &self.url,
+                    self.alignment_context.clone(),
+                    self.nameservice.as_ref().map(|ns| ns.as_str()),
+                )
+                .await?,
+            );
         }
         Ok(self.inner.as_ref().unwrap())
     }
@@ -68,18 +80,22 @@ impl NameServiceProxy {
             vec![Arc::new(Mutex::new(ProxyConnection::new(
                 url,
                 alignment_context.clone(),
+                None,
             )))]
-        } else {
+        } else if let Some(host) = nameservice.host_str() {
             config
-                .get_urls_for_nameservice(nameservice.host_str().unwrap())
+                .get_urls_for_nameservice(host)
                 .into_iter()
                 .map(|url| {
                     Arc::new(Mutex::new(ProxyConnection::new(
                         url,
                         alignment_context.clone(),
+                        Some(host.to_string()),
                     )))
                 })
                 .collect()
+        } else {
+            todo!()
         };
 
         NameServiceProxy {
@@ -89,17 +105,17 @@ impl NameServiceProxy {
         }
     }
 
-    async fn msync_if_needed(&self) {
+    async fn msync_if_needed(&self) -> Result<()> {
         if !self.msycned.fetch_or(true, Ordering::SeqCst) {
             let msync_msg = hdfs::MsyncRequestProto::default();
-            let _ = self
-                .call_inner("msync", msync_msg.encode_length_delimited_to_vec())
-                .await;
+            self.call_inner("msync", msync_msg.encode_length_delimited_to_vec())
+                .await?;
         }
+        Ok(())
     }
 
     pub(crate) async fn call(&self, method_name: &'static str, message: Vec<u8>) -> Result<Bytes> {
-        self.msync_if_needed().await;
+        self.msync_if_needed().await?;
         self.call_inner(method_name, message).await
     }
 

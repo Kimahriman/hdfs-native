@@ -15,7 +15,7 @@ Here is a list of currently supported and unsupported but possible future featur
 
 ### HDFS Features
 - [x] Name Services
-- [x] Observer reads
+- [ ] Observer reads
 - [ ] Federated router
 - [ ] Erasure coding
 
@@ -31,3 +31,12 @@ Here is a list of currently supported and unsupported but possible future featur
 - [ ] Better error handling
 - [ ] RPC retries
 - [ ] Async support
+
+## Building
+
+### Mac
+```
+brew install gsasl
+export BINDGEN_EXTRA_CLANG_ARGS="-I/opt/homebrew/include"
+export LIBRARY_PATH=/opt/homebrew/lib
+```

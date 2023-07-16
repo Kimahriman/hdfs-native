@@ -17,7 +17,12 @@ impl HdfsFileReader {
         HdfsFileReader { located_blocks }
     }
 
-    pub async fn read(&self, offset: usize, len: usize) -> Result<Bytes> {
+    pub async fn read(&self) -> Result<Bytes> {
+        self.read_range(0, self.located_blocks.file_length as usize)
+            .await
+    }
+
+    pub async fn read_range(&self, offset: usize, len: usize) -> Result<Bytes> {
         let mut buf = BytesMut::zeroed(len);
         self.read_buf(&mut buf, offset, len).await?;
         Ok(buf.freeze())

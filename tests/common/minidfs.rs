@@ -46,7 +46,7 @@ impl MiniDfs {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            // .stderr(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .unwrap();
 
@@ -61,7 +61,7 @@ impl MiniDfs {
         let url = if features.contains(&DfsFeatures::HA) {
             "hdfs://minidfs-ns"
         } else {
-            "hdfs://localhost:9000"
+            "hdfs://127.0.0.1:9000"
         };
 
         MiniDfs {

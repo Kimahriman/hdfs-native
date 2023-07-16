@@ -1,5 +1,3 @@
-mod object_store;
-
 use std::str;
 
 use hdfs_native::client::Client;
@@ -11,7 +9,7 @@ async fn main() -> Result<()> {
 
     let file = client.read("/Cargo.lock").await?;
     // println!("{:?}", file);
-    let data = file.read(10, 2000).await?;
+    let data = file.read_range(10, 2000).await?;
     println!("{}", data.len());
     println!("{}", str::from_utf8(&data).unwrap());
     Ok(())
