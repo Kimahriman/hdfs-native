@@ -53,7 +53,7 @@ impl MiniDfs {
         let mut output = BufReader::new(child.stdout.take().unwrap()).lines();
 
         let ready = output.next().unwrap().unwrap();
-        if ready != "Ready" {
+        if ready != "Ready!" {
             println!("Failed to start minidfs");
             println!("{}", ready);
             while let Some(line) = output.next() {
