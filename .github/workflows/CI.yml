@@ -46,6 +46,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install native libs
+        run: sudo apt-get install -y libgssapi-krb5-2 libgsasl-dev
+
       # - name: build and lint with clippy
       #   run: cargo clippy --tests
 
