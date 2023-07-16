@@ -150,7 +150,7 @@ impl ListStatusIterator {
             self.partial_listing = dir_list
                 .partial_listing
                 .into_iter()
-                .filter(|s| s.file_type() != FileType::IsDir)
+                .filter(|s| !self.files_only || s.file_type() != FileType::IsDir)
                 .collect();
             Ok(self.partial_listing.len() > 0)
         } else {

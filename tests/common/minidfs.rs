@@ -51,6 +51,16 @@ impl MiniDfs {
             .unwrap();
 
         let mut output = BufReader::new(child.stdout.take().unwrap()).lines();
+
+        let ready = output.next().unwrap().unwrap();
+        if ready != "Ready" {
+            println!("Failed to start minidfs");
+            println!("{}", ready);
+            while let Some(line) = output.next() {
+                println!("{}", line.unwrap());
+            }
+            panic!();
+        }
         assert_eq!(output.next().unwrap().unwrap(), "Ready!");
         let krb_conf = if features.contains(&DfsFeatures::SECURITY) {
             Some(output.next().unwrap().unwrap())

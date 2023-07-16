@@ -98,8 +98,8 @@ jobs:
 
       - name: Download Hadoop
         run: |
-          wget https://dlcdn.apache.org/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz
-          tar -xvf hadoop-3.3.6.tar.gz
+          wget -q https://dlcdn.apache.org/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz
+          tar -xf hadoop-3.3.6.tar.gz
           echo "$GITHUB_WORKSPACE/hadoop-3.3.6/bin" >> $GITHUB_PATH
 
       - name: Run tests
