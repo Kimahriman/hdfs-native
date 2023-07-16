@@ -22,41 +22,41 @@ jobs:
       - name: Format
         run: cargo fmt -- --check
 
-  # build:
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       os:
-  #         - ubuntu-latest
-  #         # - macos-11
-  #         # - windows-latest
-  #   runs-on: ${{ matrix.os }}
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          # - macos-11
+          # - windows-latest
+    runs-on: ${{ matrix.os }}
 
-  #   steps:
-  #     - uses: actions/checkout@v3
-  #       with:
-  #         submodules: true
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
 
-  #     - name: Install minimal stable with clippy and rustfmt
-  #       uses: actions-rs/toolchain@v1
-  #       with:
-  #         profile: default
-  #         toolchain: stable
-  #         override: true
+      - name: Install minimal stable with clippy and rustfmt
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: default
+          toolchain: stable
+          override: true
 
-  #     - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
 
-  #     - name: Install native libs
-  #       run: sudo apt-get install -y libkrb5-dev libgsasl-dev protobuf-compiler
+      - name: Install native libs
+        run: sudo apt-get install -y libkrb5-dev libgsasl-dev protobuf-compiler
 
-  #     # - name: build and lint with clippy
-  #     #   run: cargo clippy --tests
+      # - name: build and lint with clippy
+      #   run: cargo clippy --tests
 
-  #     - name: Check docs
-  #       run: cargo doc
+      - name: Check docs
+        run: cargo doc
 
-  #     - name: Check
-  #       run: cargo check
+      - name: Check
+        run: cargo check
 
   test:
     strategy:
@@ -90,7 +90,7 @@ jobs:
 
       - uses: actions/setup-java@v3
         with:
-          distribution: "zulu"
+          distribution: "temurin"
           java-version: "17"
 
       - name: Install native libs
