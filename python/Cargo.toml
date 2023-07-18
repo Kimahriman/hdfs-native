@@ -1,25 +1,15 @@
 [package]
 name = "hdfs-native-python"
-version = "0.9.0"
-authors = ["Qingping Hou <dave2008713@gmail.com>"]
-homepage = "https://github.com/delta-io/delta-rs"
-license = "Apache-2.0"
-description = "Native Delta Lake Python binding based on delta-rs with Pandas integration"
-readme = "README.md"
+version = "0.1.0"
 edition = "2021"
-keywords = ["deltalake", "delta", "datalake", "pandas", "arrow"]
 
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-name = "hdfs-native"
+name = "hdfs_native"
 crate-type = ["cdylib"]
-doc = false
-
-[package.metadata.maturin]
-name = "deltalake._internal"
 
 [dependencies]
-futures = "0.3"
-hdfs-native = { version = "0", path = "../" }
-pyo3 = { version = "0.18", features = ["extension-module", "abi3", "abi3-py37"] }
-tokio = { version = "1", features = ["rt-multi-thread"] }
-
+hdfs-native = { version = "0.1.0", path = "../rust" }
+pyo3 = "0.19.0"
+thiserror = "1.0.43"
+tokio = { version = "1.28", features = ["rt-multi-thread"] }
