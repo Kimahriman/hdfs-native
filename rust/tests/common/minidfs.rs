@@ -61,7 +61,6 @@ impl MiniDfs {
             }
             panic!();
         }
-        assert_eq!(output.next().unwrap().unwrap(), "Ready!");
         let krb_conf = if features.contains(&DfsFeatures::SECURITY) {
             Some(output.next().unwrap().unwrap())
         } else {
