@@ -61,7 +61,7 @@ impl Token {
         let format = content.copy_to_bytes(1);
 
         if format[0] == 0 {
-            Self::parse_writable(content)
+            Self::parse_writable(&mut content)
         } else if format[0] == 1 {
             Self::parse_protobuf(content)
         } else {
@@ -72,15 +72,45 @@ impl Token {
         }
     }
 
-    fn parse_writable(_reader: impl Buf) -> io::Result<Vec<Token>> {
-        // let token_count = prost::decode_length_delimiter(reader)?;
-        // let mut tokens: Vec<Token> = Vec::new();
+    fn parse_writable(reader: &mut impl Buf) -> io::Result<Vec<Token>> {
+        let token_count = parse_vlong(reader);
+        let mut tokens = Vec::<Token>::with_capacity(token_count as usize);
 
-        // for _ in 0..token_count {
+        for _ in 0..token_count {
+            let alias_length = parse_vlong(reader);
+            let alias = String::from_utf8(reader.copy_to_bytes(alias_length as usize).to_vec())
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::Other, "Failed to parse token".to_string())
+                })?;
 
-        // }
+            let identifier_length = parse_vlong(reader);
+            let identifier = reader.copy_to_bytes(identifier_length as usize).to_vec();
 
-        todo!()
+            let password_length = parse_vlong(reader);
+            let password = reader.copy_to_bytes(password_length as usize).to_vec();
+
+            let kind_length = parse_vlong(reader);
+            let kind = String::from_utf8(reader.copy_to_bytes(kind_length as usize).to_vec())
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::Other, "Failed to parse token".to_string())
+                })?;
+
+            let service_length = parse_vlong(reader);
+            let service = String::from_utf8(reader.copy_to_bytes(service_length as usize).to_vec())
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::Other, "Failed to parse token".to_string())
+                })?;
+
+            tokens.push(Token {
+                alias,
+                identifier,
+                password,
+                kind,
+                service,
+            })
+        }
+
+        Ok(tokens)
     }
 
     fn parse_protobuf(reader: impl Buf) -> io::Result<Vec<Token>> {
@@ -104,6 +134,38 @@ impl Token {
     }
 
     // fn parse_writable
+}
+
+/// Adapted from WritableUtils class in Hadoop
+fn parse_vlong(reader: &mut impl Buf) -> i64 {
+    let first_byte = reader.get_i8();
+
+    let length = if first_byte >= -112 {
+        1
+    } else if first_byte < -120 {
+        -119 - first_byte
+    } else {
+        -111 - first_byte
+    };
+
+    if length == 1 {
+        return first_byte as i64;
+    }
+
+    let mut i = 0i64;
+    for _ in 0..length - 1 {
+        let b = reader.get_u8();
+        i = i << 8;
+        i = i | (b & 0xFF) as i64;
+    }
+
+    let is_negative = first_byte < -120 || (first_byte >= -112 && first_byte < 0);
+
+    if is_negative {
+        i ^ -1
+    } else {
+        i
+    }
 }
 
 pub(crate) struct UserInfo {
@@ -196,10 +258,9 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore]
     fn test_load_writable_token() {
         use base64::{engine::general_purpose, Engine as _};
-        let b64_token = "SERUUwABBWFsaWFzLgAaaGRmcy9sb2NhbGhvc3RARVhBTVBMRS5DT00AAIoBiJ0ri82KAYjBOA/NAQIUjt8w+3Jfh6hfQp0JEsC+VVKl7wIVSERGU19ERUxFR0FUSU9OX1RPS0VOAAA=";
+        let b64_token = "SERUUwABDjEyNy4wLjAuMTo5MDAwLgAaaGRmcy9sb2NhbGhvc3RARVhBTVBMRS5DT00AAIoBiX/hghSKAYmj7gYUAQIUadF4ni3ObKqU8niv40WBFsGhFm4VSERGU19ERUxFR0FUSU9OX1RPS0VODjEyNy4wLjAuMTo5MDAwAA==";
         let mut token_file = NamedTempFile::new().unwrap();
         token_file
             .write(
@@ -220,6 +281,7 @@ mod tests {
 
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].kind, "HDFS_DELEGATION_TOKEN");
+        assert_eq!(tokens[0].service, "127.0.0.1:9000");
         tokens.iter().for_each(|t| println!("{:?}", t));
     }
 

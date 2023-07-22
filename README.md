@@ -10,7 +10,7 @@ Here is a list of currently supported and unsupported but possible future featur
 - [x] Listing
 - [x] Reading
 - [ ] Writing
-- [ ] Rename
+- [x] Rename
 - [ ] Delete
 
 ### HDFS Features
@@ -21,7 +21,7 @@ Here is a list of currently supported and unsupported but possible future featur
 
 ### Security Features
 - [x] Kerberos authentication (GSSAPI SASL support)
-- [ ] Token authentication (DIGEST-MD5 SASL support)
+- [x] Token authentication (DIGEST-MD5 SASL support, no encryption support)
 - [x] NameNode RPC encryption
 - [ ] DataNode RPC encryption
 - [ ] DataNode data transfer encryption
@@ -30,7 +30,7 @@ Here is a list of currently supported and unsupported but possible future featur
 ### Other improvements
 - [ ] Better error handling
 - [ ] RPC retries
-- [ ] Async support
+- [x] Async support
 
 ## Building
 

@@ -83,9 +83,6 @@ public class Main {
                 Token<DelegationTokenIdentifier> token = dfs.getNameNodeRpc(2).getDelegationToken(null);
                 token.setService(new Text("ha-hdfs:minidfs-ns"));
                 creds.addToken(new Text("ha-hdfs:minidfs-ns"), token);
-                // dfs.rollEditLogAndTail(1);
-                
-                Thread.sleep(5000);
             } else {
                 System.err.println("Getting token from namenode! " + dfs.getNameNode().getTokenServiceName());
                 Token<DelegationTokenIdentifier> token = dfs.getNameNodeRpc().getDelegationToken(null);
@@ -94,7 +91,7 @@ public class Main {
             }
             
             DataOutputStream os = new DataOutputStream(new FileOutputStream("target/test/delegation_token"));
-            creds.writeTokenStorageToStream(os, SerializedFormat.PROTOBUF);
+            creds.writeTokenStorageToStream(os, SerializedFormat.WRITABLE);
             os.close();
         }
 
