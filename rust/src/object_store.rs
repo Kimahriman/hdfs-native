@@ -1,6 +1,9 @@
-use std::fmt::{Display, Formatter};
+use std::{
+    fmt::{Display, Formatter},
+    future,
+};
 
-use crate::{Client, HdfsError};
+use crate::{client::FileStatus, Client, HdfsError};
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -129,35 +132,29 @@ impl ObjectStore for HdfsObjectStore {
     /// `foo/bar_baz/x`.
     ///
     /// Note: the order of returned [`ObjectMeta`] is not guaranteed
-    /// TODO: needs to be recursive?
     async fn list(&self, prefix: Option<&Path>) -> Result<BoxStream<'_, Result<ObjectMeta>>> {
-        let iter = self.client.list_status_iterator(
-            &prefix
-                .map(|p| Self::make_absolute_dir(p))
-                .unwrap_or("".to_string()),
-            true,
-            true,
-        );
-
-        let stream = stream::unfold(iter, |mut state| async move {
-            let next = state.next().await;
-            next.map(|res| {
-                res.map(|status| ObjectMeta {
-                    location: Path::from(status.path),
-                    last_modified: DateTime::<Utc>::from_utc(
-                        NaiveDateTime::from_timestamp_opt(status.modification_time as i64, 0)
-                            .unwrap(),
-                        Utc,
-                    ),
-                    size: status.length,
-                    e_tag: None,
-                })
-                .map_err(|err| object_store::Error::from(err))
+        let status_stream = self
+            .client
+            .list_status_iter(
+                &prefix
+                    .map(|p| Self::make_absolute_dir(p))
+                    .unwrap_or("".to_string()),
+                true,
+            )
+            .filter(|res| {
+                let result = if let Ok(status) = res {
+                    !status.isdir
+                } else {
+                    true
+                };
+                future::ready(result)
             })
-            .map(|res| (res, state))
-        });
+            .map(|res| {
+                res.map(|s| create_object_meta(&s))
+                    .map_err(|err| object_store::Error::from(err))
+            });
 
-        Ok(Box::pin(stream))
+        Ok(Box::pin(status_stream))
     }
 
     /// List objects with the given prefix and an implementation specific
@@ -167,14 +164,17 @@ impl ObjectStore for HdfsObjectStore {
     /// Prefixes are evaluated on a path segment basis, i.e. `foo/bar/` is a prefix of `foo/bar/x` but not of
     /// `foo/bar_baz/x`.
     async fn list_with_delimiter(&self, prefix: Option<&Path>) -> Result<ListResult> {
-        let statuses = self
-            .client
-            .list_status(
-                &prefix
-                    .map(|p| Self::make_absolute_dir(p))
-                    .unwrap_or("".to_string()),
-            )
-            .await?;
+        let mut status_stream = self.client.list_status_iter(
+            &prefix
+                .map(|p| Self::make_absolute_dir(p))
+                .unwrap_or("".to_string()),
+            false,
+        );
+
+        let mut statuses = Vec::<FileStatus>::new();
+        while let Some(status) = status_stream.next().await {
+            statuses.push(status?);
+        }
 
         let dirs: Vec<Path> = statuses
             .iter()
@@ -184,15 +184,7 @@ impl ObjectStore for HdfsObjectStore {
         let files: Vec<ObjectMeta> = statuses
             .iter()
             .filter(|s| !s.isdir)
-            .map(|status| ObjectMeta {
-                location: Path::from(status.path.as_ref()),
-                last_modified: DateTime::<Utc>::from_utc(
-                    NaiveDateTime::from_timestamp_opt(status.modification_time as i64, 0).unwrap(),
-                    Utc,
-                ),
-                size: status.length,
-                e_tag: None,
-            })
+            .map(create_object_meta)
             .collect();
 
         Ok(ListResult {
@@ -254,5 +246,17 @@ impl From<HdfsError> for object_store::Error {
                 source: Box::new(value),
             },
         }
+    }
+}
+
+fn create_object_meta(status: &FileStatus) -> ObjectMeta {
+    ObjectMeta {
+        location: Path::from(status.path.as_ref()),
+        last_modified: DateTime::<Utc>::from_utc(
+            NaiveDateTime::from_timestamp_opt(status.modification_time as i64, 0).unwrap(),
+            Utc,
+        ),
+        size: status.length,
+        e_tag: None,
     }
 }

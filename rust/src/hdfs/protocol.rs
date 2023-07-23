@@ -66,6 +66,29 @@ impl NamenodeProtocol {
         Ok(hdfs::GetLocatedFileInfoResponseProto::decode_length_delimited(response)?)
     }
 
+    pub(crate) async fn mkdirs(
+        &self,
+        src: &str,
+        permission: u32,
+        create_parent: bool,
+    ) -> Result<hdfs::MkdirsResponseProto> {
+        let mut masked = hdfs::FsPermissionProto::default();
+        masked.perm = permission;
+
+        let mut message = hdfs::MkdirsRequestProto::default();
+        message.src = src.to_string();
+        message.masked = masked;
+        message.create_parent = create_parent;
+
+        let response = self
+            .proxy
+            .call("mkdirs", message.encode_length_delimited_to_vec())
+            .await?;
+        Ok(hdfs::MkdirsResponseProto::decode_length_delimited(
+            response,
+        )?)
+    }
+
     pub(crate) async fn rename(
         &self,
         src: &str,

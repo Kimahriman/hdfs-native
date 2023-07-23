@@ -59,9 +59,9 @@ impl RawClient {
         })
     }
 
-    pub fn list_status(&self, path: &str) -> PyResult<Vec<PyFileStatus>> {
+    pub fn list_status(&self, path: &str, recursive: bool) -> PyResult<Vec<PyFileStatus>> {
         Ok(rt()?
-            .block_on(self.inner.list_status(path))
+            .block_on(self.inner.list_status(path, recursive))
             .map_err(PythonError::from)?
             .into_iter()
             .map(PyFileStatus::from)

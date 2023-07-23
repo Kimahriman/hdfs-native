@@ -101,7 +101,7 @@ pub(crate) async fn test_with_features(features: &HashSet<DfsFeatures>) -> Resul
 }
 
 async fn test_listing(client: &Client) -> Result<()> {
-    let statuses = client.list_status("/").await?;
+    let statuses = client.list_status("/", false).await?;
     assert_eq!(statuses.len(), 1);
     let status = &statuses[0];
     assert_eq!(status.path, "testfile");
@@ -133,12 +133,14 @@ async fn test_read(client: &Client) -> Result<()> {
 async fn test_rename(client: &Client) -> Result<()> {
     client.rename("/testfile", "/testfile2", false).await?;
 
-    assert!(client.list_status("/testfile").await.is_err());
-    assert_eq!(client.list_status("/testfile2").await?.len(), 1);
+    println!("{:?}", client.list_status("/testfile", false).await);
+
+    assert!(client.list_status("/testfile", false).await.is_err());
+    assert_eq!(client.list_status("/testfile2", false).await?.len(), 1);
 
     client.rename("/testfile2", "/testfile", false).await?;
-    assert!(client.list_status("/testfile2").await.is_err());
-    assert_eq!(client.list_status("/testfile").await?.len(), 1);
+    assert!(client.list_status("/testfile2", false).await.is_err());
+    assert_eq!(client.list_status("/testfile", false).await?.len(), 1);
 
     Ok(())
 }

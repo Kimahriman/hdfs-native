@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use futures::stream::BoxStream;
+use futures::{stream, StreamExt};
 use log::debug;
 use url::Url;
 
@@ -49,43 +51,27 @@ impl Client {
         }
     }
 
-    /// Retrieves a list of file status for all files in `path`. This does not recurse into directories.
-    pub async fn list_status(&self, path: &str) -> Result<Vec<FileStatus>> {
-        let mut results = Vec::<FileStatus>::new();
-        let mut start_after = Vec::<u8>::new();
-        loop {
-            let partial_listing = self.protocol.get_listing(path, start_after, true).await?;
-            match partial_listing.dir_list {
-                None => return Err(HdfsError::FileNotFound(path.to_string())),
-                Some(dir_list) => {
-                    start_after = dir_list
-                        .partial_listing
-                        .last()
-                        .map(|p| p.path.clone())
-                        .unwrap_or(Vec::new());
-                    let file_statuses = dir_list.partial_listing.into_iter().map(FileStatus::from);
-                    results.extend(file_statuses);
-                    if dir_list.remaining_entries == 0 {
-                        break;
-                    }
-                }
-            }
+    /// Retrives a list of all files in directories located at `path`. Wrapper around `list_status_iter` that
+    /// returns Err if any part of the stream fails, or Ok if all file statuses were found successfully.
+    pub async fn list_status(&self, path: &str, recursive: bool) -> Result<Vec<FileStatus>> {
+        let stream = self.list_status_iter(path, recursive);
+        let statuses = stream.collect::<Vec<Result<FileStatus>>>().await;
+
+        let mut resolved_statues = Vec::<FileStatus>::with_capacity(statuses.len());
+        for status in statuses.into_iter() {
+            resolved_statues.push(status?);
         }
-        Ok(results)
+
+        Ok(resolved_statues)
     }
 
-    pub fn list_status_iterator(
-        &self,
-        path: &str,
-        files_only: bool,
-        recursive: bool,
-    ) -> ListStatusIterator {
-        ListStatusIterator::new(
-            path.to_string(),
-            self.protocol.clone(),
-            files_only,
-            recursive,
-        )
+    pub fn list_status_iter(&self, path: &str, recursive: bool) -> BoxStream<Result<FileStatus>> {
+        let iter = ListStatusIterator::new(path.to_string(), self.protocol.clone(), recursive);
+        let listing = stream::unfold(iter, |mut state| async move {
+            let next = state.next().await;
+            next.map(|n| (n, state))
+        });
+        Box::pin(listing)
     }
 
     /// Opens a file reader for the file at `path`. Path should not include a scheme.
@@ -97,6 +83,13 @@ impl Client {
         }
     }
 
+    pub async fn mkdirs(&self, src: &str, permission: u32, create_parent: bool) -> Result<()> {
+        self.protocol
+            .mkdirs(src, permission, create_parent)
+            .await
+            .map(|_| ())
+    }
+
     /// Renames `src` to `dst`. Returns Ok(()) on success, and Err otherwise.
     pub async fn rename(&self, src: &str, dst: &str, overwrite: bool) -> Result<()> {
         debug!("Renaming {} to {}", src, dst);
@@ -104,31 +97,22 @@ impl Client {
     }
 }
 
-pub struct ListStatusIterator {
+pub struct DirListingIterator {
     path: String,
     protocol: Arc<NamenodeProtocol>,
     files_only: bool,
-    recursive: bool,
     partial_listing: VecDeque<HdfsFileStatusProto>,
-    listing_position: usize,
     remaining: u32,
     last_seen: Vec<u8>,
 }
 
-impl ListStatusIterator {
-    fn new(
-        path: String,
-        protocol: Arc<NamenodeProtocol>,
-        files_only: bool,
-        recursive: bool,
-    ) -> Self {
-        ListStatusIterator {
+impl DirListingIterator {
+    fn new(path: String, protocol: Arc<NamenodeProtocol>, files_only: bool) -> Self {
+        DirListingIterator {
             path,
             protocol,
             files_only,
-            recursive,
             partial_listing: VecDeque::new(),
-            listing_position: 0,
             remaining: 1,
             last_seen: Vec::new(),
         }
@@ -139,14 +123,16 @@ impl ListStatusIterator {
             .protocol
             .get_listing(&self.path, self.last_seen.clone(), false)
             .await?;
+
         if let Some(dir_list) = listing.dir_list {
             self.last_seen = dir_list
                 .partial_listing
                 .last()
                 .map(|p| p.path.clone())
                 .unwrap_or(Vec::new());
-            self.listing_position = 0;
+
             self.remaining = dir_list.remaining_entries;
+
             self.partial_listing = dir_list
                 .partial_listing
                 .into_iter()
@@ -154,7 +140,8 @@ impl ListStatusIterator {
                 .collect();
             Ok(self.partial_listing.len() > 0)
         } else {
-            Ok(false)
+            self.remaining = 0;
+            Err(HdfsError::FileNotFound(self.path.clone()))
         }
     }
 
@@ -172,6 +159,58 @@ impl ListStatusIterator {
     }
 }
 
+struct ListStatusIterator {
+    protocol: Arc<NamenodeProtocol>,
+    recursive: bool,
+    iters: Vec<DirListingIterator>,
+}
+
+impl ListStatusIterator {
+    fn new(path: String, protocol: Arc<NamenodeProtocol>, recursive: bool) -> Self {
+        let initial = DirListingIterator::new(path.clone(), Arc::clone(&protocol), false);
+
+        ListStatusIterator {
+            protocol,
+            recursive,
+            iters: vec![initial],
+        }
+    }
+
+    pub async fn next(&mut self) -> Option<Result<FileStatus>> {
+        let mut next_file: Option<Result<FileStatus>> = None;
+        while next_file.is_none() {
+            if let Some(iter) = self.iters.last_mut() {
+                if let Some(file_result) = iter.next().await {
+                    if let Ok(file) = file_result {
+                        // Return the directory as the next result, but start traversing into that directory
+                        // next if we're doing a recursive listing
+                        if file.isdir && self.recursive {
+                            self.iters.push(DirListingIterator::new(
+                                file.path.clone(),
+                                Arc::clone(&self.protocol),
+                                false,
+                            ))
+                        }
+                        next_file = Some(Ok(file));
+                    } else {
+                        // Error, return that as the next element
+                        next_file = Some(file_result)
+                    }
+                } else {
+                    // We've exhausted this directory
+                    self.iters.pop();
+                }
+            } else {
+                // There's nothing left, just return None
+                break;
+            }
+        }
+
+        next_file
+    }
+}
+
+#[derive(Debug)]
 pub struct FileStatus {
     pub path: String,
     pub length: usize,
