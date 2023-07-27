@@ -93,6 +93,7 @@ pub(crate) async fn test_with_features(features: &HashSet<DfsFeatures>) -> Resul
     test_listing(&client).await?;
     test_read(&client).await?;
     test_rename(&client).await?;
+    test_dirs(&client).await?;
 
     #[cfg(feature = "object_store")]
     test_object_store(client).await.unwrap();
@@ -141,6 +142,29 @@ async fn test_rename(client: &Client) -> Result<()> {
     client.rename("/testfile2", "/testfile", false).await?;
     assert!(client.list_status("/testfile2", false).await.is_err());
     assert_eq!(client.list_status("/testfile", false).await?.len(), 1);
+
+    Ok(())
+}
+
+async fn test_dirs(client: &Client) -> Result<()> {
+    client.mkdirs("/testdir", 0o755, false).await?;
+    assert!(client
+        .list_status("/testdir", false)
+        .await
+        .is_ok_and(|s| s.len() == 0));
+
+    client.delete("/testdir", false).await?;
+    assert!(client.list_status("/testdir", false).await.is_err());
+
+    client.mkdirs("/testdir1/testdir2", 0o755, true).await?;
+    assert!(client
+        .list_status("/testdir1", false)
+        .await
+        .is_ok_and(|s| s.len() == 1));
+
+    // Deleting non-empty dir without recursive fails
+    assert!(client.delete("/testdir1", false).await.is_err());
+    assert!(client.delete("/testdir1", true).await.is_ok_and(|r| r));
 
     Ok(())
 }

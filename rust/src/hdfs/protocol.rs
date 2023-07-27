@@ -108,4 +108,22 @@ impl NamenodeProtocol {
             response,
         )?)
     }
+
+    pub(crate) async fn delete(
+        &self,
+        src: &str,
+        recursive: bool,
+    ) -> Result<hdfs::DeleteResponseProto> {
+        let mut message = hdfs::DeleteRequestProto::default();
+        message.src = src.to_string();
+        message.recursive = recursive;
+
+        let response = self
+            .proxy
+            .call("delete", message.encode_length_delimited_to_vec())
+            .await?;
+        Ok(hdfs::DeleteResponseProto::decode_length_delimited(
+            response,
+        )?)
+    }
 }

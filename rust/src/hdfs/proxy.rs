@@ -13,7 +13,7 @@ use crate::{
     common::config::Configuration,
     connection::{AlignmentContext, RpcConnection},
     proto::hdfs,
-    Result,
+    HdfsError, Result,
 };
 
 /// Lazily creates a connection to a host, and recreates the connection
@@ -133,6 +133,11 @@ impl NameServiceProxy {
                 Ok(bytes) => {
                     self.current_index.store(proxy_index, Ordering::SeqCst);
                     return Ok(bytes);
+                }
+                // RPCError indicates the call was successfully attempted but had an error, so should be returned immediately
+                Err(HdfsError::RPCError(e)) => {
+                    warn!("{}", e);
+                    return Err(HdfsError::RPCError(e));
                 }
                 Err(_) if attempts >= self.proxy_connections.len() - 1 => return result,
                 Err(e) => {

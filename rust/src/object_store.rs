@@ -206,7 +206,7 @@ impl ObjectStore for HdfsObjectStore {
             .rename(
                 &Self::make_absolute_file(from),
                 &Self::make_absolute_file(to),
-                false,
+                true,
             )
             .await?)
     }

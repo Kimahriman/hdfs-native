@@ -95,6 +95,10 @@ impl Client {
         debug!("Renaming {} to {}", src, dst);
         self.protocol.rename(src, dst, overwrite).await.map(|_| ())
     }
+
+    pub async fn delete(&self, src: &str, recursive: bool) -> Result<bool> {
+        self.protocol.delete(src, recursive).await.map(|r| r.result)
+    }
 }
 
 pub struct DirListingIterator {
