@@ -1,7 +1,7 @@
-use std::ffi::CString;
-use std::io::{self, Cursor, Write};
-use std::ptr;
-use std::sync::atomic::AtomicPtr;
+use bytes::{Buf, Bytes, BytesMut};
+use log::{debug, warn};
+use prost::Message;
+use std::io;
 use std::sync::{Arc, Mutex};
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::{
@@ -10,11 +10,6 @@ use tokio::{
     net::TcpStream,
 };
 
-use base64::{engine::general_purpose, Engine as _};
-use bytes::{Buf, Bytes, BytesMut};
-use log::{debug, warn};
-use prost::Message;
-
 use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
 use crate::proto::common::rpc_sasl_proto::{SaslAuth, SaslState};
 use crate::proto::common::{
@@ -22,21 +17,27 @@ use crate::proto::common::{
 };
 use crate::{HdfsError, Result};
 #[cfg(feature = "token")]
-use gsasl_sys as gsasl;
-use libc::{c_char, c_void, memcpy};
+use {
+    super::user::Token,
+    base64::{engine::general_purpose, Engine as _},
+    gsasl_sys as gsasl,
+    libc::{c_char, c_void, memcpy},
+    std::ffi::CString,
+    std::ptr,
+    std::sync::atomic::AtomicPtr,
+};
+
 #[cfg(feature = "kerberos")]
 use {
     rsasl::callback::{Context, Request, SessionCallback, SessionData},
-    rsasl::mechanism::Authentication,
     rsasl::mechanisms::gssapi::properties::{GssSecurityLayer, GssService, SecurityLayer},
     rsasl::mechanisms::gssapi::GSSAPI,
     rsasl::prelude::*,
     rsasl::property::{Hostname, Password},
-    rsasl::registry::{Matches, Named, Side},
+    // rsasl::registry::{Matches, Named, Side},
+    std::io::Cursor,
 };
 
-use super::user::Token;
-#[cfg(feature = "kerberos")]
 use super::user::User;
 
 const SASL_CALL_ID: i32 = -33;
@@ -469,55 +470,56 @@ impl std::fmt::Debug for SaslWriter {
 //     }
 // }
 
-#[cfg(feature = "kerberos")]
-#[cfg_attr(feature = "registry_static", distributed_slice(MECHANISMS))]
-pub static DIGEST_MD5: Mechanism = Mechanism::build(
-    Mechname::const_new(b"DIGEST-MD5"),
-    300,
-    Some(|| Ok(Box::new(DigestMD5::default()))),
-    None,
-    Side::Server,
-    |_| Some(Matches::<Select>::name()),
-    |_| true,
-);
+// #[cfg(feature = "kerberos")]
+// #[cfg_attr(feature = "registry_static", distributed_slice(MECHANISMS))]
+// pub static DIGEST_MD5: Mechanism = Mechanism::build(
+//     Mechname::const_new(b"DIGEST-MD5"),
+//     300,
+//     Some(|| Ok(Box::new(DigestMD5::default()))),
+//     None,
+//     Side::Server,
+//     |_| Some(Matches::<Select>::name()),
+//     |_| true,
+// );
 
-#[cfg(feature = "kerberos")]
-struct Select;
-#[cfg(feature = "kerberos")]
-impl Named for Select {
-    fn mech() -> &'static Mechanism {
-        &DIGEST_MD5
-    }
-}
+// #[cfg(feature = "kerberos")]
+// struct Select;
+// #[cfg(feature = "kerberos")]
+// impl Named for Select {
+//     fn mech() -> &'static Mechanism {
+//         &DIGEST_MD5
+//     }
+// }
 
-struct DigestMD5 {}
+// struct DigestMD5 {}
 
-impl Default for DigestMD5 {
-    fn default() -> Self {
-        Self {}
-    }
-}
+// impl Default for DigestMD5 {
+//     fn default() -> Self {
+//         Self {}
+//     }
+// }
 
-#[cfg(feature = "kerberos")]
-impl Authentication for DigestMD5 {
-    fn step(
-        &mut self,
-        session: &mut rsasl::mechanism::MechanismData,
-        input: Option<&[u8]>,
-        _writer: &mut dyn Write,
-    ) -> std::result::Result<State, SessionError> {
-        println!("{:?}", session);
-        println!("{:?}", input);
-        println!("{:?}", std::str::from_utf8(input.unwrap()).unwrap());
-        todo!()
-    }
-}
+// #[cfg(feature = "kerberos")]
+// impl Authentication for DigestMD5 {
+//     fn step(
+//         &mut self,
+//         session: &mut rsasl::mechanism::MechanismData,
+//         input: Option<&[u8]>,
+//         _writer: &mut dyn Write,
+//     ) -> std::result::Result<State, SessionError> {
+//         println!("{:?}", session);
+//         println!("{:?}", input);
+//         println!("{:?}", std::str::from_utf8(input.unwrap()).unwrap());
+//         todo!()
+//     }
+// }
 
 #[cfg(feature = "kerberos")]
 struct RSaslSession {
     inner: Session,
 }
 
+#[cfg(feature = "kerberos")]
 impl RSaslSession {
     fn new(service: &str, hostname: &str) -> Result<Self> {
         let config = SASLConfig::builder()
@@ -684,6 +686,7 @@ impl SaslSession for GSASLSession {
     }
 }
 
+#[cfg(feature = "token")]
 impl Drop for GSASLSession {
     fn drop(&mut self) {
         unsafe {

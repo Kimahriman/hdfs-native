@@ -1,9 +1,8 @@
 use std::io;
 
 use prost::DecodeError;
+#[cfg(feature = "kerberos")]
 use rsasl::prelude::{SASLError, SessionError};
-#[cfg(feature = "rsasl2")]
-use rsasl2::prelude::SASLError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -21,6 +20,7 @@ pub enum HdfsError {
     #[cfg(feature = "kerberos")]
     #[error("SASL error")]
     RSASLError(#[from] SASLError),
+    #[cfg(feature = "kerberos")]
     #[error("SASL session error")]
     RSASLSessionError(#[from] SessionError),
     #[error("SASL error")]

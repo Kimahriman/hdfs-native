@@ -9,7 +9,7 @@ name = "hdfs_native"
 crate-type = ["cdylib"]
 
 [dependencies]
-hdfs-native = { version = "0.1.0", path = "../rust" }
+hdfs-native = { version = "0.1.0", path = "../rust", all-features = true }
 pyo3 = "0.19.0"
 thiserror = "1.0.43"
 tokio = { version = "1.28", features = ["rt-multi-thread"] }

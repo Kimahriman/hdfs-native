@@ -33,7 +33,6 @@ tempfile = "3.5"
 which = "4.4"
 
 [features]
-default = ["token", "kerberos", "object_store"]
 object_store = ["dep:object_store", "dep:async-trait", "dep:chrono"]
 token = ["gsasl-sys"]
 kerberos = ["rsasl"]
