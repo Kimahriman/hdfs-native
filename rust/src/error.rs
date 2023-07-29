@@ -15,9 +15,9 @@ pub enum HdfsError {
     #[error("failed to decode RPC response")]
     InvalidRPCResponse(#[from] DecodeError),
     #[error("RPC error")]
-    RPCError(String),
+    RPCError(String, String),
     #[error("fatal RPC error")]
-    FatalRPCError(String),
+    FatalRPCError(String, String),
     #[cfg(feature = "kerberos")]
     #[error("SASL error")]
     RSASLError(#[from] SASLError),

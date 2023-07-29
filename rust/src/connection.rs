@@ -273,25 +273,13 @@ impl RpcListener {
 
         debug!("RPC header response: {:?}", rpc_response);
 
-        if let Some(RpcStatusProto::Fatal) = RpcStatusProto::from_i32(rpc_response.status) {
-            warn!("RPC fatal error: {:?}", rpc_response.error_msg);
-            return Err(HdfsError::FatalRPCError(
-                rpc_response.error_msg().to_string(),
-            ));
-        }
-
         let call_id = rpc_response.call_id as i32;
 
         let call = self.call_map.lock().unwrap().remove(&call_id);
 
         if let Some(call) = call {
-            match RpcStatusProto::from_i32(rpc_response.status) {
-                Some(RpcStatusProto::Error) => {
-                    let _ = call.send(Err(HdfsError::RPCError(
-                        rpc_response.error_msg().to_string(),
-                    )));
-                }
-                Some(RpcStatusProto::Success) => {
+            match rpc_response.status() {
+                RpcStatusProto::Success => {
                     if let Some(state_id) = rpc_response.state_id {
                         self.alignment_context
                             .state_id
@@ -302,9 +290,17 @@ impl RpcListener {
                     }
                     let _ = call.send(Ok(bytes));
                 }
-                _ => {
-                    return Err(HdfsError::RPCError(
-                        "Unknown RPC response status".to_string(),
+                RpcStatusProto::Error => {
+                    let _ = call.send(Err(HdfsError::RPCError(
+                        rpc_response.exception_class_name().to_string(),
+                        rpc_response.error_msg().to_string(),
+                    )));
+                }
+                RpcStatusProto::Fatal => {
+                    warn!("RPC fatal error: {}", rpc_response.error_msg());
+                    return Err(HdfsError::FatalRPCError(
+                        rpc_response.exception_class_name().to_string(),
+                        rpc_response.error_msg().to_string(),
                     ));
                 }
             }

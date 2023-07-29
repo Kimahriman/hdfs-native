@@ -144,7 +144,6 @@ impl DirListingIterator {
                 .collect();
             Ok(self.partial_listing.len() > 0)
         } else {
-            self.remaining = 0;
             Err(HdfsError::FileNotFound(self.path.clone()))
         }
     }
@@ -152,6 +151,7 @@ impl DirListingIterator {
     pub async fn next(&mut self) -> Option<Result<FileStatus>> {
         if self.partial_listing.len() == 0 && self.remaining > 0 {
             if let Err(error) = self.get_next_batch().await {
+                self.remaining = 0;
                 return Some(Err(error));
             }
         }
@@ -183,12 +183,14 @@ impl ListStatusIterator {
     pub async fn next(&mut self) -> Option<Result<FileStatus>> {
         let mut next_file: Option<Result<FileStatus>> = None;
         while next_file.is_none() {
+            println!("Next file is none");
             if let Some(iter) = self.iters.last_mut() {
                 if let Some(file_result) = iter.next().await {
                     if let Ok(file) = file_result {
                         // Return the directory as the next result, but start traversing into that directory
                         // next if we're doing a recursive listing
                         if file.isdir && self.recursive {
+                            println!("Recusiring into dir {}", file.path);
                             self.iters.push(DirListingIterator::new(
                                 file.path.clone(),
                                 Arc::clone(&self.protocol),

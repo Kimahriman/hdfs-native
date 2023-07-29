@@ -301,11 +301,15 @@ impl SaslReader {
 
         match RpcStatusProto::from_i32(rpc_response.status).unwrap() {
             RpcStatusProto::Error => {
-                return Err(HdfsError::RPCError(rpc_response.error_msg().to_string()));
+                return Err(HdfsError::RPCError(
+                    rpc_response.exception_class_name().to_string(),
+                    rpc_response.error_msg().to_string(),
+                ));
             }
             RpcStatusProto::Fatal => {
                 warn!("RPC fatal error: {:?}", rpc_response.error_msg);
                 return Err(HdfsError::FatalRPCError(
+                    rpc_response.exception_class_name().to_string(),
                     rpc_response.error_msg().to_string(),
                 ));
             }

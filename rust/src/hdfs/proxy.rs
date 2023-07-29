@@ -16,6 +16,10 @@ use crate::{
     HdfsError, Result,
 };
 
+// RPC exceptions that should be tried
+const STANDBY_EXCEPTION: &str = "org.apache.hadoop.ipc.StandbyException";
+const OBSERVER_RETRY_EXCEPTION: &str = "org.apache.hadoop.ipc.ObserverRetryOnActiveException";
+
 /// Lazily creates a connection to a host, and recreates the connection
 /// on fatal errors.
 #[derive(Debug)]
@@ -119,6 +123,10 @@ impl NameServiceProxy {
         self.call_inner(method_name, message).await
     }
 
+    fn is_retriable(exception: &str) -> bool {
+        exception == STANDBY_EXCEPTION || exception == OBSERVER_RETRY_EXCEPTION
+    }
+
     async fn call_inner(&self, method_name: &'static str, message: Vec<u8>) -> Result<Bytes> {
         let mut proxy_index = self.current_index.load(Ordering::SeqCst);
         let mut attempts = 0;
@@ -135,9 +143,9 @@ impl NameServiceProxy {
                     return Ok(bytes);
                 }
                 // RPCError indicates the call was successfully attempted but had an error, so should be returned immediately
-                Err(HdfsError::RPCError(e)) => {
-                    warn!("{}", e);
-                    return Err(HdfsError::RPCError(e));
+                Err(HdfsError::RPCError(exception, msg)) if !Self::is_retriable(&exception) => {
+                    warn!("{}", msg);
+                    return Err(HdfsError::RPCError(exception, msg));
                 }
                 Err(_) if attempts >= self.proxy_connections.len() - 1 => return result,
                 Err(e) => {
