@@ -183,14 +183,12 @@ impl ListStatusIterator {
     pub async fn next(&mut self) -> Option<Result<FileStatus>> {
         let mut next_file: Option<Result<FileStatus>> = None;
         while next_file.is_none() {
-            println!("Next file is none");
             if let Some(iter) = self.iters.last_mut() {
                 if let Some(file_result) = iter.next().await {
                     if let Ok(file) = file_result {
                         // Return the directory as the next result, but start traversing into that directory
                         // next if we're doing a recursive listing
                         if file.isdir && self.recursive {
-                            println!("Recusiring into dir {}", file.path);
                             self.iters.push(DirListingIterator::new(
                                 file.path.clone(),
                                 Arc::clone(&self.protocol),

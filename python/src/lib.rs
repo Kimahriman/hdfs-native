@@ -1,17 +1,14 @@
 use crate::error::PythonError;
 use ::hdfs_native::{client::FileStatus, Client};
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
+use tokio::runtime::Runtime;
 
 mod error;
-
-#[inline]
-fn rt() -> PyResult<tokio::runtime::Runtime> {
-    tokio::runtime::Runtime::new().map_err(|err| PyRuntimeError::new_err(err.to_string()))
-}
 
 #[pyclass]
 struct RawClient {
     inner: Client,
+    rt: Runtime,
 }
 
 #[pyclass]
@@ -56,11 +53,14 @@ impl RawClient {
     pub fn new(url: &str) -> PyResult<Self> {
         Ok(RawClient {
             inner: Client::new(url).map_err(PythonError::from)?,
+            rt: tokio::runtime::Runtime::new()
+                .map_err(|err| PyRuntimeError::new_err(err.to_string()))?,
         })
     }
 
     pub fn list_status(&self, path: &str, recursive: bool) -> PyResult<Vec<PyFileStatus>> {
-        Ok(rt()?
+        Ok(self
+            .rt
             .block_on(self.inner.list_status(path, recursive))
             .map_err(PythonError::from)?
             .into_iter()
@@ -69,16 +69,9 @@ impl RawClient {
     }
 }
 
-/// Formats the sum of two numbers as string.
-#[pyfunction]
-fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
-    Ok((a + b).to_string())
-}
-
 /// A Python module implemented in Rust.
 #[pymodule]
 fn hdfs_native(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
     m.add_class::<RawClient>()?;
     Ok(())
 }
