@@ -53,7 +53,7 @@ jobs:
       #   run: cargo clippy --tests
 
       - name: Check docs
-        run: cargo doc
+        run: cargo doc -p hdfs-native
 
       - name: Check no features
         run: cargo check
