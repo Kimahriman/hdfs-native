@@ -1,9 +1,12 @@
-use crate::error::PythonError;
 use ::hdfs_native::{client::FileStatus, Client};
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use tokio::runtime::Runtime;
 
 mod error;
+
+use crate::error::PythonHdfsError;
+
+type PyHdfsResult<T> = Result<T, PythonHdfsError>;
 
 #[pyclass]
 struct RawClient {
@@ -11,23 +14,15 @@ struct RawClient {
     rt: Runtime,
 }
 
-#[pyclass]
+#[pyclass(get_all, frozen)]
 struct PyFileStatus {
-    #[pyo3(get)]
     path: String,
-    #[pyo3(get)]
     length: usize,
-    #[pyo3(get)]
     isdir: bool,
-    #[pyo3(get)]
     permission: u16,
-    #[pyo3(get)]
     owner: String,
-    #[pyo3(get)]
     group: String,
-    #[pyo3(get)]
     modification_time: u64,
-    #[pyo3(get)]
     access_time: u64,
 }
 
@@ -52,20 +47,40 @@ impl RawClient {
     #[pyo3(signature = (url))]
     pub fn new(url: &str) -> PyResult<Self> {
         Ok(RawClient {
-            inner: Client::new(url).map_err(PythonError::from)?,
+            inner: Client::new(url).map_err(PythonHdfsError::from)?,
             rt: tokio::runtime::Runtime::new()
                 .map_err(|err| PyRuntimeError::new_err(err.to_string()))?,
         })
     }
 
-    pub fn list_status(&self, path: &str, recursive: bool) -> PyResult<Vec<PyFileStatus>> {
+    pub fn get_file_info(&self, path: &str) -> PyHdfsResult<PyFileStatus> {
         Ok(self
             .rt
-            .block_on(self.inner.list_status(path, recursive))
-            .map_err(PythonError::from)?
+            .block_on(self.inner.get_file_info(path))
+            .map(PyFileStatus::from)?)
+    }
+
+    pub fn list_status(&self, path: &str, recursive: bool) -> PyHdfsResult<Vec<PyFileStatus>> {
+        Ok(self
+            .rt
+            .block_on(self.inner.list_status(path, recursive))?
             .into_iter()
             .map(PyFileStatus::from)
             .collect())
+    }
+
+    pub fn mkdirs(&self, path: &str, permission: u32, create_parent: bool) -> PyHdfsResult<()> {
+        Ok(self
+            .rt
+            .block_on(self.inner.mkdirs(path, permission, create_parent))?)
+    }
+
+    pub fn rename(&self, src: &str, dst: &str, overwrite: bool) -> PyHdfsResult<()> {
+        Ok(self.rt.block_on(self.inner.rename(src, dst, overwrite))?)
+    }
+
+    pub fn delete(&self, path: &str, recursive: bool) -> PyHdfsResult<bool> {
+        Ok(self.rt.block_on(self.inner.delete(path, recursive))?)
     }
 }
 

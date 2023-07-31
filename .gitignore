@@ -25,6 +25,7 @@ var/
 include/
 man/
 venv/
+wheels/
 *.egg-info/
 .installed.cfg
 *.egg

@@ -1,7 +1,7 @@
 use std::str;
 
 use hdfs_native::client::Client;
-use hdfs_native::error::Result;
+use hdfs_native::Result;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {

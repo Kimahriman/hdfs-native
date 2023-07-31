@@ -1,17 +1,18 @@
-use pyo3::{create_exception, exceptions::PyException, PyErr};
+use hdfs_native::HdfsError;
+use pyo3::{exceptions::PyValueError, PyErr};
 
-create_exception!(hdfs_native, HdfsError, PyException);
+pub struct PythonHdfsError(HdfsError);
 
-#[derive(thiserror::Error, Debug)]
-pub enum PythonError {
-    #[error("Error in HDFS client")]
-    HdfsError(#[from] hdfs_native::HdfsError),
+impl From<HdfsError> for PythonHdfsError {
+    fn from(value: HdfsError) -> Self {
+        PythonHdfsError(value)
+    }
 }
 
-impl From<PythonError> for PyErr {
-    fn from(value: PythonError) -> Self {
-        match value {
-            PythonError::HdfsError(error) => HdfsError::new_err(error.to_string()),
+impl From<PythonHdfsError> for PyErr {
+    fn from(value: PythonHdfsError) -> Self {
+        match value.0 {
+            _ => PyValueError::new_err("Unknown HDFS error"),
         }
     }
 }

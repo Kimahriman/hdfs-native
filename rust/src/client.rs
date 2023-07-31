@@ -25,7 +25,7 @@ impl Client {
     /// If a port is included, the host is treated as a single NameNode. If no port is included, the
     /// host is treated as a name service that will be resolved using the HDFS config.
     ///
-    /// viewfs schemes and name services are not currently supported.
+    /// viewfs schemes are not currently supported.
     pub fn new(url: &str) -> Result<Self> {
         let parsed_url = Url::parse(url).expect("Failed to parse provided URL");
 
@@ -43,7 +43,7 @@ impl Client {
         Ok(Client { protocol })
     }
 
-    /// Retrieve the file status for the file at `src`.
+    /// Retrieve the file status for the file at `path`.
     pub async fn get_file_info(&self, path: &str) -> Result<FileStatus> {
         match self.protocol.get_file_info(path).await?.fs {
             Some(status) => Ok(FileStatus::from(status)),
@@ -65,6 +65,7 @@ impl Client {
         Ok(resolved_statues)
     }
 
+    /// Retrives a stream of all files in directories located at `path`.
     pub fn list_status_iter(&self, path: &str, recursive: bool) -> BoxStream<Result<FileStatus>> {
         let iter = ListStatusIterator::new(path.to_string(), self.protocol.clone(), recursive);
         let listing = stream::unfold(iter, |mut state| async move {
@@ -83,9 +84,12 @@ impl Client {
         }
     }
 
-    pub async fn mkdirs(&self, src: &str, permission: u32, create_parent: bool) -> Result<()> {
+    /// Create a new directory at `path` with the given `permission`. If `create_parent` is true,
+    /// any missing parent directories will be created as well, otherwise an error will be returned
+    /// if the parent directory doesn't already exist.
+    pub async fn mkdirs(&self, path: &str, permission: u32, create_parent: bool) -> Result<()> {
         self.protocol
-            .mkdirs(src, permission, create_parent)
+            .mkdirs(path, permission, create_parent)
             .await
             .map(|_| ())
     }
@@ -96,12 +100,17 @@ impl Client {
         self.protocol.rename(src, dst, overwrite).await.map(|_| ())
     }
 
-    pub async fn delete(&self, src: &str, recursive: bool) -> Result<bool> {
-        self.protocol.delete(src, recursive).await.map(|r| r.result)
+    /// Deletes the file or directory at `path`. If `recursive` is false and `path` is a non-empty
+    /// directory, this will fail. Returns `Ok(true)` if it was successfully deleted.
+    pub async fn delete(&self, path: &str, recursive: bool) -> Result<bool> {
+        self.protocol
+            .delete(path, recursive)
+            .await
+            .map(|r| r.result)
     }
 }
 
-pub struct DirListingIterator {
+pub(crate) struct DirListingIterator {
     path: String,
     protocol: Arc<NamenodeProtocol>,
     files_only: bool,

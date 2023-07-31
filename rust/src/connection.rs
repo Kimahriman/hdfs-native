@@ -339,7 +339,7 @@ impl Packet {
 }
 
 #[derive(Debug)]
-pub struct DatanodeConnection {
+pub(crate) struct DatanodeConnection {
     client_name: String,
     reader: BufReader<OwnedReadHalf>,
     writer: OwnedWriteHalf,
