@@ -2,6 +2,12 @@
 name = "hdfs-native-python"
 version = "0.1.0"
 edition = "2021"
+authors = ["Adam Binford <adamq43@gmail.com>"]
+homepage = "https://github.com/Kimahriman/hdfs-native"
+repository = "https://github.com/Kimahriman/hdfs-native"
+keywords = ["hadoop", "hdfs"]
+description = "Python bindings for native HDFS client implementation in Rust"
+license = "MIT"
 publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
