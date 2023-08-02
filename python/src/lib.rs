@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use ::hdfs_native::hdfs::file::HdfsFileReader;
 use ::hdfs_native::{client::FileStatus, Client};
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use tokio::runtime::Runtime;
@@ -7,12 +10,6 @@ mod error;
 use crate::error::PythonHdfsError;
 
 type PyHdfsResult<T> = Result<T, PythonHdfsError>;
-
-#[pyclass]
-struct RawClient {
-    inner: Client,
-    rt: Runtime,
-}
 
 #[pyclass(get_all, frozen)]
 struct PyFileStatus {
@@ -41,6 +38,32 @@ impl From<FileStatus> for PyFileStatus {
     }
 }
 
+#[pyclass]
+struct PyFileReader {
+    inner: HdfsFileReader,
+    rt: Arc<Runtime>,
+}
+
+#[pymethods]
+impl PyFileReader {
+    pub fn read(&mut self, len: usize) -> PyHdfsResult<Vec<u8>> {
+        Ok(self.rt.block_on(self.inner.read(len))?.to_vec())
+    }
+
+    pub fn read_range(&self, offset: usize, len: usize) -> PyHdfsResult<Vec<u8>> {
+        Ok(self
+            .rt
+            .block_on(self.inner.read_range(offset, len))?
+            .to_vec())
+    }
+}
+
+#[pyclass(name = "Client")]
+struct RawClient {
+    inner: Client,
+    rt: Arc<Runtime>,
+}
+
 #[pymethods]
 impl RawClient {
     #[new]
@@ -48,8 +71,10 @@ impl RawClient {
     pub fn new(url: &str) -> PyResult<Self> {
         Ok(RawClient {
             inner: Client::new(url).map_err(PythonHdfsError::from)?,
-            rt: tokio::runtime::Runtime::new()
-                .map_err(|err| PyRuntimeError::new_err(err.to_string()))?,
+            rt: Arc::new(
+                tokio::runtime::Runtime::new()
+                    .map_err(|err| PyRuntimeError::new_err(err.to_string()))?,
+            ),
         })
     }
 
@@ -67,6 +92,15 @@ impl RawClient {
             .into_iter()
             .map(PyFileStatus::from)
             .collect())
+    }
+
+    pub fn read(&self, path: &str) -> PyHdfsResult<PyFileReader> {
+        let file_reader = self.rt.block_on(self.inner.read(path))?;
+
+        Ok(PyFileReader {
+            inner: file_reader,
+            rt: Arc::clone(&self.rt),
+        })
     }
 
     pub fn mkdirs(&self, path: &str, permission: u32, create_parent: bool) -> PyHdfsResult<()> {

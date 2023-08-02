@@ -33,9 +33,6 @@ tempfile = "3.5"
 which = "4.4"
 
 [features]
-object_store = ["dep:object_store", "dep:async-trait", "dep:chrono"]
+object_store = ["dep:object_store", "async-trait", "chrono"]
 token = ["gsasl-sys"]
 kerberos = ["rsasl"]
-
-[profile.dev]
-split-debuginfo = "packed"

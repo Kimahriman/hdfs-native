@@ -4,12 +4,14 @@
 //!
 //! Create a client to a single NameNode
 //! ```rust
-//! let client = Client::new("hdfs://localhost:9000")?;
+//! use hdfs_native::Client;
+//! let client = Client::new("hdfs://localhost:9000").unwrap();
 //! ```
 //!
 //! Create a client for a Name Service
 //! ```rust
-//! let client = Client::new("hdfs://ns")?;
+//! use hdfs_native::Client;
+//! let client = Client::new("hdfs://ns").unwrap();
 //! ```
 //!
 //! # Optional cargo package features
@@ -23,7 +25,7 @@ pub mod client;
 pub(crate) mod common;
 pub(crate) mod connection;
 pub(crate) mod error;
-pub(crate) mod hdfs;
+pub mod hdfs;
 pub(crate) mod proto;
 pub(crate) mod security;
 

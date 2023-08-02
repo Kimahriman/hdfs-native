@@ -95,7 +95,7 @@ impl ObjectStore for HdfsObjectStore {
                 .read_range(range.start, range.end - range.start)
                 .await?
         } else {
-            reader.read().await?
+            reader.read_range(0, reader.file_length()).await?
         };
 
         Ok(GetResult::Stream(
