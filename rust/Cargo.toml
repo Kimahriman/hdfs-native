@@ -2,6 +2,13 @@
 name = "hdfs-native"
 version = "0.1.0"
 edition = "2021"
+authors = ["Adam Binford <adamq43@gmail.com>"]
+homepage = "https://github.com/Kimahriman/hdfs-native"
+repository = "https://github.com/Kimahriman/hdfs-native"
+keywords = ["hadoop", "hdfs"]
+description = "Native HDFS client implementation in Rust"
+readme = "README.md"
+
 
 [dependencies]
 bytes = "1"
