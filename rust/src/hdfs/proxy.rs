@@ -11,7 +11,7 @@ use url::Url;
 
 use crate::{
     common::config::Configuration,
-    connection::{AlignmentContext, RpcConnection},
+    hdfs::connection::{AlignmentContext, RpcConnection},
     proto::hdfs,
     HdfsError, Result,
 };

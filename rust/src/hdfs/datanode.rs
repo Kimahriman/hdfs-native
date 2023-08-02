@@ -2,7 +2,7 @@ use bytes::BufMut;
 use log::{debug, warn};
 
 use crate::{
-    connection::{DatanodeConnection, Op},
+    hdfs::connection::{DatanodeConnection, Op},
     proto::hdfs,
     Result,
 };

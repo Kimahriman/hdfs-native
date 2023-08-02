@@ -23,7 +23,6 @@
 
 pub mod client;
 pub(crate) mod common;
-pub(crate) mod connection;
 pub(crate) mod error;
 pub mod hdfs;
 pub(crate) mod proto;

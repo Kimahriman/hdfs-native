@@ -8,7 +8,7 @@ repository = "https://github.com/Kimahriman/hdfs-native"
 keywords = ["hadoop", "hdfs"]
 description = "Native HDFS client implementation in Rust"
 readme = "../README.md"
-license = "MIT"
+license = "Apache 2.0"
 
 
 [dependencies]

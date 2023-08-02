@@ -9,6 +9,11 @@ keywords = ["hadoop", "hdfs"]
 description = "Python bindings for native HDFS client implementation in Rust"
 license = "MIT"
 publish = false
+exclude = [
+    ".gitignore",
+    ".github/",
+    
+]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
