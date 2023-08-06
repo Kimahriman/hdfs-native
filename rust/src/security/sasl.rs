@@ -643,10 +643,17 @@ impl SaslSession for GSASLSession {
     fn step(&mut self, token: Option<&[u8]>) -> Result<(Vec<u8>, bool)> {
         let mut clientout = ptr::null_mut::<c_char>();
         let mut clientoutlen: u64 = 0;
+
+        // The type is different depending on the OS
+        #[cfg(target_os = "macos")]
+        let token_ptr = token.map(|t| t.as_ptr()).unwrap_or(ptr::null_mut()) as *const i8;
+        #[cfg(not(target_os = "macos"))]
+        let token_ptr = token.map(|t| t.as_ptr()).unwrap_or(ptr::null_mut()) as *const u8;
+
         let ret = unsafe {
             gsasl::gsasl_step(
                 self.conn.load(std::sync::atomic::Ordering::SeqCst),
-                token.map(|t| t.as_ptr()).unwrap_or(ptr::null_mut()) as *const i8,
+                token_ptr,
                 token.map(|t| t.len()).unwrap_or(0) as u64,
                 &mut clientout,
                 &mut clientoutlen,
