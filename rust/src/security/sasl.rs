@@ -645,10 +645,10 @@ impl SaslSession for GSASLSession {
         let mut clientoutlen: u64 = 0;
 
         // The type is different depending on the OS
-        #[cfg(target_os = "macos")]
+        // #[cfg(target_os = "macos")]
         let token_ptr = token.map(|t| t.as_ptr()).unwrap_or(ptr::null_mut()) as *const i8;
-        #[cfg(not(target_os = "macos"))]
-        let token_ptr = token.map(|t| t.as_ptr()).unwrap_or(ptr::null_mut()) as *const u8;
+        // #[cfg(not(target_os = "macos"))]
+        // let token_ptr = token.map(|t| t.as_ptr()).unwrap_or(ptr::null_mut()) as *const u8;
 
         let ret = unsafe {
             gsasl::gsasl_step(
