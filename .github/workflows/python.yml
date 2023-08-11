@@ -21,9 +21,11 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-latest
+    container:
+      image: ubuntu:20.04
     strategy:
       matrix:
-        target: [x86_64, x86, aarch64, armv7, s390x, ppc64le]
+        target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -40,6 +42,7 @@ jobs:
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
           manylinux: auto
+          container: off
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
