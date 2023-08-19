@@ -36,7 +36,7 @@ jobs:
         with:
           python-version: '3.10'
       - name: Install native libs
-        run: apt-get install -y libkrb5-dev libgsasl-dev protobuf-compiler
+        run: apt-get install -y libkrb5-dev libgsasl7-dev protobuf-compiler
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -87,7 +87,7 @@ jobs:
         with:
           python-version: '3.10'
       - name: Install native libs
-        run: brew install gsasl krb5
+        run: brew install gsasl krb5 protobuf
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
