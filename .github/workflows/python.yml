@@ -28,7 +28,7 @@ jobs:
         target: [x86_64, aarch64]
     steps:
       - name: Install native libs
-        run: apt-get update && apt-get install -y git
+        run: apt-get update && apt-get install -y git curl
       - uses: actions/checkout@v3
         with:
           submodules: true
