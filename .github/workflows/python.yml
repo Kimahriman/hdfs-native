@@ -28,7 +28,7 @@ jobs:
         target: [x86_64, aarch64]
     steps:
       - name: Install native libs
-        run: sudo apt-get update && sudo apt-get install -y git
+        run: apt-get update && apt-get install -y git
       - uses: actions/checkout@v3
         with:
           submodules: true
@@ -36,7 +36,7 @@ jobs:
         with:
           python-version: '3.10'
       - name: Install native libs
-        run: sudo apt-get install -y libkrb5-dev libgsasl-dev protobuf-compiler
+        run: apt-get install -y libkrb5-dev libgsasl-dev protobuf-compiler
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
