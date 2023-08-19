@@ -37,6 +37,8 @@ jobs:
           python-version: '3.10'
       - name: Install native libs
         run: apt-get install -y libkrb5-dev libgsasl7-dev protobuf-compiler
+        env:
+          DEBIAN_FRONTEND: noninteractive
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -94,6 +96,9 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
+        env:
+          BINDGEN_EXTRA_CLANG_ARGS: "-I/opt/homebrew/include"
+          LIBRARY_PATH: /opt/homebrew/lib
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
