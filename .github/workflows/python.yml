@@ -40,7 +40,7 @@ jobs:
           override: true
       - uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.8'
       - name: Install native libs
         run: apt-get install -y libkrb5-dev libgsasl7-dev protobuf-compiler
         env:
