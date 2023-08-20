@@ -25,7 +25,7 @@ jobs:
       image: ubuntu:20.04
     strategy:
       matrix:
-        target: [x86_64, aarch64]
+        target: [x86_64]
     steps:
       - name: Install native libs
         run: apt-get update && apt-get install -y git curl
