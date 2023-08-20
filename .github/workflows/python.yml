@@ -42,7 +42,7 @@ jobs:
       #   with:
       #     python-version: '3.8'
       - name: Install native libs
-        run: apt-get install -y python3 python3-pip libkrb5-dev libgsasl7-dev protobuf-compiler
+        run: apt-get install -y python3 python3-pip libclang-dev libkrb5-dev libgsasl7-dev protobuf-compiler
         env:
           DEBIAN_FRONTEND: noninteractive
       - name: Build wheels
