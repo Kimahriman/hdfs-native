@@ -36,7 +36,7 @@ jobs:
           sccache: 'true'
           manylinux: '2_28'
           before-script-linux:
-            yum install -y protobuf-compiler libgsasl-devel krb5-devel || /bin/true
+            yum install -y epel-release && yum install -y protobuf-compiler libgsasl-devel krb5-devel || /bin/true
             apt-get update && apt-get install -y protobuf-compiler libkrb5-dev libgsasl7-dev || /bin/true
       - name: Upload wheels
         uses: actions/upload-artifact@v3
