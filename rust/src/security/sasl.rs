@@ -1,7 +1,6 @@
 use bytes::{Buf, Bytes, BytesMut};
 use log::{debug, warn};
 use prost::Message;
-use std::ffi::CStr;
 use std::io;
 use std::sync::{Arc, Mutex};
 use tokio::net::tcp::OwnedWriteHalf;
@@ -44,7 +43,10 @@ use {
 };
 
 #[cfg(feature = "sasl2")]
-use sasl2_sys::prelude::*;
+use {
+    std::ffi::CStr,
+    sasl2_sys::prelude::*,
+};
 
 use super::user::User;
 

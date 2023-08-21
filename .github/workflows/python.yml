@@ -36,8 +36,8 @@ jobs:
           sccache: 'true'
           manylinux: '2_28'
           before-script-linux:
-            yum install -y protobuf-compiler cyrus-sasl-devel || /bin/true
-            apt-get update && apt-get install -y protobuf-compiler libsasl2-dev || /bin/true
+            yum install -y protobuf-compiler libgsasl-devel krb5-devel || /bin/true
+            apt-get update && apt-get install -y protobuf-compiler libkrb5-dev libgsasl7-dev || /bin/true
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
@@ -77,7 +77,7 @@ jobs:
         with:
           submodules: true
       - name: Install native libs
-        run: brew install protobuf cyrus-sasl
+        run: brew install protobuf gsasl krb5
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
