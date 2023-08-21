@@ -36,7 +36,7 @@ jobs:
           sccache: 'true'
           manylinux: auto
           before-script-linux:
-            yum install -y protobuf-compiler || apt-get update && apt-get install -y protobuf-compiler
+            yum install -y protobuf-compiler cyrus-sasl-devel || apt-get update && apt-get install -y protobuf-compiler libsasl2-dev
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
@@ -76,7 +76,7 @@ jobs:
         with:
           submodules: true
       - name: Install native libs
-        run: brew install protobuf
+        run: brew install protobuf cyrus-sasl
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
