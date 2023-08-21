@@ -25,6 +25,7 @@ prost = "0.11"
 prost-types = "0.11"
 roxmltree = "0.18"
 rsasl = { version = "2.0", features = ["gssapi", "provider", "registry_static", "unstable_custom_mechanism"], path = "../rsasl", optional = true }
+sasl2-sys = { version = "0.1.20", optional = true, features = ["vendored", "gssapi-vendored"] }
 thiserror = "1.0"
 tokio = { version = "1.28", features = ["rt", "net", "io-util", "macros", "sync"] }
 url = "2.3"
@@ -42,4 +43,5 @@ which = "4.4"
 [features]
 kerberos = ["libgssapi", "rsasl"]
 object_store = ["dep:object_store", "async-trait", "chrono"]
+sasl2 = ["sasl2-sys"]
 token = ["gsasl-sys"]

@@ -1,6 +1,7 @@
 use bytes::{Buf, Bytes, BytesMut};
 use log::{debug, warn};
 use prost::Message;
+use std::ffi::CStr;
 use std::io;
 use std::sync::{Arc, Mutex};
 use tokio::net::tcp::OwnedWriteHalf;
@@ -21,10 +22,6 @@ use {
     super::user::Token,
     base64::{engine::general_purpose, Engine as _},
     gsasl_sys as gsasl,
-    libc::{c_char, c_void, memcpy},
-    std::ffi::CString,
-    std::ptr,
-    std::sync::atomic::AtomicPtr,
 };
 
 #[cfg(feature = "kerberos")]
@@ -37,6 +34,17 @@ use {
     // rsasl::registry::{Matches, Named, Side},
     std::io::Cursor,
 };
+
+#[cfg(any(feature = "token", feature = "sasl2"))]
+use {
+    libc::{c_char, c_void, memcpy},
+    std::ffi::CString,
+    std::ptr,
+    std::sync::atomic::AtomicPtr,
+};
+
+#[cfg(feature = "sasl2")]
+use sasl2_sys::prelude::*;
 
 use super::user::User;
 
@@ -238,10 +246,14 @@ impl SaslRpcClient {
                 (Some(AuthMethod::SIMPLE), _) => {
                     return Ok((auth.clone(), None));
                 }
+                #[cfg(feature = "sasl2")]
+                (Some(AuthMethod::KERBEROS), _) => {
+                    let session = Sasl2Session::new(auth.protocol(), auth.server_id())?;
+                    return Ok((auth.clone(), Some(Box::new(session))));
+                }
                 #[cfg(feature = "kerberos")]
                 (Some(AuthMethod::KERBEROS), _) if User::get_kerberos_user().is_some() => {
                     let session = RSaslSession::new(auth.protocol(), auth.server_id())?;
-
                     return Ok((auth.clone(), Some(Box::new(session))));
                 }
                 #[cfg(feature = "token")]
@@ -700,5 +712,238 @@ impl Drop for GSASLSession {
             gsasl::gsasl_finish(self.conn.load(std::sync::atomic::Ordering::SeqCst));
             gsasl::gsasl_done(self.ctx.load(std::sync::atomic::Ordering::SeqCst))
         }
+    }
+}
+
+#[cfg(feature = "sasl2")]
+struct Sasl2Session {
+    conn: AtomicPtr<sasl_conn_t>,
+}
+
+#[cfg(feature = "sasl2")]
+impl Sasl2Session {
+    fn new(service: &str, hostname: &str) -> Result<Self> {
+        let conn = unsafe {
+            let ret = sasl_client_init(ptr::null());
+            if ret != SASL_OK {
+                return Err(HdfsError::SASLError(format!(
+                    "Failed to initialize sasl2: {}",
+                    ret
+                )));
+            }
+            let cservice = CString::new(service).unwrap();
+            let chostname = CString::new(hostname).unwrap();
+            let mut conn = ptr::null_mut() as *mut sasl_conn_t;
+            let ret = sasl_client_new(
+                cservice.into_raw(),
+                chostname.into_raw(),
+                ptr::null(),
+                ptr::null(),
+                ptr::null(),
+                0,
+                &mut conn,
+            );
+            if ret != SASL_OK {
+                return Err(HdfsError::SASLError(format!(
+                    "Failed to initialize sasl2 session: {}",
+                    ret
+                )));
+            }
+
+            let secprops = sasl_security_properties {
+                min_ssf: 0,
+                max_ssf: 256,
+                maxbufsize: 65535,
+                security_flags: 0,
+                property_names: ptr::null_mut() as *mut *const c_char,
+                property_values: ptr::null_mut() as *mut *const c_char,
+            };
+
+            let secprops_ptr: *const sasl_security_properties_t = &secprops;
+            let voidptr = secprops_ptr as *const c_void;
+
+            let ret = sasl_setprop(conn, SASL_SEC_PROPS as i32, voidptr);
+
+            if ret != SASL_OK {
+                return Err(HdfsError::SASLError(format!(
+                    "Failed to set security properties on sasl2 session: {:?}",
+                    CStr::from_ptr(sasl_errdetail(conn))
+                )));
+            }
+
+            let mechanism = CString::new("GSSAPI").unwrap();
+            let mut clientout = ptr::null::<c_char>();
+            let mut clientoutlen: u32 = 0;
+            let mut prompt_need = ptr::null_mut();
+            let mut mechout = ptr::null::<c_char>();
+            let ret = sasl_client_start(
+                conn,
+                mechanism.as_ptr(),
+                &mut prompt_need,
+                &mut clientout,
+                &mut clientoutlen,
+                &mut mechout,
+            );
+
+            if ret != SASL_OK && ret != SASL_CONTINUE {
+                return Err(HdfsError::SASLError(format!(
+                    "Failed to start sasl2 session: {:?}",
+                    CStr::from_ptr(sasl_errdetail(conn))
+                )));
+            }
+
+            conn
+        };
+
+        Ok(Self {
+            conn: AtomicPtr::new(conn),
+        })
+    }
+}
+
+#[cfg(feature = "sasl2")]
+impl SaslSession for Sasl2Session {
+    fn step(&mut self, token: Option<&[u8]>) -> Result<(Vec<u8>, bool)> {
+        let token_ptr = token.map(|t| t.as_ptr()).unwrap_or(ptr::null_mut()) as *const c_char;
+
+        let mut clientout = ptr::null::<c_char>();
+        let mut clientoutlen: u32 = 0;
+
+        let ret = unsafe {
+            let ret = sasl_client_step(
+                self.conn.load(std::sync::atomic::Ordering::SeqCst),
+                token_ptr,
+                token.map(|t| t.len()).unwrap_or(0) as u32,
+                ptr::null_mut(),
+                &mut clientout,
+                &mut clientoutlen,
+            );
+
+            if ret != SASL_OK && ret != SASL_CONTINUE {
+                return Err(HdfsError::SASLError(format!(
+                    "Failed to step sasl2 session: {:?}",
+                    CStr::from_ptr(sasl_errdetail(
+                        self.conn.load(std::sync::atomic::Ordering::SeqCst)
+                    ))
+                )));
+            }
+
+            ret
+        };
+
+        let vec = unsafe {
+            let mut vec = vec![0u8; clientoutlen as usize];
+            memcpy(
+                vec.as_mut_ptr() as *mut c_void,
+                clientout as *const c_void,
+                vec.len(),
+            );
+            vec
+        };
+
+        Ok((vec, ret == SASL_OK))
+    }
+
+    fn encode(&mut self, buf: &[u8]) -> Result<Vec<u8>> {
+        debug!("Encoding! {}", buf.len());
+        let token_ptr = buf.as_ptr() as *const c_char;
+        let mut out = ptr::null::<c_char>();
+        let mut outlen: u32 = 0;
+
+        unsafe {
+            let ret = sasl_encode(
+                self.conn.load(std::sync::atomic::Ordering::SeqCst),
+                token_ptr,
+                buf.len() as u32,
+                &mut out,
+                &mut outlen,
+            );
+
+            if ret != SASL_OK {
+                return Err(HdfsError::SASLError(format!(
+                    "Failed to encode sasl2 data: {:?}",
+                    CStr::from_ptr(sasl_errdetail(
+                        self.conn.load(std::sync::atomic::Ordering::SeqCst)
+                    ))
+                )));
+            }
+
+            let mut vec = vec![0u8; outlen as usize];
+            memcpy(
+                vec.as_mut_ptr() as *mut c_void,
+                out as *const c_void,
+                vec.len(),
+            );
+
+            Ok(vec)
+        }
+    }
+
+    fn decode(&mut self, buf: &[u8]) -> Result<Vec<u8>> {
+        debug!("Decoding! {}", buf.len());
+        let token_ptr = buf.as_ptr() as *const c_char;
+        let mut out = ptr::null::<c_char>();
+        let mut outlen: u32 = 0;
+
+        unsafe {
+            let ret = sasl_decode(
+                self.conn.load(std::sync::atomic::Ordering::SeqCst),
+                token_ptr,
+                buf.len() as u32,
+                &mut out,
+                &mut outlen,
+            );
+
+            if ret != SASL_OK {
+                return Err(HdfsError::SASLError(format!(
+                    "Failed to encode sasl2 data: {:?}",
+                    CStr::from_ptr(sasl_errdetail(
+                        self.conn.load(std::sync::atomic::Ordering::SeqCst)
+                    ))
+                )));
+            }
+
+            let mut vec = vec![0u8; outlen as usize];
+            memcpy(
+                vec.as_mut_ptr() as *mut c_void,
+                out as *const c_void,
+                vec.len(),
+            );
+
+            Ok(vec)
+        }
+    }
+
+    fn has_security_layer(&self) -> bool {
+        // self.inner.has_security_layer()
+        let mut ssf = ptr::null::<c_void>();
+        let ret = unsafe {
+            sasl_getprop(
+                self.conn.load(std::sync::atomic::Ordering::SeqCst),
+                SASL_SSF as i32,
+                &mut ssf,
+            )
+        };
+
+        if ret != SASL_OK {
+            return false;
+            // return Err(HdfsError::SASLError(format!(
+            //     "Failed get security layer props: {}",
+            //     ret
+            // )));
+        }
+
+        let iptr = ssf as *mut i32;
+        let ssf_val = unsafe { *iptr };
+
+        debug!("SSF: {}", ssf_val);
+        ssf_val > 0
+    }
+}
+
+#[cfg(feature = "sasl2")]
+impl Drop for Sasl2Session {
+    fn drop(&mut self) {
+        unsafe { sasl_dispose(&mut self.conn.load(std::sync::atomic::Ordering::SeqCst)) }
     }
 }
