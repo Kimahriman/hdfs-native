@@ -26,6 +26,8 @@ jobs:
         target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: true
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -34,7 +36,7 @@ jobs:
           sccache: 'true'
           manylinux: auto
           before-script-linux:
-            yum install protobuf-compiler
+            yum install -y protobuf-compiler
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
@@ -71,6 +73,8 @@ jobs:
         target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: true
       - name: Install native libs
         run: brew install protobuf
       - name: Build wheels
