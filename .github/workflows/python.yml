@@ -36,7 +36,8 @@ jobs:
           sccache: 'true'
           manylinux: auto
           before-script-linux:
-            yum install -y protobuf-compiler cyrus-sasl-devel || apt-get update && apt-get install -y protobuf-compiler libsasl2-dev
+            yum install -y protobuf-compiler cyrus-sasl-devel || /bin/true
+            apt-get update && apt-get install -y protobuf-compiler libsasl2-dev || /bin/true
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
@@ -83,6 +84,8 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
+        env:
+          PKG_CONFIG_PATH: "/usr/local/opt/pkgconfig"
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
