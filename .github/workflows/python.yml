@@ -82,8 +82,8 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          # target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --universal2 --manifest-path python/Cargo.toml
+          target: universal2-apple-darwin
+          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
         # env:
         #   BINDGEN_EXTRA_CLANG_ARGS: "-I/usr/local/include"
