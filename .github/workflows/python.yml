@@ -79,8 +79,7 @@ jobs:
           submodules: true
       - name: Install native libs
         run:
-          brew tap messense/macos-cross-toolchains
-          brew install protobuf aarch64-unknown-linux-gnu
+          brew tap messense/macos-cross-toolchains && brew install protobuf aarch64-unknown-linux-gnu
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
