@@ -78,16 +78,16 @@ jobs:
         with:
           submodules: true
       - name: Install native libs
-        run: brew install protobuf gsasl krb5
+        run: brew install protobuf
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
-        env:
-          BINDGEN_EXTRA_CLANG_ARGS: "-I/usr/local/include"
-          LIBRARY_PATH: /usr/local/lib
+        # env:
+        #   BINDGEN_EXTRA_CLANG_ARGS: "-I/usr/local/include"
+        #   LIBRARY_PATH: /usr/local/lib
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
