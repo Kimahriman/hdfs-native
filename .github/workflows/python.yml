@@ -70,9 +70,9 @@ jobs:
 
   macos:
     runs-on: macos-latest
-    strategy:
-      matrix:
-        target: [x86_64, aarch64]
+    # strategy:
+    #   matrix:
+    #     target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -82,8 +82,8 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
+          # target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter --universal2 --manifest-path python/Cargo.toml
           sccache: 'true'
         # env:
         #   BINDGEN_EXTRA_CLANG_ARGS: "-I/usr/local/include"
