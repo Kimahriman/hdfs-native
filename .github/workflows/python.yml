@@ -86,6 +86,11 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
+        env:
+          krb5_cv_attr_constructor_destructor: "yes"
+          ac_cv_func_regcomp: "yes"
+          ac_cv_printf_positional: "yes"
+          ac_cv_gssapi_supports_spnego: "yes"
         # env:
         #   BINDGEN_EXTRA_CLANG_ARGS: "-I/usr/local/include"
         #   LIBRARY_PATH: /usr/local/lib
