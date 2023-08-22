@@ -70,20 +70,20 @@ jobs:
 
   macos:
     runs-on: macos-latest
-    # strategy:
-    #   matrix:
-    #     target: [x86_64, aarch64]
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu]
     steps:
       - uses: actions/checkout@v3
         with:
           submodules: true
       - name: Install native libs
         run:
-          brew tap messense/macos-cross-toolchains && brew install protobuf aarch64-unknown-linux-gnu
+          brew tap messense/macos-cross-toolchains && brew install protobuf ${{ matrix.target }}
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          target: universal2-apple-darwin
+          target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
         # env:
