@@ -43,10 +43,7 @@ use {
 };
 
 #[cfg(feature = "sasl2")]
-use {
-    std::ffi::CStr,
-    sasl2_sys::prelude::*,
-};
+use {sasl2_sys::prelude::*, std::ffi::CStr};
 
 use super::user::User;
 
