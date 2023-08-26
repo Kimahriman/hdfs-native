@@ -36,9 +36,9 @@ jobs:
           sccache: 'true'
           manylinux: '2_28'
           before-script-linux:
-            yum install -y protobuf-compiler || /bin/true
-            apt-get update && apt-get install -y protobuf-compiler || /bin/true
-          docker-options: -e krb5_cv_attr_constructor_destructor=yes -e ac_cv_func_regcomp=yes -e ac_cv_printf_positional=yes -e ac_cv_gssapi_supports_spnego=yes
+            yum install -y epel-release && yum install -y protobuf-compiler krb5-devel libgsasl-devel || /bin/true
+            apt-get update && apt-get install -y protobuf-compiler libkrb5-dev libgsasl-dev || /bin/true
+          # docker-options: -e krb5_cv_attr_constructor_destructor=yes -e ac_cv_func_regcomp=yes -e ac_cv_printf_positional=yes -e ac_cv_gssapi_supports_spnego=yes
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
@@ -79,7 +79,7 @@ jobs:
           submodules: true
       - name: Install native libs
         run:
-          brew install protobuf
+          brew install protobuf krb5 gsasl
       - name: Print env
         run:
           env | sort
@@ -89,15 +89,15 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
-        env:
-          CFLAGS: "--target=${{ matrix.target }}"
-          krb5_cv_attr_constructor_destructor: "yes"
-          ac_cv_func_regcomp: "yes"
-          ac_cv_printf_positional: "yes"
-          ac_cv_gssapi_supports_spnego: "yes"
         # env:
-        #   BINDGEN_EXTRA_CLANG_ARGS: "-I/usr/local/include"
-        #   LIBRARY_PATH: /usr/local/lib
+          # CFLAGS: "--target=${{ matrix.target }}"
+          # krb5_cv_attr_constructor_destructor: "yes"
+          # ac_cv_func_regcomp: "yes"
+          # ac_cv_printf_positional: "yes"
+          # ac_cv_gssapi_supports_spnego: "yes"
+        env:
+          BINDGEN_EXTRA_CLANG_ARGS: "-I/usr/local/include"
+          LIBRARY_PATH: /usr/local/lib
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:

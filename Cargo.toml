@@ -4,3 +4,4 @@ members = [
     "python",
 ]
 exclude = ["rsasl"]
+resolver = "2"

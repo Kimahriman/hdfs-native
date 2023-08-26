@@ -23,8 +23,8 @@ use uuid::Uuid;
 
 use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
 use crate::proto::{common, hdfs};
-use crate::security::sasl::{AuthMethod, SaslReader, SaslRpcClient, SaslWriter};
-use crate::security::user::User;
+use crate::security::sasl::{SaslReader, SaslRpcClient, SaslWriter};
+use crate::security::user::UserInfo;
 use crate::{HdfsError, Result};
 
 const PROTOCOL: &'static str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
@@ -50,6 +50,7 @@ type CallResult = oneshot::Sender<Result<Bytes>>;
 #[derive(Debug)]
 pub(crate) struct RpcConnection {
     client_id: Vec<u8>,
+    user_info: UserInfo,
     next_call_id: AtomicI32,
     alignment_context: Arc<AlignmentContext>,
     call_map: Arc<Mutex<HashMap<i32, CallResult>>>,
@@ -81,12 +82,13 @@ impl RpcConnection {
         let service = nameservice
             .map(|ns| format!("ha-hdfs:{ns}"))
             .unwrap_or(url.to_string());
-        let auth_method = client.negotiate(service.as_str()).await?;
+        let user_info = client.negotiate(service.as_str()).await?;
         let (reader, writer) = client.split();
         let (sender, receiver) = mpsc::channel::<Vec<u8>>(1000);
 
         let mut conn = RpcConnection {
             client_id,
+            user_info,
             next_call_id,
             alignment_context,
             call_map,
@@ -100,7 +102,7 @@ impl RpcConnection {
             .get_connection_header(-3, -1)
             .encode_length_delimited_to_vec();
         let context_msg = conn
-            .get_connection_context(auth_method)
+            .get_connection_context()
             .encode_length_delimited_to_vec();
         conn.write_messages(&[&context_header, &context_msg])
             .await?;
@@ -157,17 +159,13 @@ impl RpcConnection {
         request_header
     }
 
-    fn get_connection_context(&self, auth_method: AuthMethod) -> common::IpcConnectionContextProto {
+    fn get_connection_context(&self) -> common::IpcConnectionContextProto {
         let mut context = common::IpcConnectionContextProto::default();
         context.protocol = Some(PROTOCOL.to_string());
 
-        let user = User::get()
-            .get_user_info(auth_method)
-            .expect("Unable to get user for auth method");
-
         let mut user_info = common::UserInformationProto::default();
-        user_info.effective_user = user.effective_user;
-        user_info.real_user = user.real_user;
+        user_info.effective_user = self.user_info.effective_user.clone();
+        user_info.real_user = self.user_info.real_user.clone();
         context.user_info = Some(user_info);
         debug!("Connection context: {:?}", context);
         context

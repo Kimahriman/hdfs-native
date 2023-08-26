@@ -87,6 +87,7 @@ impl NameServiceProxy {
                 None,
             )))]
         } else if let Some(host) = nameservice.host_str() {
+            // TODO: Add check for no configured namenodes
             config
                 .get_urls_for_nameservice(host)
                 .into_iter()

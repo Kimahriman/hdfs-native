@@ -1,6 +1,5 @@
 pub(crate) mod minidfs;
 
-use futures::StreamExt;
 #[cfg(feature = "object_store")]
 use hdfs_native::object_store::HdfsObjectStore;
 use hdfs_native::{client::Client, Result};
@@ -134,8 +133,6 @@ async fn test_read(client: &Client) -> Result<()> {
 
 async fn test_rename(client: &Client) -> Result<()> {
     client.rename("/testfile", "/testfile2", false).await?;
-
-    println!("{:?}", client.list_status("/testfile", false).await);
 
     assert!(client.list_status("/testfile", false).await.is_err());
     assert_eq!(client.list_status("/testfile2", false).await?.len(), 1);

@@ -18,7 +18,6 @@ use crate::proto::common::{
 use crate::{HdfsError, Result};
 #[cfg(feature = "token")]
 use {
-    super::user::Token,
     base64::{engine::general_purpose, Engine as _},
     gsasl_sys as gsasl,
 };
@@ -36,6 +35,7 @@ use {
 
 #[cfg(any(feature = "token", feature = "sasl2"))]
 use {
+    super::user::Token,
     libc::{c_char, c_void, memcpy},
     std::ffi::CString,
     std::ptr,
@@ -45,7 +45,7 @@ use {
 #[cfg(feature = "sasl2")]
 use {sasl2_sys::prelude::*, std::ffi::CStr};
 
-use super::user::User;
+use super::user::{User, UserInfo};
 
 const SASL_CALL_ID: i32 = -33;
 const HDFS_DELEGATION_TOKEN: &str = "HDFS_DELEGATION_TOKEN";
@@ -127,6 +127,10 @@ trait SaslSession: Send + Sync {
     fn encode(&mut self, buf: &[u8]) -> Result<Vec<u8>>;
 
     fn decode(&mut self, buf: &[u8]) -> Result<Vec<u8>>;
+
+    fn get_user_info(&self) -> Result<UserInfo> {
+        todo!();
+    }
 }
 
 pub struct SaslRpcClient {
@@ -147,14 +151,13 @@ impl SaslRpcClient {
 
     /// Service should be the connection host:port for a single NameNode connection, or the
     /// name service name when connecting to HA NameNodes.
-    pub(crate) async fn negotiate(&mut self, service: &str) -> Result<AuthMethod> {
+    pub(crate) async fn negotiate(&mut self, service: &str) -> Result<UserInfo> {
         let mut rpc_sasl = RpcSaslProto::default();
         rpc_sasl.state = SaslState::Negotiate as i32;
 
         self.writer.send_sasl_message(&rpc_sasl).await?;
 
         let mut done = false;
-        let mut selected_method: Option<AuthMethod> = None;
         let mut session: Option<Box<dyn SaslSession>> = None;
         while !done {
             let mut response: Option<RpcSaslProto> = None;
@@ -165,7 +168,6 @@ impl SaslRpcClient {
                     let (mut selected_auth, selected_session) =
                         self.select_method(&message.auths, service)?;
                     session = selected_session;
-                    selected_method = AuthMethod::parse(&selected_auth.method);
 
                     let token = if let Some(session) = session.as_mut() {
                         let (token, finished) =
@@ -221,6 +223,11 @@ impl SaslRpcClient {
             }
         }
 
+        let user_info = if let Some(s) = session.as_ref() {
+            s.get_user_info()?
+        } else {
+            User::get_simpler_user()
+        };
         self.session = session
             .filter(|x| {
                 debug!("Has security layer: {:?}", x.has_security_layer());
@@ -228,7 +235,7 @@ impl SaslRpcClient {
             })
             .map(|s| Arc::new(Mutex::new(s)));
 
-        Ok(selected_method.expect("SASL finished but no method selected"))
+        Ok(user_info)
     }
 
     fn select_method(
@@ -247,7 +254,13 @@ impl SaslRpcClient {
                 }
                 #[cfg(feature = "sasl2")]
                 (Some(AuthMethod::KERBEROS), _) => {
-                    let session = Sasl2Session::new(auth.protocol(), auth.server_id())?;
+                    let session = Sasl2Session::new(auth.protocol(), auth.server_id(), None)?;
+                    return Ok((auth.clone(), Some(Box::new(session))));
+                }
+                #[cfg(feature = "sasl2")]
+                (Some(AuthMethod::TOKEN), Some(token)) => {
+                    let session =
+                        Sasl2Session::new(auth.protocol(), auth.server_id(), Some(token))?;
                     return Ok((auth.clone(), Some(Box::new(session))));
                 }
                 #[cfg(feature = "kerberos")]
@@ -570,6 +583,13 @@ impl SaslSession for RSaslSession {
         Ok(writer.into_inner())
     }
 
+    fn get_user_info(&self) -> Result<UserInfo> {
+        Ok(UserInfo {
+            real_user: Some("hdfs".to_string()),
+            effective_user: None,
+        })
+    }
+
     fn has_security_layer(&self) -> bool {
         self.inner.has_security_layer()
     }
@@ -657,7 +677,7 @@ impl SaslSession for GSASLSession {
 
         // The type is different depending on the OS
         // #[cfg(target_os = "macos")]
-        let token_ptr = token.map(|t| t.as_ptr()).unwrap_or(ptr::null_mut()) as *const i8;
+        let token_ptr = token.map(|t| t.as_ptr()).unwrap_or(ptr::null_mut()) as *const c_char;
         // #[cfg(not(target_os = "macos"))]
         // let token_ptr = token.map(|t| t.as_ptr()).unwrap_or(ptr::null_mut()) as *const u8;
 
@@ -702,6 +722,14 @@ impl SaslSession for GSASLSession {
     fn decode(&mut self, _buf: &[u8]) -> Result<Vec<u8>> {
         todo!()
     }
+
+    fn get_user_info(&self) -> Result<UserInfo> {
+        // The token has all the info
+        Ok(UserInfo {
+            real_user: None,
+            effective_user: None,
+        })
+    }
 }
 
 #[cfg(feature = "token")]
@@ -717,11 +745,15 @@ impl Drop for GSASLSession {
 #[cfg(feature = "sasl2")]
 struct Sasl2Session {
     conn: AtomicPtr<sasl_conn_t>,
+    finished: bool,
 }
 
 #[cfg(feature = "sasl2")]
 impl Sasl2Session {
-    fn new(service: &str, hostname: &str) -> Result<Self> {
+    /// Create a new SASL2 session. If `token` is provided, creates a DIGEST-MD5
+    /// session, otherwise attempts to create a GSSAPI session.
+    fn new(service: &str, hostname: &str, token: Option<&Token>) -> Result<Self> {
+        println!("Creating sasl2 session with token {:?}", token);
         let conn = unsafe {
             let ret = sasl_client_init(ptr::null());
             if ret != SASL_OK {
@@ -730,6 +762,7 @@ impl Sasl2Session {
                     ret
                 )));
             }
+
             let cservice = CString::new(service).unwrap();
             let chostname = CString::new(hostname).unwrap();
             let mut conn = ptr::null_mut() as *mut sasl_conn_t;
@@ -749,28 +782,49 @@ impl Sasl2Session {
                 )));
             }
 
-            let secprops = sasl_security_properties {
-                min_ssf: 0,
-                max_ssf: 256,
-                maxbufsize: 65535,
-                security_flags: 0,
-                property_names: ptr::null_mut() as *mut *const c_char,
-                property_values: ptr::null_mut() as *mut *const c_char,
+            let prefix = CString::new("(").unwrap();
+            let sep = CString::new(",").unwrap();
+            let suffix = CString::new(")").unwrap();
+            let mut mechs = ptr::null::<c_char>();
+            let ret = sasl_listmech(
+                conn,
+                ptr::null(),
+                prefix.as_ptr(),
+                sep.as_ptr(),
+                suffix.as_ptr(),
+                &mut mechs,
+                ptr::null_mut(),
+                ptr::null_mut(),
+            );
+
+            println!("{:?}", CStr::from_ptr(mechs));
+
+            // let secprops = sasl_security_properties {
+            //     min_ssf: 0,
+            //     max_ssf: 256,
+            //     maxbufsize: 65535,
+            //     security_flags: 0,
+            //     property_names: ptr::null_mut() as *mut *const c_char,
+            //     property_values: ptr::null_mut() as *mut *const c_char,
+            // };
+
+            // let secprops_ptr: *const sasl_security_properties_t = &secprops;
+            // let voidptr = secprops_ptr as *const c_void;
+
+            // let ret = sasl_setprop(conn, SASL_SEC_PROPS as i32, voidptr);
+
+            // if ret != SASL_OK {
+            //     return Err(HdfsError::SASLError(format!(
+            //         "Failed to set security properties on sasl2 session: {:?}",
+            //         CStr::from_ptr(sasl_errdetail(conn))
+            //     )));
+            // }
+
+            let mechanism = if token.is_some() {
+                CString::new("DIGEST-MD5").unwrap()
+            } else {
+                CString::new("GSSAPI").unwrap()
             };
-
-            let secprops_ptr: *const sasl_security_properties_t = &secprops;
-            let voidptr = secprops_ptr as *const c_void;
-
-            let ret = sasl_setprop(conn, SASL_SEC_PROPS as i32, voidptr);
-
-            if ret != SASL_OK {
-                return Err(HdfsError::SASLError(format!(
-                    "Failed to set security properties on sasl2 session: {:?}",
-                    CStr::from_ptr(sasl_errdetail(conn))
-                )));
-            }
-
-            let mechanism = CString::new("GSSAPI").unwrap();
             let mut clientout = ptr::null::<c_char>();
             let mut clientoutlen: u32 = 0;
             let mut prompt_need = ptr::null_mut();
@@ -791,11 +845,18 @@ impl Sasl2Session {
                 )));
             }
 
+            if prompt_need.is_null() {
+                println!("prompt_need is null");
+            } else {
+                println!("{}", (*prompt_need).id);
+            }
+
             conn
         };
 
         Ok(Self {
             conn: AtomicPtr::new(conn),
+            finished: false,
         })
     }
 }
@@ -840,7 +901,42 @@ impl SaslSession for Sasl2Session {
             vec
         };
 
+        if ret == SASL_OK {
+            self.finished = true;
+        }
+
         Ok((vec, ret == SASL_OK))
+    }
+
+    fn get_user_info(&self) -> Result<UserInfo> {
+        let mut principal_ptr = ptr::null::<c_void>();
+        let ret = unsafe {
+            sasl_getprop(
+                self.conn.load(std::sync::atomic::Ordering::SeqCst),
+                SASL_AUTHUSER as i32,
+                &mut principal_ptr,
+            )
+        };
+
+        if ret != SASL_OK {
+            let err_string = unsafe {
+                CStr::from_ptr(sasl_errdetail(
+                    self.conn.load(std::sync::atomic::Ordering::SeqCst),
+                ))
+            };
+            return Err(HdfsError::SASLError(format!(
+                "Failed to get user for sasl2 session: {:?}",
+                err_string
+            )));
+        }
+
+        // let iptr: *mut i32 = username_ptr as *mut i32;
+        let principal = unsafe { CStr::from_ptr(principal_ptr as *const i8) };
+        Ok(User::get_user_info_from_principal(
+            principal.to_str().map_err(|_| {
+                HdfsError::SASLError("Failed to get principal from SASL connection".to_string())
+            })?,
+        ))
     }
 
     fn encode(&mut self, buf: &[u8]) -> Result<Vec<u8>> {
