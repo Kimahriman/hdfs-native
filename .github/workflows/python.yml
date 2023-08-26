@@ -36,7 +36,7 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
-          manylinux: '2_28'
+          container: quay.io/pypa/manylinux_2_28_${{ matrix.target }}:latest
           before-script-linux:
             yum install -y epel-release && yum install -y protobuf-compiler krb5-devel libgsasl-devel clang-devel || /bin/true
             apt-get update && apt-get install -y protobuf-compiler libkrb5-dev libgsasl-dev || /bin/true
