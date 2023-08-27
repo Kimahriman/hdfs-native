@@ -191,6 +191,7 @@ async fn test_object_store_head(store: &HdfsObjectStore) -> object_store::Result
 
 #[cfg(feature = "object_store")]
 async fn test_object_store_list(store: &HdfsObjectStore) -> object_store::Result<()> {
+    use futures::StreamExt;
     use object_store::{path::Path, ObjectMeta, ObjectStore};
 
     let list: Vec<object_store::Result<ObjectMeta>> = store

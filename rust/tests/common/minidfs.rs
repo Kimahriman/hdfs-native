@@ -46,7 +46,7 @@ impl MiniDfs {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            // .stderr(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .unwrap();
 
