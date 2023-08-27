@@ -15,10 +15,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-defaults:
-  run:
-    working-directory: ./python
-
 permissions:
   contents: read
 
@@ -36,7 +32,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
+          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
           container: quay.io/pypa/manylinux_2_28_${{ matrix.target }}:latest
           before-script-linux:
@@ -84,7 +80,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
+          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
         env:
           BINDGEN_EXTRA_CLANG_ARGS: "-I/usr/local/include"
@@ -103,7 +99,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
-          args: --out dist
+          args: --out dist --manifest-path python/Cargo.toml
       - name: Upload sdist
         uses: actions/upload-artifact@v3
         with:
