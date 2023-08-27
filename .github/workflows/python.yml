@@ -11,7 +11,7 @@ on:
       - main
       - master
     tags:
-      - '*'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
   pull_request:
   workflow_dispatch:
 
@@ -29,7 +29,7 @@ jobs:
         with:
           submodules: true
       - name: Setup QEMU
-        uses: docker/setup-qemu-action@v1
+        uses: docker/setup-qemu-action@v2
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -38,9 +38,8 @@ jobs:
           sccache: 'true'
           container: quay.io/pypa/manylinux_2_28_${{ matrix.target }}:latest
           before-script-linux:
-            yum install -y epel-release && yum install -y protobuf-compiler krb5-devel libgsasl-devel clang-devel || /bin/true
+            yum install -y epel-release && yum install -y protobuf-compiler krb5-devel libgsasl-devel clang || /bin/true
             apt-get update && apt-get install -y protobuf-compiler libkrb5-dev libgsasl-dev || /bin/true
-          # docker-options: -e krb5_cv_attr_constructor_destructor=yes -e ac_cv_func_regcomp=yes -e ac_cv_printf_positional=yes -e ac_cv_gssapi_supports_spnego=yes
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
@@ -74,7 +73,7 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+        target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -82,21 +81,12 @@ jobs:
       - name: Install native libs
         run:
           brew install protobuf krb5 gsasl
-      - name: Print env
-        run:
-          env | sort
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
-        # env:
-          # CFLAGS: "--target=${{ matrix.target }}"
-          # krb5_cv_attr_constructor_destructor: "yes"
-          # ac_cv_func_regcomp: "yes"
-          # ac_cv_printf_positional: "yes"
-          # ac_cv_gssapi_supports_spnego: "yes"
         env:
           BINDGEN_EXTRA_CLANG_ARGS: "-I/usr/local/include"
           LIBRARY_PATH: /usr/local/lib
@@ -106,36 +96,36 @@ jobs:
           name: wheels
           path: dist
 
-  # sdist:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v3
-  #       with:
-  #         submodules: true
-  #     - name: Build sdist
-  #       uses: PyO3/maturin-action@v1
-  #       with:
-  #         command: sdist
-  #         args: --out dist --manifest-path python/Cargo.toml
-  #     - name: Upload sdist
-  #       uses: actions/upload-artifact@v3
-  #       with:
-  #         name: wheels
-  #         path: dist
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist --manifest-path python/Cargo.toml
+      - name: Upload sdist
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: dist
 
-  # release:
-  #   name: Release
-  #   runs-on: ubuntu-latest
-  #   if: "startsWith(github.ref, 'refs/tags/')"
-  #   needs: [linux, windows, macos, sdist]
-  #   steps:
-  #     - uses: actions/download-artifact@v3
-  #       with:
-  #         name: wheels
-  #     - name: Publish to PyPI
-  #       uses: PyO3/maturin-action@v1
-  #       env:
-  #         MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-  #       with:
-  #         command: upload
-  #         args: --skip-existing *
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, macos, sdist]
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: wheels
+      - name: Publish to PyPI
+        uses: PyO3/maturin-action@v1
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        with:
+          command: upload
+          args: --skip-existing *

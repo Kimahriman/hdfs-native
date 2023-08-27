@@ -12,7 +12,7 @@ async fn test_basic() {
 }
 
 #[tokio::test]
-#[cfg(feature = "sasl2")]
+#[cfg(feature = "kerberos")]
 async fn test_security_kerberos() {
     test_with_features(&HashSet::from([DfsFeatures::SECURITY]))
         .await
@@ -41,7 +41,7 @@ async fn test_privacy_token() {
 }
 
 #[tokio::test]
-#[cfg(feature = "sasl2")]
+#[cfg(feature = "kerberos")]
 async fn test_privacy_kerberos() {
     test_with_features(&HashSet::from([
         DfsFeatures::SECURITY,

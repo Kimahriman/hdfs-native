@@ -17,20 +17,19 @@ bytes = "1"
 chrono = { version = "0.4", optional = true }
 futures = "0.3"
 gsasl-sys = { version = "0.2", default-features = true, optional = true }
-libc = "0.2.147"
+libc = "0.2"
 libgssapi = { version = "0.6", default_features = false, optional = true }
 log = "0.4"
 object_store = { version = "0.6", optional = true }
 prost = "0.11"
 prost-types = "0.11"
 roxmltree = "0.18"
-rsasl = { version = "2.0", features = ["gssapi", "provider", "registry_static", "unstable_custom_mechanism"], path = "../rsasl", optional = true }
-sasl2-sys = { version = "0.1.20", optional = true, features = ["vendored", "gssapi-vendored"] }
-thiserror = "1.0"
-tokio = { version = "1.28", features = ["rt", "net", "io-util", "macros", "sync"] }
-url = "2.3"
+rsasl = { version = "2", features = ["gssapi", "provider"], path = "../rsasl", optional = true }
+thiserror = "1"
+tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "sync"] }
+url = "2"
 users = { version = "0.11", default_features = false }
-uuid = { version = "1.3", features = ["v4"] }
+uuid = { version = "1", features = ["v4"] }
 
 [build-dependencies]
 prost-build = { version = "0.11" }
@@ -43,5 +42,4 @@ which = "4.4"
 [features]
 kerberos = ["libgssapi", "rsasl"]
 object_store = ["dep:object_store", "async-trait", "chrono"]
-sasl2 = ["sasl2-sys"]
 token = ["gsasl-sys"]

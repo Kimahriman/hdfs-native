@@ -14,9 +14,10 @@ use {
 use users::get_current_username;
 
 use crate::proto::common::CredentialsProto;
+use crate::{HdfsError, Result};
 
 const HADOOP_USER_NAME: &str = "HADOOP_USER_NAME";
-#[cfg(any(feature = "kerberos", feature = "sasl2"))]
+#[cfg(feature = "kerberos")]
 const HADOOP_PROXY_USER: &str = "HADOOP_PROXY_USER";
 const HADOOP_TOKEN_FILE_LOCATION: &str = "HADOOP_TOKEN_FILE_LOCATION";
 const TOKEN_STORAGE_MAGIC: &[u8] = "HDTS".as_bytes();
@@ -194,14 +195,15 @@ impl User {
             .find(|t| t.kind == kind && t.service == service)
     }
 
-    #[cfg(any(feature = "kerberos", feature = "sasl2"))]
-    pub(crate) fn get_user_info_from_principal(principal: &str) -> UserInfo {
-        let username = User::get_user_from_principal(principal);
+    #[cfg(feature = "kerberos")]
+    pub(crate) fn get_kerberos_user_info() -> Result<UserInfo> {
+        let username = User::kerberos_user_from_creds()
+            .map_err(|_| HdfsError::SASLError("Failed to get Kerberos user".to_string()))?;
         let proxy_user = env::var(HADOOP_PROXY_USER).ok();
-        UserInfo {
+        Ok(UserInfo {
             real_user: Some(username),
             effective_user: proxy_user,
-        }
+        })
     }
 
     pub(crate) fn get_simpler_user() -> UserInfo {
@@ -218,37 +220,7 @@ impl User {
         }
     }
 
-    // pub(crate) fn get_user_info(&self, auth_method: AuthMethod) -> Option<UserInfo> {
-    //     match auth_method {
-    //         AuthMethod::TOKEN => {
-    //             // The token has the user info
-    //             Some(UserInfo {
-    //                 real_user: None,
-    //                 effective_user: None,
-    //             })
-    //         }
-    //         #[cfg(feature = "kerberos")]
-    //         AuthMethod::KERBEROS => Self::get_kerberos_user().map(|user| UserInfo {
-    //             real_user: Some(user),
-    //             effective_user: proxy_user,
-    //         }),
-    //         _ => {
-    //             let effective_user = env::var(HADOOP_USER_NAME).ok().unwrap_or_else(|| {
-    //                 get_current_username()
-    //                     .unwrap()
-    //                     .to_str()
-    //                     .unwrap()
-    //                     .to_string()
-    //             });
-    //             Some(UserInfo {
-    //                 real_user: None,
-    //                 effective_user: Some(effective_user),
-    //             })
-    //         }
-    //     }
-    // }
-
-    #[cfg(any(feature = "kerberos", feature = "sasl2"))]
+    #[cfg(feature = "kerberos")]
     pub(crate) fn get_user_from_principal(principal: &str) -> String {
         // If there's a /, take the part before it.
         if let Some(index) = principal.find("/") {
@@ -261,7 +233,8 @@ impl User {
     }
 
     #[cfg(feature = "kerberos")]
-    fn kerberos_user_from_creds() -> Result<String, libgssapi::error::Error> {
+    pub(crate) fn kerberos_user_from_creds() -> core::result::Result<String, libgssapi::error::Error>
+    {
         let mut krb5 = OidSet::new()?;
         krb5.add(&GSS_MECH_KRB5)?;
 
