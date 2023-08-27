@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ::hdfs_native::hdfs::file::HdfsFileReader;
+use ::hdfs_native::file::HdfsFileReader;
 use ::hdfs_native::{client::FileStatus, Client};
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use tokio::runtime::Runtime;
