@@ -2,9 +2,11 @@ name: rust
 
 on:
   push:
-    branches: ["rust"]
+    branches:
+      - '*'
   pull_request:
-    branches: ["*"]
+    branches:
+      - "*"
 
 jobs:
   format:
