@@ -5,7 +5,7 @@ use log::debug;
 use crate::proto::hdfs;
 use crate::Result;
 
-use super::datanode::BlockReader;
+use crate::hdfs::datanode::BlockReader;
 
 pub struct HdfsFileReader {
     located_blocks: hdfs::LocatedBlocksProto,

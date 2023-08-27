@@ -8,7 +8,7 @@ use url::Url;
 
 use crate::common::config::Configuration;
 use crate::error::{HdfsError, Result};
-use crate::hdfs::file::HdfsFileReader;
+use crate::file::HdfsFileReader;
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
