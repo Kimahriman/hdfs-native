@@ -26,8 +26,6 @@ jobs:
         target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v3
-        with:
-          submodules: true
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v2
       - name: Build wheels
@@ -75,8 +73,6 @@ jobs:
         target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v3
-        with:
-          submodules: true
       - name: Install native libs
         run:
           brew install protobuf krb5 gsasl
@@ -99,8 +95,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-        with:
-          submodules: true
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:

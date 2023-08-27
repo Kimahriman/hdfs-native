@@ -1,8 +1,8 @@
 use std::io;
 
-use prost::DecodeError;
 #[cfg(feature = "kerberos")]
-use rsasl::prelude::{SASLError, SessionError};
+use libgssapi::error::Error as GssapiError;
+use prost::DecodeError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -17,14 +17,10 @@ pub enum HdfsError {
     RPCError(String, String),
     #[error("fatal RPC error")]
     FatalRPCError(String, String),
-    #[cfg(feature = "kerberos")]
-    #[error("SASL error")]
-    RSASLError(#[from] SASLError),
-    #[cfg(feature = "kerberos")]
-    #[error("SASL session error")]
-    RSASLSessionError(#[from] SessionError),
     #[error("SASL error")]
     SASLError(String),
+    #[error("GSSAPI error")]
+    GSSAPI(#[from] GssapiError),
     #[error("No valid SASL mechanism found")]
     NoSASLMechanism,
 }

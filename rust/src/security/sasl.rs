@@ -22,17 +22,6 @@ use {
     gsasl_sys as gsasl,
 };
 
-#[cfg(feature = "kerberos")]
-use {
-    rsasl::callback::{Context, Request, SessionCallback, SessionData},
-    rsasl::mechanisms::gssapi::properties::{GssSecurityLayer, GssService, SecurityLayer},
-    rsasl::mechanisms::gssapi::GSSAPI,
-    rsasl::prelude::*,
-    rsasl::property::{Hostname, Password},
-    // rsasl::registry::{Matches, Named, Side},
-    std::io::Cursor,
-};
-
 #[cfg(feature = "token")]
 use {
     super::user::Token,
@@ -42,15 +31,11 @@ use {
     std::sync::atomic::AtomicPtr,
 };
 
+use super::gssapi::GssapiSession;
 use super::user::{User, UserInfo};
 
 const SASL_CALL_ID: i32 = -33;
 const HDFS_DELEGATION_TOKEN: &str = "HDFS_DELEGATION_TOKEN";
-
-#[cfg(feature = "kerberos")]
-static KERBEROS_MECHANISMS: &[Mechanism] = &[GSSAPI];
-// #[cfg(feature = "kerberos")]
-// static TOKEN_MECHANISMS: &[Mechanism] = &[DIGEST_MD5];
 
 pub(crate) enum AuthMethod {
     SIMPLE,
@@ -67,54 +52,8 @@ impl AuthMethod {
         }
     }
 }
-#[cfg(feature = "kerberos")]
-struct KerberosCallback {
-    service: String,
-    hostname: String,
-}
 
-#[cfg(feature = "kerberos")]
-impl SessionCallback for KerberosCallback {
-    fn callback(
-        &self,
-        _session_data: &SessionData,
-        _context: &Context,
-        request: &mut Request,
-    ) -> std::result::Result<(), SessionError> {
-        request
-            .satisfy::<GssService>(self.service.as_str())?
-            .satisfy::<Hostname>(self.hostname.as_str())?
-            .satisfy::<GssSecurityLayer>(
-                &(SecurityLayer::NO_SECURITY_LAYER
-                    | SecurityLayer::INTEGRITY
-                    | SecurityLayer::CONFIDENTIALITY),
-            )?;
-
-        Ok(())
-    }
-}
-
-#[cfg(feature = "kerberos")]
-struct TokenCallback {}
-
-#[cfg(feature = "kerberos")]
-impl SessionCallback for TokenCallback {
-    fn callback(
-        &self,
-        _session_data: &SessionData,
-        _context: &Context,
-        request: &mut Request,
-    ) -> std::result::Result<(), SessionError> {
-        request
-            // satisfy calls can be chained, making use of short-circuiting
-            .satisfy::<Password>(b"")?
-            .satisfy::<GssSecurityLayer>(&SecurityLayer::NO_SECURITY_LAYER)?;
-
-        Ok(())
-    }
-}
-
-trait SaslSession: Send + Sync {
+pub(crate) trait SaslSession: Send + Sync {
     fn step(&mut self, token: Option<&[u8]>) -> Result<(Vec<u8>, bool)>;
 
     fn has_security_layer(&self) -> bool;
@@ -246,8 +185,8 @@ impl SaslRpcClient {
                     return Ok((auth.clone(), None));
                 }
                 #[cfg(feature = "kerberos")]
-                (Some(AuthMethod::KERBEROS), _) if User::get_kerberos_user().is_some() => {
-                    let session = RSaslSession::new(auth.protocol(), auth.server_id())?;
+                (Some(AuthMethod::KERBEROS), _) => {
+                    let session = GssapiSession::new(auth.protocol(), auth.server_id())?;
                     return Ok((auth.clone(), Some(Box::new(session))));
                 }
                 #[cfg(feature = "token")]
@@ -445,132 +384,6 @@ impl std::fmt::Debug for SaslWriter {
         f.debug_struct("SaslWriter")
             .field("stream", &self.stream)
             .finish()
-    }
-}
-
-// TODO: Can we implement this?
-// impl AsyncWrite for SaslWriter {
-//     fn poll_write(
-//         self: Pin<&mut Self>,
-//         cx: &mut task::Context<'_>,
-//         buf: &[u8],
-//     ) -> Poll<result::Result<usize, io::Error>> {
-//         let mut stream = self.stream;
-//         Pin::new(&mut stream).poll_write(cx, buf)
-//     }
-
-//     fn poll_flush(
-//         self: Pin<&mut Self>,
-//         cx: &mut task::Context<'_>,
-//     ) -> Poll<result::Result<(), io::Error>> {
-//         let mut stream = self.stream;
-//         Pin::new(&mut stream).poll_flush(cx)
-//     }
-
-//     fn poll_shutdown(
-//         self: Pin<&mut Self>,
-//         cx: &mut task::Context<'_>,
-//     ) -> Poll<result::Result<(), io::Error>> {
-//         let mut stream = self.stream;
-//         Pin::new(&mut stream).poll_shutdown(cx)
-//     }
-// }
-
-// #[cfg(feature = "kerberos")]
-// #[cfg_attr(feature = "registry_static", distributed_slice(MECHANISMS))]
-// pub static DIGEST_MD5: Mechanism = Mechanism::build(
-//     Mechname::const_new(b"DIGEST-MD5"),
-//     300,
-//     Some(|| Ok(Box::new(DigestMD5::default()))),
-//     None,
-//     Side::Server,
-//     |_| Some(Matches::<Select>::name()),
-//     |_| true,
-// );
-
-// #[cfg(feature = "kerberos")]
-// struct Select;
-// #[cfg(feature = "kerberos")]
-// impl Named for Select {
-//     fn mech() -> &'static Mechanism {
-//         &DIGEST_MD5
-//     }
-// }
-
-// struct DigestMD5 {}
-
-// impl Default for DigestMD5 {
-//     fn default() -> Self {
-//         Self {}
-//     }
-// }
-
-// #[cfg(feature = "kerberos")]
-// impl Authentication for DigestMD5 {
-//     fn step(
-//         &mut self,
-//         session: &mut rsasl::mechanism::MechanismData,
-//         input: Option<&[u8]>,
-//         _writer: &mut dyn Write,
-//     ) -> std::result::Result<State, SessionError> {
-//         println!("{:?}", session);
-//         println!("{:?}", input);
-//         println!("{:?}", std::str::from_utf8(input.unwrap()).unwrap());
-//         todo!()
-//     }
-// }
-
-#[cfg(feature = "kerberos")]
-struct RSaslSession {
-    inner: Session,
-}
-
-#[cfg(feature = "kerberos")]
-impl RSaslSession {
-    fn new(service: &str, hostname: &str) -> Result<Self> {
-        let config = SASLConfig::builder()
-            .with_registry(Registry::with_mechanisms(KERBEROS_MECHANISMS))
-            .with_callback(KerberosCallback {
-                service: service.to_string(),
-                hostname: hostname.to_string(),
-            })
-            .unwrap();
-
-        let sasl = SASLClient::new(config);
-        let offered_mechs = [Mechname::parse(b"GSSAPI").unwrap()];
-
-        let inner = sasl.start_suggested_iter(offered_mechs)?;
-        Ok(Self { inner })
-    }
-}
-
-#[cfg(feature = "kerberos")]
-impl SaslSession for RSaslSession {
-    fn step(&mut self, token: Option<&[u8]>) -> Result<(Vec<u8>, bool)> {
-        let mut cursor = Cursor::new(Vec::new());
-        let state = self.inner.step(token, &mut cursor)?;
-
-        Ok((cursor.into_inner(), state != State::Running))
-    }
-
-    fn encode(&mut self, buf: &[u8]) -> Result<Vec<u8>> {
-        let mut writer = Cursor::new(Vec::with_capacity(buf.len()));
-        self.inner.encode(buf, &mut writer)?;
-        Ok(writer.into_inner())
-    }
-
-    fn decode(&mut self, buf: &[u8]) -> Result<Vec<u8>> {
-        let mut writer = Cursor::new(Vec::with_capacity(buf.len()));
-        self.inner.decode(buf, &mut writer)?;
-        Ok(writer.into_inner())
-    }
-
-    fn get_user_info(&self) -> Result<UserInfo> {
-        User::get_kerberos_user_info()
-    }
-
-    fn has_security_layer(&self) -> bool {
-        self.inner.has_security_layer()
     }
 }
 

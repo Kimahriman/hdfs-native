@@ -5,16 +5,10 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
-#[cfg(feature = "kerberos")]
-use {
-    libgssapi::credential::{Cred, CredUsage},
-    libgssapi::oid::{OidSet, GSS_MECH_KRB5},
-};
 
 use users::get_current_username;
 
 use crate::proto::common::CredentialsProto;
-use crate::{HdfsError, Result};
 
 const HADOOP_USER_NAME: &str = "HADOOP_USER_NAME";
 #[cfg(feature = "kerberos")]
@@ -196,14 +190,13 @@ impl User {
     }
 
     #[cfg(feature = "kerberos")]
-    pub(crate) fn get_kerberos_user_info() -> Result<UserInfo> {
-        let username = User::kerberos_user_from_creds()
-            .map_err(|_| HdfsError::SASLError("Failed to get Kerberos user".to_string()))?;
+    pub(crate) fn get_user_info_from_principal(principal: &str) -> UserInfo {
+        let username = User::get_user_from_principal(principal);
         let proxy_user = env::var(HADOOP_PROXY_USER).ok();
-        Ok(UserInfo {
+        UserInfo {
             real_user: Some(username),
             effective_user: proxy_user,
-        })
+        }
     }
 
     pub(crate) fn get_simpler_user() -> UserInfo {
@@ -230,23 +223,6 @@ impl User {
         } else {
             principal.to_string()
         }
-    }
-
-    #[cfg(feature = "kerberos")]
-    pub(crate) fn kerberos_user_from_creds() -> core::result::Result<String, libgssapi::error::Error>
-    {
-        let mut krb5 = OidSet::new()?;
-        krb5.add(&GSS_MECH_KRB5)?;
-
-        let cred = Cred::acquire(None, None, CredUsage::Initiate, Some(&krb5))?;
-        Ok(Self::get_user_from_principal(
-            cred.name()?.to_string().as_str(),
-        ))
-    }
-
-    #[cfg(feature = "kerberos")]
-    pub(crate) fn get_kerberos_user() -> Option<String> {
-        Self::kerberos_user_from_creds().ok()
     }
 }
 
