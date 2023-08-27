@@ -8,6 +8,10 @@ on:
     branches:
       - "*"
 
+defaults:
+  run:
+    working-directory: ./rust
+
 jobs:
   format:
     runs-on: ubuntu-latest
@@ -53,7 +57,7 @@ jobs:
       #   run: cargo clippy --tests
 
       - name: Check docs
-        run: cargo doc -p hdfs-native
+        run: cargo doc
 
       - name: Check no features
         run: cargo check

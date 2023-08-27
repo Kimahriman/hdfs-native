@@ -18,19 +18,16 @@ use crate::proto::common::{
 use crate::{HdfsError, Result};
 #[cfg(feature = "token")]
 use {
+    super::user::Token,
     base64::{engine::general_purpose, Engine as _},
     gsasl_sys as gsasl,
-};
-
-#[cfg(feature = "token")]
-use {
-    super::user::Token,
     libc::{c_char, c_void, memcpy},
     std::ffi::CString,
     std::ptr,
     std::sync::atomic::AtomicPtr,
 };
 
+#[cfg(feature = "kerberos")]
 use super::gssapi::GssapiSession;
 use super::user::{User, UserInfo};
 

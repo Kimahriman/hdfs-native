@@ -19,6 +19,7 @@ pub enum HdfsError {
     FatalRPCError(String, String),
     #[error("SASL error")]
     SASLError(String),
+    #[cfg(feature = "kerberos")]
     #[error("GSSAPI error")]
     GSSAPI(#[from] GssapiError),
     #[error("No valid SASL mechanism found")]
