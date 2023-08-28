@@ -81,13 +81,13 @@ impl Client {
         match located_info.fs {
             Some(status) => {
                 if status.ec_policy.is_some() {
-                    return Err(HdfsError::UnsupportedFeature("Erasure coding".to_string()))
+                    return Err(HdfsError::UnsupportedFeature("Erasure coding".to_string()));
                 }
                 if status.file_encryption_info.is_some() {
-                    return Err(HdfsError::UnsupportedFeature("File encryption".to_string()))
+                    return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
                 }
                 if status.file_type() == FileType::IsDir {
-                    return Err(HdfsError::IsADirectoryError(path.to_string()))
+                    return Err(HdfsError::IsADirectoryError(path.to_string()));
                 }
 
                 if let Some(locations) = status.locations {
@@ -255,8 +255,7 @@ impl From<HdfsFileStatusProto> for FileStatus {
     fn from(value: HdfsFileStatusProto) -> Self {
         FileStatus {
             isdir: value.file_type() == FileType::IsDir,
-            path: String::from_utf8(value.path)
-                .unwrap_or(String::new()),
+            path: String::from_utf8(value.path).unwrap_or(String::new()),
             length: value.length as usize,
             permission: value.permission.perm as u16,
             owner: value.owner,

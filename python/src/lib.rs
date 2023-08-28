@@ -56,10 +56,11 @@ impl PyHdfsFileReader {
     }
 
     pub fn read_range(&self, offset: usize, len: usize) -> PyHdfsResult<Cow<[u8]>> {
-        Ok(Cow::from(self
-            .rt
-            .block_on(self.inner.read_range(offset, len))?
-            .to_vec()))
+        Ok(Cow::from(
+            self.rt
+                .block_on(self.inner.read_range(offset, len))?
+                .to_vec(),
+        ))
     }
 }
 
