@@ -1,10 +1,3 @@
-// use crate::context::EmptyProvider;
-// use crate::error::SessionError;
-// use crate::mechanism::{Authentication, MechanismData, State};
-// use crate::mechanisms::gssapi::properties::{Error, GssSecurityLayer, GssService, SecurityLayer};
-// use crate::property::Hostname;
-// use crate::session::MessageSent;
-// use acid_io::Write;
 use core::fmt;
 use libgssapi::context::{ClientCtx, CtxFlags, SecurityContext};
 use libgssapi::credential::{Cred, CredUsage};

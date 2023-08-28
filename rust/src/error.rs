@@ -11,6 +11,12 @@ pub enum HdfsError {
     IOError(#[from] io::Error),
     #[error("file not found")]
     FileNotFound(String),
+    #[error("blocks not found")]
+    BlocksNotFound(String),
+    #[error("path is a directory")]
+    IsADirectoryError(String),
+    #[error("operation not supported")]
+    UnsupportedFeature(String),
     #[error("failed to decode RPC response")]
     InvalidRPCResponse(#[from] DecodeError),
     #[error("RPC error")]
@@ -21,7 +27,7 @@ pub enum HdfsError {
     SASLError(String),
     #[cfg(feature = "kerberos")]
     #[error("GSSAPI error")]
-    GSSAPI(#[from] GssapiError),
+    GSSAPIError(#[from] GssapiError),
     #[error("No valid SASL mechanism found")]
     NoSASLMechanism,
 }

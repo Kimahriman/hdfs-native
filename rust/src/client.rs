@@ -79,7 +79,23 @@ impl Client {
     pub async fn read(&self, path: &str) -> Result<HdfsFileReader> {
         let located_info = self.protocol.get_located_file_info(path).await?;
         match located_info.fs {
-            Some(status) => Ok(HdfsFileReader::new(status.locations.unwrap())),
+            Some(status) => {
+                if status.ec_policy.is_some() {
+                    return Err(HdfsError::UnsupportedFeature("Erasure coding".to_string()))
+                }
+                if status.file_encryption_info.is_some() {
+                    return Err(HdfsError::UnsupportedFeature("File encryption".to_string()))
+                }
+                if status.file_type() == FileType::IsDir {
+                    return Err(HdfsError::IsADirectoryError(path.to_string()))
+                }
+
+                if let Some(locations) = status.locations {
+                    Ok(HdfsFileReader::new(locations))
+                } else {
+                    Err(HdfsError::BlocksNotFound(path.to_string()))
+                }
+            }
             None => Err(HdfsError::FileNotFound(path.to_string())),
         }
     }
@@ -238,11 +254,10 @@ pub struct FileStatus {
 impl From<HdfsFileStatusProto> for FileStatus {
     fn from(value: HdfsFileStatusProto) -> Self {
         FileStatus {
-            path: std::str::from_utf8(value.path.as_slice())
-                .unwrap()
-                .to_string(),
-            length: value.length as usize,
             isdir: value.file_type() == FileType::IsDir,
+            path: String::from_utf8(value.path)
+                .unwrap_or(String::new()),
+            length: value.length as usize,
             permission: value.permission.perm as u16,
             owner: value.owner,
             group: value.group,

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use ::hdfs_native::file::HdfsFileReader;
@@ -11,7 +12,7 @@ use crate::error::PythonHdfsError;
 
 type PyHdfsResult<T> = Result<T, PythonHdfsError>;
 
-#[pyclass(get_all, frozen)]
+#[pyclass(get_all, frozen, name = "FileStatus")]
 struct PyFileStatus {
     path: String,
     length: usize,
@@ -38,38 +39,42 @@ impl From<FileStatus> for PyFileStatus {
     }
 }
 
-#[pyclass]
-struct PyFileReader {
+#[pyclass(name = "HdfsFileReader")]
+struct PyHdfsFileReader {
     inner: HdfsFileReader,
     rt: Arc<Runtime>,
 }
 
 #[pymethods]
-impl PyFileReader {
-    pub fn read(&mut self, len: usize) -> PyHdfsResult<Vec<u8>> {
-        Ok(self.rt.block_on(self.inner.read(len))?.to_vec())
+impl PyHdfsFileReader {
+    pub fn file_length(&self) -> usize {
+        self.inner.file_length()
     }
 
-    pub fn read_range(&self, offset: usize, len: usize) -> PyHdfsResult<Vec<u8>> {
-        Ok(self
+    pub fn read(&mut self, len: usize) -> PyHdfsResult<Cow<[u8]>> {
+        Ok(Cow::from(self.rt.block_on(self.inner.read(len))?.to_vec()))
+    }
+
+    pub fn read_range(&self, offset: usize, len: usize) -> PyHdfsResult<Cow<[u8]>> {
+        Ok(Cow::from(self
             .rt
             .block_on(self.inner.read_range(offset, len))?
-            .to_vec())
+            .to_vec()))
     }
 }
 
 #[pyclass(name = "Client")]
-struct RawClient {
+struct PyClient {
     inner: Client,
     rt: Arc<Runtime>,
 }
 
 #[pymethods]
-impl RawClient {
+impl PyClient {
     #[new]
     #[pyo3(signature = (url))]
     pub fn new(url: &str) -> PyResult<Self> {
-        Ok(RawClient {
+        Ok(PyClient {
             inner: Client::new(url).map_err(PythonHdfsError::from)?,
             rt: Arc::new(
                 tokio::runtime::Runtime::new()
@@ -94,10 +99,10 @@ impl RawClient {
             .collect())
     }
 
-    pub fn read(&self, path: &str) -> PyHdfsResult<PyFileReader> {
+    pub fn read(&self, path: &str) -> PyHdfsResult<PyHdfsFileReader> {
         let file_reader = self.rt.block_on(self.inner.read(path))?;
 
-        Ok(PyFileReader {
+        Ok(PyHdfsFileReader {
             inner: file_reader,
             rt: Arc::clone(&self.rt),
         })
@@ -121,6 +126,6 @@ impl RawClient {
 /// A Python module implemented in Rust.
 #[pymodule]
 fn hdfs_native(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_class::<RawClient>()?;
+    m.add_class::<PyClient>()?;
     Ok(())
 }
