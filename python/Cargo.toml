@@ -24,6 +24,7 @@ doc = false
 [dependencies]
 env_logger = "0.10"
 hdfs-native = { version = "0.1.0", path = "../rust", features=["token", "kerberos"] }
+log = "0.4"
 pyo3 = { version = "0.19.0", features = ["extension-module", "abi3", "abi3-py37"] }
 thiserror = "1.0.43"
 tokio = { version = "1.28", features = ["rt-multi-thread"] }

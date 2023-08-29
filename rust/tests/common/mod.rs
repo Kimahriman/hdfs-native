@@ -90,6 +90,7 @@ pub(crate) async fn test_with_features(features: &HashSet<DfsFeatures>) -> Resul
     let _dfs = setup(features);
     let client = Client::new(&_dfs.url)?;
 
+    test_file_info(&client).await?;
     test_listing(&client).await?;
     test_read(&client).await?;
     test_rename(&client).await?;
@@ -98,6 +99,14 @@ pub(crate) async fn test_with_features(features: &HashSet<DfsFeatures>) -> Resul
     #[cfg(feature = "object_store")]
     test_object_store(client).await.unwrap();
 
+    Ok(())
+}
+
+async fn test_file_info(client: &Client) -> Result<()> {
+    let status = client.get_file_info("/testfile").await?;
+    // Path is empty, I guess because we already know what file we just got the info for?
+    assert_eq!(status.path, "");
+    assert_eq!(status.length, TEST_FILE_INTS * 4);
     Ok(())
 }
 

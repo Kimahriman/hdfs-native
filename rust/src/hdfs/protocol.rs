@@ -1,3 +1,4 @@
+use log::debug;
 use prost::Message;
 
 use crate::proto::hdfs;
@@ -18,14 +19,17 @@ impl NamenodeProtocol {
     pub(crate) async fn get_file_info(&self, src: &str) -> Result<hdfs::GetFileInfoResponseProto> {
         let mut message = hdfs::GetFileInfoRequestProto::default();
         message.src = src.to_string();
+        debug!("get_file_info request: {:?}", &message);
 
         let response = self
             .proxy
             .call("getFileInfo", message.encode_length_delimited_to_vec())
             .await?;
-        Ok(hdfs::GetFileInfoResponseProto::decode_length_delimited(
-            response,
-        )?)
+
+        let decoded = hdfs::GetFileInfoResponseProto::decode_length_delimited(response)?;
+        debug!("get_file_info response: {:?}", &decoded);
+
+        Ok(decoded)
     }
 
     pub(crate) async fn get_listing(
@@ -38,14 +42,16 @@ impl NamenodeProtocol {
         message.src = src.to_string();
         message.start_after = start_after;
         message.need_location = need_location;
+        debug!("get_listing request: {:?}", &message);
 
         let response = self
             .proxy
             .call("getListing", message.encode_length_delimited_to_vec())
             .await?;
-        Ok(hdfs::GetListingResponseProto::decode_length_delimited(
-            response,
-        )?)
+
+        let decoded = hdfs::GetListingResponseProto::decode_length_delimited(response)?;
+        debug!("get_listing response: {:?}", &decoded);
+        Ok(decoded)
     }
 
     pub(crate) async fn get_located_file_info(
@@ -55,6 +61,7 @@ impl NamenodeProtocol {
         let mut message = hdfs::GetLocatedFileInfoRequestProto::default();
         message.src = Some(src.to_string());
         message.need_block_token = Some(true);
+        debug!("get_located_block_info response: {:?}", &message);
 
         let response = self
             .proxy
@@ -63,7 +70,10 @@ impl NamenodeProtocol {
                 message.encode_length_delimited_to_vec(),
             )
             .await?;
-        Ok(hdfs::GetLocatedFileInfoResponseProto::decode_length_delimited(response)?)
+
+        let decoded = hdfs::GetLocatedFileInfoResponseProto::decode_length_delimited(response)?;
+        debug!("get_located_block_info response: {:?}", &decoded);
+        Ok(decoded)
     }
 
     pub(crate) async fn mkdirs(
@@ -80,13 +90,16 @@ impl NamenodeProtocol {
         message.masked = masked;
         message.create_parent = create_parent;
 
+        debug!("mkdirs request: {:?}", &message);
+
         let response = self
             .proxy
             .call("mkdirs", message.encode_length_delimited_to_vec())
             .await?;
-        Ok(hdfs::MkdirsResponseProto::decode_length_delimited(
-            response,
-        )?)
+
+        let decoded = hdfs::MkdirsResponseProto::decode_length_delimited(response)?;
+        debug!("mkdirs response: {:?}", &decoded);
+        Ok(decoded)
     }
 
     pub(crate) async fn rename(
@@ -100,13 +113,16 @@ impl NamenodeProtocol {
         message.dst = dst.to_string();
         message.overwrite_dest = overwrite;
 
+        debug!("rename request: {:?}", &message);
+
         let response = self
             .proxy
             .call("rename2", message.encode_length_delimited_to_vec())
             .await?;
-        Ok(hdfs::Rename2ResponseProto::decode_length_delimited(
-            response,
-        )?)
+
+        let decoded = hdfs::Rename2ResponseProto::decode_length_delimited(response)?;
+        debug!("rename response: {:?}", &decoded);
+        Ok(decoded)
     }
 
     pub(crate) async fn delete(
@@ -117,13 +133,15 @@ impl NamenodeProtocol {
         let mut message = hdfs::DeleteRequestProto::default();
         message.src = src.to_string();
         message.recursive = recursive;
+        debug!("delete request: {:?}", &message);
 
         let response = self
             .proxy
             .call("delete", message.encode_length_delimited_to_vec())
             .await?;
-        Ok(hdfs::DeleteResponseProto::decode_length_delimited(
-            response,
-        )?)
+
+        let decoded = hdfs::DeleteResponseProto::decode_length_delimited(response)?;
+        debug!("delete response: {:?}", &decoded);
+        Ok(decoded)
     }
 }

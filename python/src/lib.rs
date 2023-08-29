@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use ::hdfs_native::file::HdfsFileReader;
 use ::hdfs_native::{client::FileStatus, Client};
+use log::LevelFilter;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use tokio::runtime::Runtime;
 
@@ -75,6 +76,11 @@ impl PyClient {
     #[new]
     #[pyo3(signature = (url))]
     pub fn new(url: &str) -> PyResult<Self> {
+        // Initialize logging, ignore errors if this is called multiple times
+        let _ = env_logger::Builder::new()
+            .filter_level(LevelFilter::Off)
+            .try_init();
+
         Ok(PyClient {
             inner: Client::new(url).map_err(PythonHdfsError::from)?,
             rt: Arc::new(
