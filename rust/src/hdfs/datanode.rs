@@ -86,3 +86,13 @@ impl BlockReader {
         Ok(())
     }
 }
+
+pub(crate) struct BlockWriter {
+    block: hdfs::LocatedBlockProto,
+}
+
+impl BlockWriter {
+    pub(crate) fn new(block: hdfs::LocatedBlockProto) -> Self {
+        Self { block }
+    }
+}

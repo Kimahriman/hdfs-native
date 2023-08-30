@@ -8,7 +8,7 @@ use url::Url;
 
 use crate::common::config::Configuration;
 use crate::error::{HdfsError, Result};
-use crate::file::FileReader;
+use crate::file::{FileReader, FileWriter};
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
@@ -97,6 +97,42 @@ impl Client {
                 }
             }
             None => Err(HdfsError::FileNotFound(path.to_string())),
+        }
+    }
+
+    pub async fn create(
+        &self,
+        src: &str,
+        permission: u32,
+        overwrite: bool,
+        create_parent: bool,
+        replication: u32,
+        block_size: u64,
+    ) -> Result<FileWriter> {
+        let create_response = self
+            .protocol
+            .create(
+                src,
+                permission,
+                overwrite,
+                create_parent,
+                replication,
+                block_size,
+            )
+            .await?;
+
+        match create_response.fs {
+            Some(status) => {
+                if status.ec_policy.is_some() {
+                    return Err(HdfsError::UnsupportedFeature("Erasure coding".to_string()));
+                }
+                if status.file_encryption_info.is_some() {
+                    return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
+                }
+
+                Ok(FileWriter {})
+            }
+            None => Err(HdfsError::FileNotFound(src.to_string())),
         }
     }
 

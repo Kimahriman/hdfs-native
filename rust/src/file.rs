@@ -109,3 +109,5 @@ impl FileReader {
             .collect()
     }
 }
+
+pub struct FileWriter {}

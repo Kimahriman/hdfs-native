@@ -1,5 +1,6 @@
 use log::debug;
 use prost::Message;
+use uuid::Uuid;
 
 use crate::proto::hdfs;
 use crate::Result;
@@ -9,11 +10,16 @@ use super::proxy::NameServiceProxy;
 #[derive(Debug)]
 pub(crate) struct NamenodeProtocol {
     proxy: NameServiceProxy,
+    client_name: String,
 }
 
 impl NamenodeProtocol {
     pub(crate) fn new(proxy: NameServiceProxy) -> Self {
-        NamenodeProtocol { proxy }
+        let client_name = format!(
+            "hdfs_native_client-{}",
+            Uuid::new_v4().as_hyphenated().to_string()
+        );
+        NamenodeProtocol { proxy, client_name }
     }
 
     pub(crate) async fn get_file_info(&self, src: &str) -> Result<hdfs::GetFileInfoResponseProto> {
@@ -73,6 +79,43 @@ impl NamenodeProtocol {
 
         let decoded = hdfs::GetLocatedFileInfoResponseProto::decode_length_delimited(response)?;
         debug!("get_located_block_info response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
+    pub(crate) async fn create(
+        &self,
+        src: &str,
+        permission: u32,
+        overwrite: bool,
+        create_parent: bool,
+        replication: u32,
+        block_size: u64,
+    ) -> Result<hdfs::CreateResponseProto> {
+        let mut masked = hdfs::FsPermissionProto::default();
+        masked.perm = permission;
+
+        let mut message = hdfs::CreateRequestProto::default();
+        message.src = src.to_string();
+        message.masked = masked;
+        message.client_name = self.client_name.clone();
+        if overwrite {
+            message.create_flag = hdfs::CreateFlagProto::Overwrite as u32;
+        } else {
+            message.create_flag = hdfs::CreateFlagProto::Create as u32;
+        }
+        message.create_parent = create_parent;
+        message.replication = replication;
+        message.block_size = block_size;
+
+        debug!("create request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call("create", message.encode_length_delimited_to_vec())
+            .await?;
+
+        let decoded = hdfs::CreateResponseProto::decode_length_delimited(response)?;
+        debug!("create response: {:?}", &decoded);
         Ok(decoded)
     }
 
