@@ -12,7 +12,7 @@ class FileStatus:
     access_time: int
 
 
-class HdfsFileReader:
+class FileReader:
     def file_length(self) -> int:
         """Returns the size of the file"""
 
@@ -32,7 +32,7 @@ class Client:
     def list_status(self, path: str, recursive: bool) -> List[FileStatus]:
         """Gets the status of files rooted at `path`. If `recursive` is true, lists all files recursively."""
 
-    def read(self, path: str) -> HdfsFileReader:
+    def read(self, path: str) -> FileReader:
         """Opens a file for reading at `path`"""
 
     def mkdirs(self, path: str, permission: int, create_parent: bool) -> None:

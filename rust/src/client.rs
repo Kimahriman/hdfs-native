@@ -8,7 +8,7 @@ use url::Url;
 
 use crate::common::config::Configuration;
 use crate::error::{HdfsError, Result};
-use crate::file::HdfsFileReader;
+use crate::file::FileReader;
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
@@ -76,7 +76,7 @@ impl Client {
     }
 
     /// Opens a file reader for the file at `path`. Path should not include a scheme.
-    pub async fn read(&self, path: &str) -> Result<HdfsFileReader> {
+    pub async fn read(&self, path: &str) -> Result<FileReader> {
         let located_info = self.protocol.get_located_file_info(path).await?;
         match located_info.fs {
             Some(status) => {
@@ -91,7 +91,7 @@ impl Client {
                 }
 
                 if let Some(locations) = status.locations {
-                    Ok(HdfsFileReader::new(locations))
+                    Ok(FileReader::new(locations))
                 } else {
                     Err(HdfsError::BlocksNotFound(path.to_string()))
                 }

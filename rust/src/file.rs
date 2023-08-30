@@ -7,14 +7,14 @@ use crate::Result;
 
 use crate::hdfs::datanode::BlockReader;
 
-pub struct HdfsFileReader {
+pub struct FileReader {
     located_blocks: hdfs::LocatedBlocksProto,
     position: usize,
 }
 
-impl HdfsFileReader {
+impl FileReader {
     pub(crate) fn new(located_blocks: hdfs::LocatedBlocksProto) -> Self {
-        HdfsFileReader {
+        Self {
             located_blocks,
             position: 0,
         }

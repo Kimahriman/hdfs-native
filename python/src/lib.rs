@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use ::hdfs_native::file::HdfsFileReader;
+use ::hdfs_native::file::FileReader;
 use ::hdfs_native::{client::FileStatus, Client};
 use log::LevelFilter;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
@@ -40,14 +40,14 @@ impl From<FileStatus> for PyFileStatus {
     }
 }
 
-#[pyclass(name = "HdfsFileReader")]
-struct PyHdfsFileReader {
-    inner: HdfsFileReader,
+#[pyclass(name = "FileReader")]
+struct PyFileReader {
+    inner: FileReader,
     rt: Arc<Runtime>,
 }
 
 #[pymethods]
-impl PyHdfsFileReader {
+impl PyFileReader {
     pub fn file_length(&self) -> usize {
         self.inner.file_length()
     }
@@ -106,10 +106,10 @@ impl PyClient {
             .collect())
     }
 
-    pub fn read(&self, path: &str) -> PyHdfsResult<PyHdfsFileReader> {
+    pub fn read(&self, path: &str) -> PyHdfsResult<PyFileReader> {
         let file_reader = self.rt.block_on(self.inner.read(path))?;
 
-        Ok(PyHdfsFileReader {
+        Ok(PyFileReader {
             inner: file_reader,
             rt: Arc::clone(&self.rt),
         })
