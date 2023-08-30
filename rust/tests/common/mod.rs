@@ -210,6 +210,7 @@ async fn test_object_store_list(store: &HdfsObjectStore) -> object_store::Result
         .await;
 
     assert_eq!(list.len(), 1);
+    assert_eq!(list[0].as_ref().unwrap().location, Path::from("/testfile"));
 
     Ok(())
 }
