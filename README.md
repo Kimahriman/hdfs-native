@@ -22,8 +22,8 @@ Here is a list of currently supported and unsupported but possible future featur
 ### Security Features
 - [x] Kerberos authentication (GSSAPI SASL support)
 - [x] Token authentication (DIGEST-MD5 SASL support, no encryption support)
-- [x] NameNode RPC encryption
-- [ ] DataNode RPC encryption
+- [x] NameNode SASL connection
+- [ ] DataNode SASL connection
 - [ ] DataNode data transfer encryption
 - [ ] Encryption at rest (KMS support)
 
@@ -51,5 +51,5 @@ cargo build --all-features
 
 ## Crate features
 - `token` - enables token based DIGEST-MD5 authentication support. This uses the `gsasl` native library and only supports authentication, not integrity or confidentiality
-- `kerberos` - enables kerberos GSSAPI authentication support. This uses the `rsasl` crate which uses `libgssapi` behind the scenes, and supports integrity as well as confidentiality
+- `kerberos` - enables kerberos GSSAPI authentication support. This uses the `libgssapi` crate and supports integrity as well as confidentiality
 - `object_store` - provides an `object_store` wrapper around the HDFS client
