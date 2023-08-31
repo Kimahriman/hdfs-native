@@ -95,6 +95,7 @@ pub(crate) async fn test_with_features(features: &HashSet<DfsFeatures>) -> Resul
     test_read(&client).await?;
     test_rename(&client).await?;
     test_dirs(&client).await?;
+    test_write(&client).await?;
 
     #[cfg(feature = "object_store")]
     test_object_store(client).await.unwrap();
@@ -172,6 +173,19 @@ async fn test_dirs(client: &Client) -> Result<()> {
     // Deleting non-empty dir without recursive fails
     assert!(client.delete("/testdir1", false).await.is_err());
     assert!(client.delete("/testdir1", true).await.is_ok_and(|r| r));
+
+    Ok(())
+}
+
+async fn test_write(client: &Client) -> Result<()> {
+    let mut writer = client
+        .create("/newfile", 0o755, false, false, 3, 128 * 1024 * 1024)
+        .await?;
+
+    writer.close().await?;
+
+    assert!(client.get_file_info("/newfile").await.is_ok());
+    assert!(client.delete("/newfile", false).await.is_ok_and(|r| r));
 
     Ok(())
 }

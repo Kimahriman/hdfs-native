@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use bytes::{Bytes, BytesMut};
 use futures::future::join_all;
 use log::debug;
 
+use crate::hdfs::protocol::NamenodeProtocol;
 use crate::proto::hdfs;
 use crate::Result;
 
@@ -110,4 +113,34 @@ impl FileReader {
     }
 }
 
-pub struct FileWriter {}
+pub struct FileWriter {
+    src: String,
+    protocol: Arc<NamenodeProtocol>,
+    status: hdfs::HdfsFileStatusProto,
+    closed: bool,
+}
+
+impl FileWriter {
+    pub(crate) fn new(
+        protocol: Arc<NamenodeProtocol>,
+        src: String,
+        status: hdfs::HdfsFileStatusProto,
+    ) -> Self {
+        Self {
+            protocol,
+            src,
+            status,
+            closed: false,
+        }
+    }
+
+    pub async fn close(&mut self) -> Result<()> {
+        if !self.closed {
+            self.protocol
+                .complete(&self.src, None, self.status.file_id)
+                .await?;
+            self.closed = true;
+        }
+        Ok(())
+    }
+}

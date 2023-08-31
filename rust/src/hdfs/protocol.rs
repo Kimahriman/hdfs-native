@@ -119,6 +119,30 @@ impl NamenodeProtocol {
         Ok(decoded)
     }
 
+    pub(crate) async fn complete(
+        &self,
+        src: &str,
+        last: Option<hdfs::ExtendedBlockProto>,
+        file_id: Option<u64>,
+    ) -> Result<hdfs::CompleteResponseProto> {
+        let mut message = hdfs::CompleteRequestProto::default();
+        message.src = src.to_string();
+        message.client_name = self.client_name.clone();
+        message.last = last;
+        message.file_id = file_id;
+
+        debug!("complete request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call("complete", message.encode_length_delimited_to_vec())
+            .await?;
+
+        let decoded = hdfs::CompleteResponseProto::decode_length_delimited(response)?;
+        debug!("complete response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
     pub(crate) async fn mkdirs(
         &self,
         src: &str,

@@ -87,12 +87,12 @@ impl BlockReader {
     }
 }
 
-pub(crate) struct BlockWriter {
-    block: hdfs::LocatedBlockProto,
-}
+// pub(crate) struct BlockWriter {
+//     block: hdfs::LocatedBlockProto,
+// }
 
-impl BlockWriter {
-    pub(crate) fn new(block: hdfs::LocatedBlockProto) -> Self {
-        Self { block }
-    }
-}
+// impl BlockWriter {
+//     pub(crate) fn new(block: hdfs::LocatedBlockProto) -> Self {
+//         Self { block }
+//     }
+// }

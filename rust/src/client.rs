@@ -130,7 +130,11 @@ impl Client {
                     return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
                 }
 
-                Ok(FileWriter {})
+                Ok(FileWriter::new(
+                    Arc::clone(&self.protocol),
+                    src.to_string(),
+                    status,
+                ))
             }
             None => Err(HdfsError::FileNotFound(src.to_string())),
         }
