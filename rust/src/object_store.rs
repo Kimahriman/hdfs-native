@@ -22,15 +22,6 @@ impl HdfsObjectStore {
     pub fn new(client: Client) -> Self {
         Self { client }
     }
-
-    /// ObjectStore paths always remove the leading slash, so add it back
-    fn make_absolute_file(path: &Path) -> String {
-        format!("/{}", path.as_ref())
-    }
-
-    fn make_absolute_dir(path: &Path) -> String {
-        format!("/{}/", path.as_ref())
-    }
 }
 
 impl Display for HdfsObjectStore {
@@ -86,10 +77,7 @@ impl ObjectStore for HdfsObjectStore {
             return Err(object_store::Error::NotImplemented);
         }
 
-        let reader = self
-            .client
-            .read(&Self::make_absolute_file(location))
-            .await?;
+        let reader = self.client.read(&make_absolute_file(location)).await?;
         let bytes = if let Some(range) = options.range {
             reader
                 .read_range(range.start, range.end - range.start)
@@ -107,7 +95,7 @@ impl ObjectStore for HdfsObjectStore {
     async fn head(&self, location: &Path) -> Result<ObjectMeta> {
         let status = self
             .client
-            .get_file_info(&Self::make_absolute_file(location))
+            .get_file_info(&make_absolute_file(location))
             .await?;
 
         Ok(ObjectMeta {
@@ -133,11 +121,14 @@ impl ObjectStore for HdfsObjectStore {
     ///
     /// Note: the order of returned [`ObjectMeta`] is not guaranteed
     async fn list(&self, prefix: Option<&Path>) -> Result<BoxStream<'_, Result<ObjectMeta>>> {
+        // We need to clone the prefix so we can move it into the closure below, since the stream is lazy
+        // and persists outside this function.
+        let prefix_clone = prefix.map(|x| x.clone());
         let status_stream = self
             .client
             .list_status_iter(
                 &prefix
-                    .map(|p| Self::make_absolute_dir(p))
+                    .map(|p| make_absolute_dir(p))
                     .unwrap_or("".to_string()),
                 true,
             )
@@ -149,8 +140,8 @@ impl ObjectStore for HdfsObjectStore {
                 };
                 future::ready(result)
             })
-            .map(|res| {
-                res.map(|s| create_object_meta(&s))
+            .map(move |res| {
+                res.map(|s| create_object_meta(&s, prefix_clone.as_ref()))
                     .map_err(|err| object_store::Error::from(err))
             });
 
@@ -166,7 +157,7 @@ impl ObjectStore for HdfsObjectStore {
     async fn list_with_delimiter(&self, prefix: Option<&Path>) -> Result<ListResult> {
         let mut status_stream = self.client.list_status_iter(
             &prefix
-                .map(|p| Self::make_absolute_dir(p))
+                .map(|p| make_absolute_dir(p))
                 .unwrap_or("".to_string()),
             false,
         );
@@ -184,7 +175,7 @@ impl ObjectStore for HdfsObjectStore {
         let files: Vec<ObjectMeta> = statuses
             .iter()
             .filter(|s| !s.isdir)
-            .map(create_object_meta)
+            .map(|s| create_object_meta(s, prefix))
             .collect();
 
         Ok(ListResult {
@@ -203,22 +194,14 @@ impl ObjectStore for HdfsObjectStore {
     async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
         Ok(self
             .client
-            .rename(
-                &Self::make_absolute_file(from),
-                &Self::make_absolute_file(to),
-                true,
-            )
+            .rename(&make_absolute_file(from), &make_absolute_file(to), true)
             .await?)
     }
 
     async fn rename_if_not_exists(&self, from: &Path, to: &Path) -> Result<()> {
         Ok(self
             .client
-            .rename(
-                &Self::make_absolute_file(from),
-                &Self::make_absolute_file(to),
-                false,
-            )
+            .rename(&make_absolute_file(from), &make_absolute_file(to), false)
             .await?)
     }
 
@@ -249,9 +232,25 @@ impl From<HdfsError> for object_store::Error {
     }
 }
 
-fn create_object_meta(status: &FileStatus) -> ObjectMeta {
+/// ObjectStore paths always remove the leading slash, so add it back
+fn make_absolute_file(path: &Path) -> String {
+    format!("/{}", path.as_ref())
+}
+
+fn make_absolute_dir(path: &Path) -> String {
+    format!("/{}/", path.as_ref())
+}
+
+fn join_paths(left: &Path, right: &Path) -> Path {
+    left.parts().chain(right.parts()).into_iter().collect()
+}
+
+fn create_object_meta(status: &FileStatus, base_path: Option<&Path>) -> ObjectMeta {
     ObjectMeta {
-        location: Path::from(status.path.as_ref()),
+        location: join_paths(
+            base_path.unwrap_or(&Path::default()),
+            &Path::from(status.path.as_ref()),
+        ),
         last_modified: DateTime::<Utc>::from_utc(
             NaiveDateTime::from_timestamp_opt(status.modification_time as i64, 0).unwrap(),
             Utc,

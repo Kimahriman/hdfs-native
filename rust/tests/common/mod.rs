@@ -192,7 +192,10 @@ async fn test_object_store(client: Client) -> object_store::Result<()> {
 async fn test_object_store_head(store: &HdfsObjectStore) -> object_store::Result<()> {
     use object_store::{path::Path, ObjectStore};
 
-    assert!(store.head(&Path::from("/testfile")).await.is_ok());
+    let head = store.head(&Path::from("/testfile")).await?;
+    assert_eq!(head.location, Path::from("/testfile"));
+    assert_eq!(head.size, TEST_FILE_INTS * 4);
+
     assert!(store.head(&Path::from("/testfile2")).await.is_err());
 
     Ok(())
@@ -203,11 +206,8 @@ async fn test_object_store_list(store: &HdfsObjectStore) -> object_store::Result
     use futures::StreamExt;
     use object_store::{path::Path, ObjectMeta, ObjectStore};
 
-    let list: Vec<object_store::Result<ObjectMeta>> = store
-        .list(Some(&Path::from("/testfile")))
-        .await?
-        .collect()
-        .await;
+    let list: Vec<object_store::Result<ObjectMeta>> =
+        store.list(Some(&Path::from("/"))).await?.collect().await;
 
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].as_ref().unwrap().location, Path::from("/testfile"));
