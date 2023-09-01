@@ -8,7 +8,7 @@ use crate::hdfs::protocol::NamenodeProtocol;
 use crate::proto::hdfs;
 use crate::Result;
 
-use crate::hdfs::datanode::BlockReader;
+use crate::hdfs::datanode::{BlockReader, BlockWriter};
 
 pub struct FileReader {
     located_blocks: hdfs::LocatedBlocksProto,
@@ -117,7 +117,9 @@ pub struct FileWriter {
     src: String,
     protocol: Arc<NamenodeProtocol>,
     status: hdfs::HdfsFileStatusProto,
+    block_writer: Option<BlockWriter>,
     closed: bool,
+    bytes_written: usize,
 }
 
 impl FileWriter {
@@ -130,8 +132,53 @@ impl FileWriter {
             protocol,
             src,
             status,
+            block_writer: None,
             closed: false,
+            bytes_written: 0,
         }
+    }
+
+    async fn create_block_writer(&self) -> Result<BlockWriter> {
+        let new_block = self
+            .protocol
+            .add_block(
+                &self.src,
+                self.block_writer.as_ref().map(|b| b.get_extended_block()),
+                self.status.file_id,
+            )
+            .await?;
+
+        Ok(BlockWriter::new(new_block.block, self.status.blocksize() as usize).await?)
+    }
+
+    async fn get_block_writer(&mut self) -> Result<&mut BlockWriter> {
+        if self.block_writer.is_none()
+            || self
+                .block_writer
+                .as_ref()
+                .is_some_and(|x| x.bytes_remaining == 0)
+        {
+            self.block_writer = Some(self.create_block_writer().await?);
+        }
+
+        Ok(self.block_writer.as_mut().unwrap())
+    }
+
+    pub async fn write(&mut self, buf: &[u8]) -> Result<()> {
+        let mut buf_written = 0;
+        while buf_written < buf.len() {
+            let block_writer = self.get_block_writer().await?;
+
+            let bytes_to_write = usize::min(buf.len() - buf_written, block_writer.bytes_remaining);
+            block_writer
+                .write(&buf[buf_written..(buf_written + bytes_to_write)])
+                .await?;
+
+            buf_written += bytes_to_write;
+            self.bytes_written += bytes_to_write;
+        }
+
+        Ok(())
     }
 
     pub async fn close(&mut self) -> Result<()> {

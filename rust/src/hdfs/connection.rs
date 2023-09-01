@@ -308,12 +308,14 @@ impl RpcListener {
 }
 
 pub(crate) enum Op {
+    WriteBlock,
     ReadBlock,
 }
 
 impl Op {
     fn value(&self) -> u8 {
         match self {
+            Self::WriteBlock => 80,
             Self::ReadBlock => 81,
         }
     }

@@ -17,6 +17,8 @@ pub enum HdfsError {
     IsADirectoryError(String),
     #[error("operation not supported")]
     UnsupportedFeature(String),
+    #[error("interal error, this shouldn't happen")]
+    InternalError(String),
     #[error("failed to decode RPC response")]
     InvalidRPCResponse(#[from] DecodeError),
     #[error("RPC error")]

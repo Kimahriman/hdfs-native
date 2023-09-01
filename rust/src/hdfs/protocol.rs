@@ -119,6 +119,30 @@ impl NamenodeProtocol {
         Ok(decoded)
     }
 
+    pub(crate) async fn add_block(
+        &self,
+        src: &str,
+        previous: Option<hdfs::ExtendedBlockProto>,
+        file_id: Option<u64>,
+    ) -> Result<hdfs::AddBlockResponseProto> {
+        let mut message = hdfs::AddBlockRequestProto::default();
+        message.src = src.to_string();
+        message.client_name = self.client_name.clone();
+        message.previous = previous;
+        message.file_id = file_id;
+
+        debug!("add_block request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call("addBlock", message.encode_length_delimited_to_vec())
+            .await?;
+
+        let decoded = hdfs::AddBlockResponseProto::decode_length_delimited(response)?;
+        debug!("add_block response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
     pub(crate) async fn complete(
         &self,
         src: &str,
