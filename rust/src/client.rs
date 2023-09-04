@@ -15,6 +15,7 @@ use crate::proto::hdfs::hdfs_file_status_proto::FileType;
 
 use crate::proto::hdfs::HdfsFileStatusProto;
 
+#[derive(Clone)]
 pub struct WriteOptions {
     // Block size. Default is retrieved from the server.
     pub block_size: Option<u64>,
