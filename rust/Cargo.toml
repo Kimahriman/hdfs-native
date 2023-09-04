@@ -15,6 +15,7 @@ async-trait = { version = "0.1", optional = true }
 base64 = "0.21"
 bytes = "1"
 chrono = { version = "0.4", optional = true }
+crc = "3"
 futures = "0.3"
 gsasl-sys = { version = "0.2", default-features = true, optional = true }
 libc = "0.2"

@@ -15,6 +15,12 @@ use crate::proto::hdfs::hdfs_file_status_proto::FileType;
 
 use crate::proto::hdfs::HdfsFileStatusProto;
 
+#[derive(Default)]
+pub struct WriteOptions {
+    block_size: Option<u64>,
+    replication: Option<u32>,
+}
+
 #[derive(Debug)]
 pub struct Client {
     protocol: Arc<NamenodeProtocol>,
@@ -106,9 +112,17 @@ impl Client {
         permission: u32,
         overwrite: bool,
         create_parent: bool,
-        replication: u32,
-        block_size: u64,
+        write_options: WriteOptions,
     ) -> Result<FileWriter> {
+        let server_defaults = self.protocol.get_server_defaults().await?.server_defaults;
+
+        let block_size = write_options
+            .block_size
+            .unwrap_or(server_defaults.block_size);
+        let replication = write_options
+            .replication
+            .unwrap_or(server_defaults.replication);
+
         let create_response = self
             .protocol
             .create(
@@ -134,6 +148,7 @@ impl Client {
                     Arc::clone(&self.protocol),
                     src.to_string(),
                     status,
+                    server_defaults,
                 ))
             }
             None => Err(HdfsError::FileNotFound(src.to_string())),

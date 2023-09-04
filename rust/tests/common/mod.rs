@@ -1,5 +1,7 @@
 pub(crate) mod minidfs;
 
+use bytes::Bytes;
+use hdfs_native::client::WriteOptions;
 #[cfg(feature = "object_store")]
 use hdfs_native::object_store::HdfsObjectStore;
 use hdfs_native::{client::Client, Result};
@@ -178,13 +180,46 @@ async fn test_dirs(client: &Client) -> Result<()> {
 }
 
 async fn test_write(client: &Client) -> Result<()> {
+    // Create an empty file
     let mut writer = client
-        .create("/newfile", 0o755, false, false, 3, 128 * 1024 * 1024)
+        .create("/newfile", 0o755, false, false, WriteOptions::default())
         .await?;
 
     writer.close().await?;
 
-    assert!(client.get_file_info("/newfile").await.is_ok());
+    assert_eq!(client.get_file_info("/newfile").await?.length, 0);
+
+    // Create a small file
+    let mut writer = client
+        .create("/newfile", 0o755, true, false, WriteOptions::default())
+        .await?;
+
+    let data = Bytes::from(vec![0u8, 1, 2, 3]);
+    writer.write(data.clone()).await?;
+    writer.close().await?;
+
+    assert_eq!(client.get_file_info("/newfile").await?.length, 4);
+
+    let mut reader = client.read("/newfile").await?;
+    assert_eq!(data, reader.read(reader.file_length()).await?);
+
+    // Create a file of exactly one block
+    let mut writer = client
+        .create("/newfile", 0o755, true, false, WriteOptions::default())
+        .await?;
+
+    let block_ints = 128 * 1024 * 1024 / 4;
+    for i in 0..block_ints as i32 {
+        let bytes = i.to_be_bytes().to_vec();
+        writer.write(Bytes::from(bytes)).await?;
+    }
+    writer.close().await?;
+
+    assert_eq!(
+        client.get_file_info("/newfile").await?.length,
+        128 * 1024 * 1024
+    );
+
     assert!(client.delete("/newfile", false).await.is_ok_and(|r| r));
 
     Ok(())

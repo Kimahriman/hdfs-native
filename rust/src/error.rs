@@ -9,6 +9,8 @@ use thiserror::Error;
 pub enum HdfsError {
     #[error("IO error occurred while communicating with HDFS")]
     IOError(#[from] io::Error),
+    #[error("data transfer error")]
+    DataTransferError(String),
     #[error("file not found")]
     FileNotFound(String),
     #[error("blocks not found")]

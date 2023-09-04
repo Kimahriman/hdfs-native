@@ -82,6 +82,22 @@ impl NamenodeProtocol {
         Ok(decoded)
     }
 
+    pub(crate) async fn get_server_defaults(&self) -> Result<hdfs::GetServerDefaultsResponseProto> {
+        let message = hdfs::GetServerDefaultsRequestProto::default();
+
+        let response = self
+            .proxy
+            .call(
+                "getServerDefaults",
+                message.encode_length_delimited_to_vec(),
+            )
+            .await?;
+
+        let decoded = hdfs::GetServerDefaultsResponseProto::decode_length_delimited(response)?;
+        debug!("get_server_defaults response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
     pub(crate) async fn create(
         &self,
         src: &str,

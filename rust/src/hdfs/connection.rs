@@ -5,6 +5,11 @@ use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use bytes::{BufMut, Bytes, BytesMut};
+use crc::{Crc, CRC_32_ISCSI};
+use log::{debug, error, warn};
+use prost::Message;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, oneshot};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -14,11 +19,6 @@ use tokio::{
     },
     task::{self, JoinHandle},
 };
-
-use bytes::Bytes;
-use bytes::BytesMut;
-use log::{debug, warn};
-use prost::Message;
 use uuid::Uuid;
 
 use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
@@ -29,6 +29,8 @@ use crate::{HdfsError, Result};
 
 const PROTOCOL: &'static str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
 const DATA_TRANSFER_VERSION: u16 = 28;
+
+const CASTAGNOLI: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
 
 #[derive(Debug)]
 pub(crate) struct AlignmentContext {
@@ -321,28 +323,111 @@ impl Op {
     }
 }
 
+const CHECKSUM_BYTES: usize = 4;
+
 pub(crate) struct Packet {
     pub header: hdfs::PacketHeaderProto,
     #[allow(dead_code)]
-    pub checksum: Bytes,
-    pub data: Bytes,
+    checksum: BytesMut,
+    data: BytesMut,
+    bytes_per_checksum: usize,
+    max_data_size: usize,
 }
 
 impl Packet {
-    fn new(header: hdfs::PacketHeaderProto, checksum: Bytes, data: Bytes) -> Self {
-        Packet {
+    fn new(header: hdfs::PacketHeaderProto, checksum: BytesMut, data: BytesMut) -> Self {
+        Self {
             header,
             checksum,
             data,
+            bytes_per_checksum: 0,
+            max_data_size: 0,
         }
+    }
+
+    pub(crate) fn empty(
+        offset: i64,
+        seqno: i64,
+        bytes_per_checksum: u32,
+        max_packet_size: u32,
+    ) -> Self {
+        let mut header = hdfs::PacketHeaderProto::default();
+        header.offset_in_block = offset;
+        header.seqno = seqno;
+
+        let num_chunks = Self::max_packet_chunks(bytes_per_checksum, max_packet_size);
+
+        Self {
+            header,
+            checksum: BytesMut::with_capacity(num_chunks * CHECKSUM_BYTES),
+            data: BytesMut::with_capacity(num_chunks * bytes_per_checksum as usize),
+            bytes_per_checksum: bytes_per_checksum as usize,
+            max_data_size: num_chunks * bytes_per_checksum as usize,
+        }
+    }
+
+    pub(crate) fn set_last_packet(&mut self) {
+        self.header.last_packet_in_block = true;
+        // Opinionated: always sync block for safety
+        self.header.sync_block = Some(true);
+    }
+
+    fn max_packet_chunks(bytes_per_checksum: u32, max_packet_size: u32) -> usize {
+        // Create a dummy header to get its size
+        let mut header = hdfs::PacketHeaderProto::default();
+        header.offset_in_block = 0;
+        header.seqno = 0;
+        header.data_len = 0;
+        header.last_packet_in_block = false;
+        header.sync_block = Some(false);
+
+        // Add 4 bytes for size of whole packet and 2 bytes for size of header
+        let max_header_length = header.encoded_len() + 4 + 2;
+        let data_size = max_packet_size as usize - max_header_length;
+        let chunk_size = bytes_per_checksum as usize + CHECKSUM_BYTES;
+        let chunks = data_size / chunk_size;
+        chunks
+    }
+
+    pub(crate) fn write(&mut self, buf: &mut Bytes) {
+        self.data
+            .put(buf.split_to(usize::min(self.max_data_size - self.data.len(), buf.len())));
+    }
+
+    pub(crate) fn data_size(&self) -> usize {
+        self.data.len()
+    }
+
+    pub(crate) fn is_full(&self) -> bool {
+        self.data.len() == self.max_data_size
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    fn generate_checksums(&mut self) {
+        let mut chunk_start = 0;
+        while chunk_start < self.data.len() {
+            let chunk_end = usize::min(chunk_start + self.bytes_per_checksum, self.data.len());
+            let chunk = &self.data[chunk_start..chunk_end];
+            self.checksum.put_u32(CASTAGNOLI.checksum(chunk));
+            chunk_start += self.bytes_per_checksum;
+        }
+
+        self.header.data_len = self.data.len() as i32;
+    }
+
+    pub(crate) fn get_data(self) -> Bytes {
+        self.data.freeze()
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct DatanodeConnection {
     client_name: String,
-    reader: BufReader<OwnedReadHalf>,
-    writer: OwnedWriteHalf,
+    pub(self) reader: Option<BufReader<OwnedReadHalf>>,
+    pub(self) writer: OwnedWriteHalf,
 }
 
 impl DatanodeConnection {
@@ -353,7 +438,7 @@ impl DatanodeConnection {
 
         let conn = DatanodeConnection {
             client_name: Uuid::new_v4().to_string(),
-            reader: BufReader::new(reader),
+            reader: Some(BufReader::new(reader)),
             writer,
         };
         Ok(conn)
@@ -387,40 +472,94 @@ impl DatanodeConnection {
     }
 
     pub(crate) async fn read_block_op_response(&mut self) -> Result<hdfs::BlockOpResponseProto> {
-        let buf = self.reader.fill_buf().await?;
+        let reader = self.reader.as_mut().ok_or(HdfsError::DataTransferError(
+            "Cannot read block op response after starting to listen for packet acks".to_string(),
+        ))?;
+        let buf = reader.fill_buf().await?;
         let msg_length = prost::decode_length_delimiter(buf)?;
         let total_size = msg_length + prost::length_delimiter_len(msg_length);
 
         let mut response_buf = BytesMut::zeroed(total_size);
-        self.reader.read_exact(&mut response_buf).await?;
+        reader.read_exact(&mut response_buf).await?;
 
         let response = hdfs::BlockOpResponseProto::decode_length_delimited(response_buf.freeze())?;
         Ok(response)
     }
 
     pub(crate) async fn read_packet(&mut self) -> Result<Packet> {
+        let reader = self.reader.as_mut().ok_or(HdfsError::DataTransferError(
+            "Cannot read packets after starting to listen for packet acks".to_string(),
+        ))?;
         let mut payload_len_buf = [0u8; 4];
         let mut header_len_buf = [0u8; 2];
-        self.reader.read_exact(&mut payload_len_buf).await?;
-        self.reader.read_exact(&mut header_len_buf).await?;
+        reader.read_exact(&mut payload_len_buf).await?;
+        reader.read_exact(&mut header_len_buf).await?;
 
         let payload_length = u32::from_be_bytes(payload_len_buf) as usize;
         let header_length = u16::from_be_bytes(header_len_buf) as usize;
 
         let mut remaining_buf = BytesMut::zeroed(payload_length - 4 + header_length);
-        self.reader.read_exact(&mut remaining_buf).await?;
+        reader.read_exact(&mut remaining_buf).await?;
 
-        let bytes = remaining_buf.freeze();
-
-        let header = hdfs::PacketHeaderProto::decode(bytes.slice(0..header_length))?;
+        let header =
+            hdfs::PacketHeaderProto::decode(remaining_buf.split_to(header_length).freeze())?;
 
         let checksum_length = payload_length - 4 - header.data_len as usize;
-        let checksum = bytes.slice(header_length..(header_length + checksum_length));
-        let data = bytes.slice(
-            (header_length + checksum_length)
-                ..(header_length + checksum_length + header.data_len as usize),
-        );
+        let checksum = remaining_buf.split_to(checksum_length);
+        let data = remaining_buf;
 
         Ok(Packet::new(header, checksum, data))
+    }
+
+    /// Create a buffer to send to the datanode
+    pub(crate) async fn write_packet(&mut self, packet: &mut Packet) -> Result<()> {
+        packet.generate_checksums();
+
+        let payload_len = (packet.checksum.len() + packet.data.len() + 4) as u32;
+        let header_len = packet.header.encoded_len() as u16;
+
+        self.writer.write_u32(payload_len).await?;
+        self.writer.write_u16(header_len).await?;
+        self.writer.write(&packet.header.encode_to_vec()).await?;
+        self.writer.write(&packet.checksum).await?;
+        self.writer.write(&packet.data).await?;
+        self.writer.flush().await?;
+
+        Ok(())
+    }
+
+    /// Spawn a task to read acknowledgements of packets
+    pub(crate) fn read_acks(&mut self, sender: Sender<hdfs::PipelineAckProto>) -> Result<()> {
+        let mut reader = self.reader.take().ok_or(HdfsError::DataTransferError(
+            "Cannot read for acks twice".to_string(),
+        ))?;
+        task::spawn(async move {
+            loop {
+                let next_ack = Self::read_ack(&mut reader).await;
+                if let Err(error) = next_ack.as_ref() {
+                    error!("Failed to get next ack from data node: {:?}", error);
+                    break;
+                }
+                if let Ok(ack) = next_ack {
+                    if let Err(error) = sender.send(ack).await {
+                        error!("Failed to send ack to receiver: {:?}", error);
+                        break;
+                    }
+                }
+            }
+        });
+        Ok(())
+    }
+
+    async fn read_ack(reader: &mut BufReader<OwnedReadHalf>) -> Result<hdfs::PipelineAckProto> {
+        let buf = reader.fill_buf().await?;
+        let ack_length = prost::decode_length_delimiter(buf)?;
+        let total_size = ack_length + prost::length_delimiter_len(ack_length);
+
+        let mut response_buf = BytesMut::zeroed(total_size);
+        reader.read_exact(&mut response_buf).await?;
+
+        let response = hdfs::PipelineAckProto::decode_length_delimited(response_buf.freeze())?;
+        Ok(response)
     }
 }
