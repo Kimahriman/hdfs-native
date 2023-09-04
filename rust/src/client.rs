@@ -15,10 +15,29 @@ use crate::proto::hdfs::hdfs_file_status_proto::FileType;
 
 use crate::proto::hdfs::HdfsFileStatusProto;
 
-#[derive(Default)]
 pub struct WriteOptions {
-    block_size: Option<u64>,
-    replication: Option<u32>,
+    // Block size. Default is retrieved from the server.
+    pub block_size: Option<u64>,
+    // Replication factor. Default is retrieved from the server.
+    pub replication: Option<u32>,
+    // Unix file permission, defaults to 755
+    pub permission: u32,
+    // Whether to overwrite the file, defaults to false
+    pub overwrite: bool,
+    // Whether to create any missing parent directories, defaults to true
+    pub create_parent: bool,
+}
+
+impl Default for WriteOptions {
+    fn default() -> Self {
+        Self {
+            block_size: None,
+            replication: None,
+            permission: 0o755,
+            overwrite: false,
+            create_parent: true,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -106,14 +125,7 @@ impl Client {
         }
     }
 
-    pub async fn create(
-        &self,
-        src: &str,
-        permission: u32,
-        overwrite: bool,
-        create_parent: bool,
-        write_options: WriteOptions,
-    ) -> Result<FileWriter> {
+    pub async fn create(&self, src: &str, write_options: WriteOptions) -> Result<FileWriter> {
         let server_defaults = self.protocol.get_server_defaults().await?.server_defaults;
 
         let block_size = write_options
@@ -127,9 +139,9 @@ impl Client {
             .protocol
             .create(
                 src,
-                permission,
-                overwrite,
-                create_parent,
+                write_options.permission,
+                write_options.overwrite,
+                write_options.create_parent,
                 replication,
                 block_size,
             )

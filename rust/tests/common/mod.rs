@@ -180,19 +180,20 @@ async fn test_dirs(client: &Client) -> Result<()> {
 }
 
 async fn test_write(client: &Client) -> Result<()> {
+    let mut write_options = WriteOptions::default();
+
     // Create an empty file
-    let mut writer = client
-        .create("/newfile", 0o755, false, false, WriteOptions::default())
-        .await?;
+    let mut writer = client.create("/newfile", write_options.clone()).await?;
 
     writer.close().await?;
 
     assert_eq!(client.get_file_info("/newfile").await?.length, 0);
 
+    // Overwrite now
+    write_options.overwrite = true;
+
     // Create a small file
-    let mut writer = client
-        .create("/newfile", 0o755, true, false, WriteOptions::default())
-        .await?;
+    let mut writer = client.create("/newfile", write_options.clone()).await?;
 
     let data = Bytes::from(vec![0u8, 1, 2, 3]);
     writer.write(data.clone()).await?;
@@ -204,9 +205,7 @@ async fn test_write(client: &Client) -> Result<()> {
     assert_eq!(data, reader.read(reader.file_length()).await?);
 
     // Create a file of exactly one block
-    let mut writer = client
-        .create("/newfile", 0o755, true, false, WriteOptions::default())
-        .await?;
+    let mut writer = client.create("/newfile", write_options.clone()).await?;
 
     let block_ints = 128 * 1024 * 1024 / 4;
     for i in 0..block_ints as i32 {

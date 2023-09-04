@@ -1,6 +1,6 @@
 use bytes::{BufMut, Bytes};
 use log::{debug, error, warn};
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     hdfs::connection::{DatanodeConnection, Op},
@@ -103,7 +103,10 @@ pub(crate) struct BlockWriter {
     connection: DatanodeConnection,
     current_packet: Packet,
 
-    ack_queue: Sender<(i64, bool)>,
+    // Tracks the state of acknowledgements. Set to an Err if any error occurs doing receiving
+    // acknowledgements. Set to Ok(()) when the last acknowledgement is received.
+    status: Option<oneshot::Receiver<Result<()>>>,
+    ack_queue: mpsc::Sender<(i64, bool)>,
 }
 
 impl BlockWriter {
@@ -146,6 +149,8 @@ impl BlockWriter {
             mpsc::channel::<hdfs::PipelineAckProto>(100);
         // Channel for tracking packets that need to be acked
         let (ack_queue_sender, ack_queue_receiever) = mpsc::channel::<(i64, bool)>(100);
+        // Channel for tracking errors that occur listening for acks or successful ack of the last packet
+        let (status_sender, status_receiver) = oneshot::channel::<Result<()>>();
 
         connection.read_acks(ack_response_sender)?;
 
@@ -160,9 +165,10 @@ impl BlockWriter {
             next_seqno: 1,
             connection,
             current_packet: Packet::empty(0, 0, bytes_per_checksum, write_packet_size),
+            status: Some(status_receiver),
             ack_queue: ack_queue_sender,
         };
-        this.listen_for_acks(ack_response_receiver, ack_queue_receiever);
+        this.listen_for_acks(ack_response_receiver, ack_queue_receiever, status_sender);
 
         Ok(this)
     }
@@ -212,7 +218,25 @@ impl BlockWriter {
         Ok(())
     }
 
+    fn check_error(&mut self) -> Result<()> {
+        if let Some(status) = self.status.as_mut() {
+            match status.try_recv() {
+                Ok(result) => result?,
+                Err(oneshot::error::TryRecvError::Empty) => (),
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    return Err(HdfsError::DataTransferError(
+                        "Status channel closed prematurely".to_string(),
+                    ))
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub(crate) async fn write(&mut self, buf: &mut Bytes) -> Result<()> {
+        self.check_error()?;
+
         // Only write up to what's left in this block
         let bytes_to_write = usize::min(buf.len(), self.block_size - self.bytes_written);
         let mut buf_to_write = buf.split_to(bytes_to_write);
@@ -228,6 +252,8 @@ impl BlockWriter {
 
     /// Send a packet with any remaining data and then send a last packet
     pub(crate) async fn close(&mut self) -> Result<()> {
+        self.check_error()?;
+
         // Send a packet with any remaining data
         if !self.current_packet.is_empty() {
             self.send_current_packet().await?;
@@ -238,7 +264,18 @@ impl BlockWriter {
         self.send_current_packet().await?;
 
         // Wait for the channel to close, meaning all acks have been received or an error occured
-        self.ack_queue.closed().await;
+        if let Some(status) = self.status.take() {
+            let result = status.await.map_err(|_| {
+                HdfsError::DataTransferError(
+                    "Status channel closed while waiting for final ack".to_string(),
+                )
+            })?;
+            let _ = result?;
+        } else {
+            return Err(HdfsError::DataTransferError(
+                "Block already closed".to_string(),
+            ));
+        }
 
         // Update the block size in the ExtendedBlockProto used for communicate the status with the namenode
         self.block.b.num_bytes = Some(self.bytes_written as u64);
@@ -248,8 +285,9 @@ impl BlockWriter {
 
     fn listen_for_acks(
         &self,
-        mut ack_receiver: Receiver<hdfs::PipelineAckProto>,
-        mut ack_queue: Receiver<(i64, bool)>,
+        mut ack_receiver: mpsc::Receiver<hdfs::PipelineAckProto>,
+        mut ack_queue: mpsc::Receiver<(i64, bool)>,
+        status: oneshot::Sender<Result<()>>,
     ) {
         tokio::spawn(async move {
             loop {
@@ -261,11 +299,11 @@ impl BlockWriter {
                 let next_ack = next_ack_opt.unwrap();
                 for reply in next_ack.reply.iter() {
                     if *reply != hdfs::Status::Success as i32 {
-                        error!(
+                        let _ = status.send(Err(HdfsError::DataTransferError(format!(
                             "Received non-success status in datanode ack: {:?}",
                             hdfs::Status::from_i32(*reply)
-                        );
-                        break;
+                        ))));
+                        return;
                     }
                 }
 
@@ -273,27 +311,35 @@ impl BlockWriter {
                     continue;
                 }
                 if next_ack.seqno == UNKNOWN_SEQNO {
-                    error!("Received unknown seqno for successful ack");
-                    break;
+                    let _ = status.send(Err(HdfsError::DataTransferError(
+                        "Received unknown seqno for successful ack".to_string(),
+                    )));
+                    return;
                 }
 
                 let next_seqno = ack_queue.recv().await;
                 if next_seqno.is_none() {
-                    error!("Channel closed while getting next seqno to acknowledge");
-                    break;
+                    let _ = status.send(Err(HdfsError::DataTransferError(
+                        "Channel closed while getting next seqno to acknowledge".to_string(),
+                    )));
+                    return;
                 }
 
                 let (seqno, last_packet) = next_seqno.unwrap();
 
                 if next_ack.seqno != seqno {
-                    error!("Received acknowledgement does not match expected sequence number");
-                    break;
+                    let _ = status.send(Err(HdfsError::DataTransferError(
+                        "Received acknowledgement does not match expected sequence number"
+                            .to_string(),
+                    )));
+                    return;
                 }
 
                 debug!("Received ack for sequence number {}", seqno);
 
                 if last_packet {
-                    break;
+                    let _ = status.send(Ok(()));
+                    return;
                 }
             }
         });
