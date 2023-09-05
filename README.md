@@ -9,7 +9,7 @@ Here is a list of currently supported and unsupported but possible future featur
 ### HDFS Operations
 - [x] Listing
 - [x] Reading
-- [ ] Writing
+- [x] Writing
 - [x] Rename
 - [x] Delete
 
