@@ -202,8 +202,6 @@ impl BlockWriter {
     }
 
     async fn send_current_packet(&mut self) -> Result<()> {
-        self.bytes_written += self.current_packet.data_size();
-
         // Queue up the sequence number for acknowledgement
         self.queue_ack().await?;
 
@@ -242,7 +240,12 @@ impl BlockWriter {
         let mut buf_to_write = buf.split_to(bytes_to_write);
 
         while !buf_to_write.is_empty() {
+            let initial_buf_len = buf_to_write.len();
             self.current_packet.write(&mut buf_to_write);
+
+            // Track how many bytes are written to this block
+            self.bytes_written += initial_buf_len - buf_to_write.len();
+
             if self.current_packet.is_full() {
                 self.send_current_packet().await?;
             }

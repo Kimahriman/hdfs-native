@@ -1,6 +1,6 @@
 pub(crate) mod minidfs;
 
-use bytes::Bytes;
+use bytes::{BufMut, BytesMut};
 use hdfs_native::client::WriteOptions;
 #[cfg(feature = "object_store")]
 use hdfs_native::object_store::HdfsObjectStore;
@@ -192,32 +192,30 @@ async fn test_write(client: &Client) -> Result<()> {
     // Overwrite now
     write_options.overwrite = true;
 
-    // Create a small file
-    let mut writer = client.create("/newfile", write_options.clone()).await?;
+    // Check a small files, a file that is exactly one block, and a file slightly bigger than a block
+    for size_to_check in [16i32, 128 * 1024 * 1024, 130 * 1024 * 1024] {
+        let ints_to_write = size_to_check / 4;
 
-    let data = Bytes::from(vec![0u8, 1, 2, 3]);
-    writer.write(data.clone()).await?;
-    writer.close().await?;
+        let mut writer = client.create("/newfile", write_options.clone()).await?;
 
-    assert_eq!(client.get_file_info("/newfile").await?.length, 4);
+        let mut data = BytesMut::with_capacity(size_to_check as usize);
+        for i in 0..ints_to_write {
+            data.put_i32(i);
+        }
 
-    let mut reader = client.read("/newfile").await?;
-    assert_eq!(data, reader.read(reader.file_length()).await?);
+        let buf = data.freeze();
 
-    // Create a file of exactly one block
-    let mut writer = client.create("/newfile", write_options.clone()).await?;
+        writer.write(buf.clone()).await?;
+        writer.close().await?;
 
-    let block_ints = 128 * 1024 * 1024 / 4;
-    for i in 0..block_ints as i32 {
-        let bytes = i.to_be_bytes().to_vec();
-        writer.write(Bytes::from(bytes)).await?;
+        assert_eq!(
+            client.get_file_info("/newfile").await?.length,
+            size_to_check as usize
+        );
+
+        let mut reader = client.read("/newfile").await?;
+        assert_eq!(buf, reader.read(reader.file_length()).await?);
     }
-    writer.close().await?;
-
-    assert_eq!(
-        client.get_file_info("/newfile").await?.length,
-        128 * 1024 * 1024
-    );
 
     assert!(client.delete("/newfile", false).await.is_ok_and(|r| r));
 
