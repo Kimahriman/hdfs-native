@@ -1,8 +1,10 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use ::hdfs_native::file::FileReader;
+use ::hdfs_native::file::{FileReader, FileWriter};
+use ::hdfs_native::WriteOptions;
 use ::hdfs_native::{client::FileStatus, Client};
+use bytes::Bytes;
 use log::LevelFilter;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use tokio::runtime::Runtime;
@@ -65,6 +67,66 @@ impl PyFileReader {
     }
 }
 
+#[pyclass(get_all, set_all, name = "WriteOptions")]
+#[derive(Clone)]
+struct PyWriteOptions {
+    block_size: Option<u64>,
+    replication: Option<u32>,
+    permission: u32,
+    overwrite: bool,
+    create_parent: bool,
+}
+
+impl From<PyWriteOptions> for WriteOptions {
+    fn from(value: PyWriteOptions) -> Self {
+        Self {
+            block_size: value.block_size,
+            replication: value.replication,
+            permission: value.permission,
+            overwrite: value.overwrite,
+            create_parent: value.create_parent,
+        }
+    }
+}
+
+impl From<WriteOptions> for PyWriteOptions {
+    fn from(value: WriteOptions) -> Self {
+        Self {
+            block_size: value.block_size,
+            replication: value.replication,
+            permission: value.permission,
+            overwrite: value.overwrite,
+            create_parent: value.create_parent,
+        }
+    }
+}
+
+#[pymethods]
+impl PyWriteOptions {
+    #[new]
+    #[pyo3(signature = ())]
+    pub fn new() -> Self {
+        Self::from(WriteOptions::default())
+    }
+}
+
+#[pyclass(name = "FileWriter")]
+struct PyFileWriter {
+    inner: FileWriter,
+    rt: Arc<Runtime>,
+}
+
+#[pymethods]
+impl PyFileWriter {
+    pub fn write(&mut self, buf: Vec<u8>) -> PyHdfsResult<()> {
+        Ok(self.rt.block_on(self.inner.write(Bytes::from(buf)))?)
+    }
+
+    pub fn close(&mut self) -> PyHdfsResult<()> {
+        Ok(self.rt.block_on(self.inner.close())?)
+    }
+}
+
 #[pyclass(name = "Client")]
 struct PyClient {
     inner: Client,
@@ -115,6 +177,17 @@ impl PyClient {
         })
     }
 
+    pub fn create(&self, src: &str, write_options: PyWriteOptions) -> PyHdfsResult<PyFileWriter> {
+        let file_writer = self
+            .rt
+            .block_on(self.inner.create(src, WriteOptions::from(write_options)))?;
+
+        Ok(PyFileWriter {
+            inner: file_writer,
+            rt: Arc::clone(&self.rt),
+        })
+    }
+
     pub fn mkdirs(&self, path: &str, permission: u32, create_parent: bool) -> PyHdfsResult<()> {
         Ok(self
             .rt
@@ -134,5 +207,6 @@ impl PyClient {
 #[pymodule]
 fn hdfs_native(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyClient>()?;
+    m.add_class::<PyWriteOptions>()?;
     Ok(())
 }

@@ -9,6 +9,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use crc::{Crc, CRC_32_ISCSI};
 use log::{debug, error, warn};
 use prost::Message;
+use socket2::SockRef;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, oneshot};
 use tokio::{
@@ -31,6 +32,17 @@ const PROTOCOL: &'static str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
 const DATA_TRANSFER_VERSION: u16 = 28;
 
 const CASTAGNOLI: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
+
+// Connect to a remote host and return a TcpStream with standard options we want
+async fn connect(addr: &str) -> Result<TcpStream> {
+    let stream = TcpStream::connect(addr).await?;
+    stream.set_nodelay(true)?;
+
+    let sf = SockRef::from(&stream);
+    sf.set_keepalive(true)?;
+
+    Ok(stream)
+}
 
 #[derive(Debug)]
 pub(crate) struct AlignmentContext {
@@ -70,7 +82,7 @@ impl RpcConnection {
         let next_call_id = AtomicI32::new(0);
         let call_map = Arc::new(Mutex::new(HashMap::new()));
 
-        let mut stream = TcpStream::connect(url).await?;
+        let mut stream = connect(url).await?;
         stream.write("hrpc".as_bytes()).await?;
         // Current version
         stream.write(&[9u8]).await?;
@@ -394,10 +406,6 @@ impl Packet {
             .put(buf.split_to(usize::min(self.max_data_size - self.data.len(), buf.len())));
     }
 
-    pub(crate) fn data_size(&self) -> usize {
-        self.data.len()
-    }
-
     pub(crate) fn is_full(&self) -> bool {
         self.data.len() == self.max_data_size
     }
@@ -431,8 +439,8 @@ pub(crate) struct DatanodeConnection {
 }
 
 impl DatanodeConnection {
-    pub(crate) async fn connect(url: String) -> Result<Self> {
-        let stream = TcpStream::connect(url).await?;
+    pub(crate) async fn connect(url: &str) -> Result<Self> {
+        let stream = connect(&url).await?;
 
         let (reader, writer) = stream.into_split();
 

@@ -500,6 +500,7 @@ dependencies = [
  "prost-build",
  "prost-types",
  "roxmltree",
+ "socket2 0.5.3",
  "tempfile",
  "thiserror",
  "tokio",
@@ -513,6 +514,7 @@ dependencies = [
 name = "hdfs-native-python"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "env_logger 0.10.0",
  "hdfs-native",
  "log",
@@ -1180,6 +1182,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "socket2"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2538b18701741680e0322a2302176d3253a35388e2e62f172f64f4f16605f877"
+dependencies = [
+ "libc",
+ "windows-sys",
+]
+
+[[package]]
 name = "strsim"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1303,7 +1315,7 @@ dependencies = [
  "mio",
  "num_cpus",
  "pin-project-lite",
- "socket2",
+ "socket2 0.4.9",
  "tokio-macros",
  "windows-sys",
 ]

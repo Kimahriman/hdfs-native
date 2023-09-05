@@ -53,7 +53,7 @@ impl BlockReader {
         mut buf: &mut [u8],
     ) -> Result<()> {
         let mut conn =
-            DatanodeConnection::connect(format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
+            DatanodeConnection::connect(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
                 .await?;
 
         let mut message = hdfs::OpReadBlockProto::default();
@@ -117,7 +117,7 @@ impl BlockWriter {
     ) -> Result<Self> {
         let datanode = &block.locs[0].id;
         let mut connection =
-            DatanodeConnection::connect(format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
+            DatanodeConnection::connect(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
                 .await?;
 
         let mut message = hdfs::OpWriteBlockProto::default();
