@@ -83,13 +83,13 @@ impl RpcConnection {
         let call_map = Arc::new(Mutex::new(HashMap::new()));
 
         let mut stream = connect(url).await?;
-        stream.write("hrpc".as_bytes()).await?;
+        stream.write_all("hrpc".as_bytes()).await?;
         // Current version
-        stream.write(&[9u8]).await?;
+        stream.write_all(&[9u8]).await?;
         // Service class
-        stream.write(&[0u8]).await?;
+        stream.write_all(&[0u8]).await?;
         // Auth protocol
-        stream.write(&(-33i8).to_be_bytes()).await?;
+        stream.write_all(&(-33i8).to_be_bytes()).await?;
 
         let mut client = SaslRpcClient::create(stream);
 
@@ -464,11 +464,11 @@ impl DatanodeConnection {
 
     pub(crate) async fn send(&mut self, op: Op, message: &impl Message) -> Result<()> {
         self.writer
-            .write(&DATA_TRANSFER_VERSION.to_be_bytes())
+            .write_all(&DATA_TRANSFER_VERSION.to_be_bytes())
             .await?;
-        self.writer.write(&[op.value()]).await?;
+        self.writer.write_all(&[op.value()]).await?;
         self.writer
-            .write(&message.encode_length_delimited_to_vec())
+            .write_all(&message.encode_length_delimited_to_vec())
             .await?;
         self.writer.flush().await?;
         Ok(())
@@ -545,9 +545,9 @@ impl DatanodeConnection {
 
         self.writer.write_u32(payload_len).await?;
         self.writer.write_u16(header_encoded.len() as u16).await?;
-        self.writer.write(&header.encode_to_vec()).await?;
-        self.writer.write(&checksum).await?;
-        self.writer.write(&data).await?;
+        self.writer.write_all(&header.encode_to_vec()).await?;
+        self.writer.write_all(&checksum).await?;
+        self.writer.write_all(&data).await?;
         self.writer.flush().await?;
 
         Ok(())
