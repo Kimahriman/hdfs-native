@@ -45,20 +45,20 @@ fn setup(features: &HashSet<DfsFeatures>) -> MiniDfs {
             "HADOOP_OPTS",
             &format!("-Djava.security.krb5.conf={}", krb_conf),
         );
-    }
 
-    // If we testing token auth, set the path to the file and make sure we don't have an old kinit, otherwise kinit
-    if features.contains(&DfsFeatures::TOKEN) {
-        env::set_var("HADOOP_TOKEN_FILE_LOCATION", "target/test/delegation_token");
-    } else {
-        let kinit_exec = which("kinit").expect("Failed to find kinit executable");
-        env::set_var("KRB5CCNAME", "FILE:target/test/krbcache");
-        Command::new(kinit_exec)
-            .args(["-kt", "target/test/hdfs.keytab", "hdfs/localhost"])
-            .spawn()
-            .unwrap()
-            .wait()
-            .unwrap();
+        // If we testing token auth, set the path to the file and make sure we don't have an old kinit, otherwise kinit
+        if features.contains(&DfsFeatures::TOKEN) {
+            env::set_var("HADOOP_TOKEN_FILE_LOCATION", "target/test/delegation_token");
+        } else {
+            let kinit_exec = which("kinit").expect("Failed to find kinit executable");
+            env::set_var("KRB5CCNAME", "FILE:target/test/krbcache");
+            Command::new(kinit_exec)
+                .args(["-kt", "target/test/hdfs.keytab", "hdfs/localhost"])
+                .spawn()
+                .unwrap()
+                .wait()
+                .unwrap();
+        }
     }
 
     let mut file = NamedTempFile::new_in("target/test").unwrap();
