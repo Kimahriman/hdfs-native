@@ -37,7 +37,7 @@ class FileWriter:
         """Closes the file and saves the final metadata to the NameNode"""
 
 class Client:
-    def __init__(url: str) -> Client:
+    def __init__(self, url: str) -> Client:
         """Creates a new Client for the NameNode or Name Service defined by `url`"""
 
     def get_file_info(self, path: str) -> FileStatus:
@@ -48,6 +48,9 @@ class Client:
 
     def read(self, path: str) -> FileReader:
         """Opens a file for reading at `path`"""
+
+    def create(self, path: str, write_options: WriteOptions) -> FileWriter:
+        """Creates a new file and opens it for writing at `path`"""
 
     def mkdirs(self, path: str, permission: int, create_parent: bool) -> None:
         """
