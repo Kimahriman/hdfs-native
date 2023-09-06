@@ -414,16 +414,22 @@ impl Packet {
         self.data.is_empty()
     }
 
-    fn generate_checksums(&mut self) {
+    fn finalize(&mut self) -> (hdfs::PacketHeaderProto, Bytes, Bytes) {
+        let data = self.data.split().freeze();
+
         let mut chunk_start = 0;
-        while chunk_start < self.data.len() {
-            let chunk_end = usize::min(chunk_start + self.bytes_per_checksum, self.data.len());
-            let chunk = &self.data[chunk_start..chunk_end];
+        while chunk_start < data.len() {
+            let chunk_end = usize::min(chunk_start + self.bytes_per_checksum, data.len());
+            let chunk = &data[chunk_start..chunk_end];
             self.checksum.put_u32(CASTAGNOLI.checksum(chunk));
             chunk_start += self.bytes_per_checksum;
         }
 
-        self.header.data_len = self.data.len() as i32;
+        let checksum = self.checksum.split().freeze();
+
+        self.header.data_len = data.len() as i32;
+
+        (self.header.clone(), checksum, data)
     }
 
     pub(crate) fn get_data(self) -> Bytes {
@@ -521,16 +527,16 @@ impl DatanodeConnection {
 
     /// Create a buffer to send to the datanode
     pub(crate) async fn write_packet(&mut self, packet: &mut Packet) -> Result<()> {
-        packet.generate_checksums();
+        let (header, checksum, data) = packet.finalize();
 
-        let payload_len = (packet.checksum.len() + packet.data.len() + 4) as u32;
-        let header_len = packet.header.encoded_len() as u16;
+        let payload_len = (checksum.len() + data.len() + 4) as u32;
+        let header_len = header.encoded_len() as u16;
 
         self.writer.write_u32(payload_len).await?;
         self.writer.write_u16(header_len).await?;
-        self.writer.write(&packet.header.encode_to_vec()).await?;
-        self.writer.write(&packet.checksum).await?;
-        self.writer.write(&packet.data).await?;
+        self.writer.write(&header.encode_to_vec()).await?;
+        self.writer.write(&checksum).await?;
+        self.writer.write(&data).await?;
         self.writer.flush().await?;
 
         Ok(())
