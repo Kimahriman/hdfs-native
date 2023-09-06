@@ -142,7 +142,7 @@ impl BlockWriter {
 
         connection.send(Op::WriteBlock, &message).await?;
         let response = connection.read_block_op_response().await?;
-        debug!("{:?}", response);
+        debug!("block write response: {:?}", response);
 
         // Channel for receiving acks from the datanode
         let (ack_response_sender, ack_response_receiver) =
@@ -337,8 +337,6 @@ impl BlockWriter {
                     )));
                     return;
                 }
-
-                debug!("Received ack for sequence number {}", seqno);
 
                 if last_packet {
                     let _ = status.send(Ok(()));
