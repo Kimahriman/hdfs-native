@@ -420,8 +420,12 @@ impl Packet {
         let mut chunk_start = 0;
         while chunk_start < data.len() {
             let chunk_end = usize::min(chunk_start + self.bytes_per_checksum, data.len());
-            let chunk = &data[chunk_start..chunk_end];
-            self.checksum.put_u32(CASTAGNOLI.checksum(chunk));
+            let chunk_checksum = CASTAGNOLI.checksum(&data[chunk_start..chunk_end]);
+            assert_eq!(
+                chunk_checksum,
+                CASTAGNOLI.checksum(&data[chunk_start..chunk_end])
+            );
+            self.checksum.put_u32(chunk_checksum);
             chunk_start += self.bytes_per_checksum;
         }
 
@@ -530,10 +534,17 @@ impl DatanodeConnection {
         let (header, checksum, data) = packet.finalize();
 
         let payload_len = (checksum.len() + data.len() + 4) as u32;
-        let header_len = header.encoded_len() as u16;
+        let header_encoded = header.encode_to_vec();
+
+        debug!(
+            "Sending packet {} with checksum length {} and data length {}",
+            header.seqno,
+            checksum.len(),
+            data.len()
+        );
 
         self.writer.write_u32(payload_len).await?;
-        self.writer.write_u16(header_len).await?;
+        self.writer.write_u16(header_encoded.len() as u16).await?;
         self.writer.write(&header.encode_to_vec()).await?;
         self.writer.write(&checksum).await?;
         self.writer.write(&data).await?;
