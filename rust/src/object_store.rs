@@ -37,7 +37,7 @@ impl ObjectStore for HdfsObjectStore {
     /// To make the operation atomic, we write to a temporary file ".{location}.tmp" and rename
     /// on a successful write.
     async fn put(&self, location: &Path, bytes: Bytes) -> Result<()> {
-        let filename = Self::make_absolute_file(location);
+        let filename = make_absolute_file(location);
         let tmp_filename = format!(".{}.tmp", filename);
 
         // First we need to check if the tmp file exists so we know whether to overwrite
