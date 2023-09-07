@@ -245,6 +245,9 @@ async fn test_recursive_listing(client: &Client) -> Result<()> {
 
     let statuses = client.list_status("/dir", true).await?;
     assert_eq!(statuses.len(), 4);
+
+    client.delete("/dir", true).await?;
+
     Ok(())
 }
 

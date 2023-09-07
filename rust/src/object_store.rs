@@ -129,9 +129,6 @@ impl ObjectStore for HdfsObjectStore {
     ///
     /// Note: the order of returned [`ObjectMeta`] is not guaranteed
     async fn list(&self, prefix: Option<&Path>) -> Result<BoxStream<'_, Result<ObjectMeta>>> {
-        // We need to clone the prefix so we can move it into the closure below, since the stream is lazy
-        // and persists outside this function.
-        let prefix_clone = prefix.map(|x| x.clone());
         let status_stream = self
             .client
             .list_status_iter(
@@ -149,7 +146,7 @@ impl ObjectStore for HdfsObjectStore {
                 future::ready(result)
             })
             .map(move |res| {
-                res.map(|s| create_object_meta(&s, prefix_clone.as_ref()))
+                res.map(|s| create_object_meta(&s))
                     .map_err(|err| object_store::Error::from(err))
             });
 
@@ -183,7 +180,7 @@ impl ObjectStore for HdfsObjectStore {
         let files: Vec<ObjectMeta> = statuses
             .iter()
             .filter(|s| !s.isdir)
-            .map(|s| create_object_meta(s, prefix))
+            .map(|s| create_object_meta(s))
             .collect();
 
         Ok(ListResult {
@@ -249,16 +246,9 @@ fn make_absolute_dir(path: &Path) -> String {
     format!("/{}/", path.as_ref())
 }
 
-fn join_paths(left: &Path, right: &Path) -> Path {
-    left.parts().chain(right.parts()).into_iter().collect()
-}
-
-fn create_object_meta(status: &FileStatus, base_path: Option<&Path>) -> ObjectMeta {
+fn create_object_meta(status: &FileStatus) -> ObjectMeta {
     ObjectMeta {
-        location: join_paths(
-            base_path.unwrap_or(&Path::default()),
-            &Path::from(status.path.as_ref()),
-        ),
+        location: Path::from(status.path.clone()),
         last_modified: DateTime::<Utc>::from_utc(
             NaiveDateTime::from_timestamp_opt(status.modification_time as i64, 0).unwrap(),
             Utc,
