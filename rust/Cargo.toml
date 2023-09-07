@@ -34,7 +34,7 @@ uuid = { version = "1", features = ["v4"] }
 
 [build-dependencies]
 prost-build = { version = "0.11" }
-protobuf-src = "1.1"
+protobuf-src = { version = "1.1", optional = true }
 
 [dev-dependencies]
 env_logger = "0.10"
@@ -44,4 +44,5 @@ which = "4"
 [features]
 kerberos = ["libgssapi"]
 object_store = ["dep:object_store", "async-trait", "chrono"]
+protobuf_vendored = ["protobuf-src"]
 token = ["gsasl-sys"]

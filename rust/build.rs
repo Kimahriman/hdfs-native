@@ -1,8 +1,12 @@
-use protobuf_src;
 use std::io::Result;
 
+#[cfg(feature = "protobuf_vendored")]
+use protobuf_src;
+
 fn main() -> Result<()> {
+    #[cfg(feature = "protobuf_vendored")]
     std::env::set_var("PROTOC", protobuf_src::protoc());
+
     prost_build::compile_protos(
         &[
             "src/proto/hdfs/ClientNamenodeProtocol.proto",
