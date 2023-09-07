@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 
 class FileStatus:
@@ -22,8 +22,22 @@ class FileReader:
     def read_range(self, offset: int, len: int) -> bytes:
         """Read `len` bytes from the file starting at `offset`. Doesn't affect the position in the file"""
 
+class WriteOptions:
+    block_size: Optional[int]
+    replication: Optional[int]
+    permission: int
+    overwrite: bool
+    create_parent: bool
+
+class FileWriter:
+    def write(self, buf: bytes) -> None:
+        """Writes `buf` to the file"""
+
+    def close(self) -> None:
+        """Closes the file and saves the final metadata to the NameNode"""
+
 class Client:
-    def __init__(url: str) -> Client:
+    def __init__(self, url: str) -> Client:
         """Creates a new Client for the NameNode or Name Service defined by `url`"""
 
     def get_file_info(self, path: str) -> FileStatus:
@@ -34,6 +48,9 @@ class Client:
 
     def read(self, path: str) -> FileReader:
         """Opens a file for reading at `path`"""
+
+    def create(self, path: str, write_options: WriteOptions) -> FileWriter:
+        """Creates a new file and opens it for writing at `path`"""
 
     def mkdirs(self, path: str, permission: int, create_parent: bool) -> None:
         """

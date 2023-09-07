@@ -37,7 +37,7 @@ jobs:
           sccache: 'true'
           container: quay.io/pypa/manylinux_2_28_${{ matrix.target }}:latest
           before-script-linux:
-            yum install -y epel-release && yum install -y protobuf-compiler krb5-devel libgsasl-devel clang
+            yum install -y epel-release && yum install -y krb5-devel libgsasl-devel clang
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
@@ -76,7 +76,7 @@ jobs:
       - uses: actions/checkout@v3
       - name: Install native libs
         run:
-          brew install protobuf krb5 gsasl
+          brew install krb5 gsasl
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:

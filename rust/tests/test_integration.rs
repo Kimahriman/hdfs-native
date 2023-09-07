@@ -71,7 +71,6 @@ async fn test_security_privacy_ha() {
 }
 
 #[tokio::test]
-#[ignore]
 #[cfg(feature = "token")]
 async fn test_security_token_ha() {
     test_with_features(&HashSet::from([

@@ -1,5 +1,7 @@
 pub(crate) mod minidfs;
 
+use bytes::{BufMut, BytesMut};
+use hdfs_native::client::WriteOptions;
 #[cfg(feature = "object_store")]
 use hdfs_native::object_store::HdfsObjectStore;
 use hdfs_native::{client::Client, Result};
@@ -43,20 +45,20 @@ fn setup(features: &HashSet<DfsFeatures>) -> MiniDfs {
             "HADOOP_OPTS",
             &format!("-Djava.security.krb5.conf={}", krb_conf),
         );
-    }
 
-    // If we testing token auth, set the path to the file and make sure we don't have an old kinit, otherwise kinit
-    if features.contains(&DfsFeatures::TOKEN) {
-        env::set_var("HADOOP_TOKEN_FILE_LOCATION", "target/test/delegation_token");
-    } else {
-        let kinit_exec = which("kinit").expect("Failed to find kinit executable");
-        env::set_var("KRB5CCNAME", "FILE:target/test/krbcache");
-        Command::new(kinit_exec)
-            .args(["-kt", "target/test/hdfs.keytab", "hdfs/localhost"])
-            .spawn()
-            .unwrap()
-            .wait()
-            .unwrap();
+        // If we testing token auth, set the path to the file and make sure we don't have an old kinit, otherwise kinit
+        if features.contains(&DfsFeatures::TOKEN) {
+            env::set_var("HADOOP_TOKEN_FILE_LOCATION", "target/test/delegation_token");
+        } else {
+            let kinit_exec = which("kinit").expect("Failed to find kinit executable");
+            env::set_var("KRB5CCNAME", "FILE:target/test/krbcache");
+            Command::new(kinit_exec)
+                .args(["-kt", "target/test/hdfs.keytab", "hdfs/localhost"])
+                .spawn()
+                .unwrap()
+                .wait()
+                .unwrap();
+        }
     }
 
     let mut file = NamedTempFile::new_in("target/test").unwrap();
@@ -95,6 +97,7 @@ pub(crate) async fn test_with_features(features: &HashSet<DfsFeatures>) -> Resul
     test_read(&client).await?;
     test_rename(&client).await?;
     test_dirs(&client).await?;
+    test_write(&client).await?;
 
     #[cfg(feature = "object_store")]
     test_object_store(client).await.unwrap();
@@ -172,6 +175,49 @@ async fn test_dirs(client: &Client) -> Result<()> {
     // Deleting non-empty dir without recursive fails
     assert!(client.delete("/testdir1", false).await.is_err());
     assert!(client.delete("/testdir1", true).await.is_ok_and(|r| r));
+
+    Ok(())
+}
+
+async fn test_write(client: &Client) -> Result<()> {
+    let mut write_options = WriteOptions::default();
+
+    // Create an empty file
+    let mut writer = client.create("/newfile", write_options.clone()).await?;
+
+    writer.close().await?;
+
+    assert_eq!(client.get_file_info("/newfile").await?.length, 0);
+
+    // Overwrite now
+    write_options.overwrite = true;
+
+    // Check a small files, a file that is exactly one block, and a file slightly bigger than a block
+    for size_to_check in [16i32, 128 * 1024 * 1024, 130 * 1024 * 1024] {
+        let ints_to_write = size_to_check / 4;
+
+        let mut writer = client.create("/newfile", write_options.clone()).await?;
+
+        let mut data = BytesMut::with_capacity(size_to_check as usize);
+        for i in 0..ints_to_write {
+            data.put_i32(i);
+        }
+
+        let buf = data.freeze();
+
+        writer.write(buf.clone()).await?;
+        writer.close().await?;
+
+        assert_eq!(
+            client.get_file_info("/newfile").await?.length,
+            size_to_check as usize
+        );
+
+        let mut reader = client.read("/newfile").await?;
+        assert_eq!(buf, reader.read(reader.file_length()).await?);
+    }
+
+    assert!(client.delete("/newfile", false).await.is_ok_and(|r| r));
 
     Ok(())
 }

@@ -32,5 +32,6 @@ pub(crate) mod security;
 pub mod object_store;
 
 pub use client::Client;
+pub use client::WriteOptions;
 pub use error::HdfsError;
 pub use error::Result;

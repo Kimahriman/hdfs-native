@@ -4,9 +4,9 @@ on:
   push:
     branches:
       - '*'
-  pull_request:
-    branches:
-      - "*"
+  # pull_request:
+  #   branches:
+  #     - "*"
 
 jobs:
   test:
@@ -20,4 +20,4 @@ jobs:
           sccache: 'true'
           manylinux: '2_28'
           before-script-linux:
-            yum install -y epel-release && yum install -y protobuf-compiler krb5-devel libgsasl-devel clang
+            yum install -y epel-release && yum install -y krb5-devel libgsasl-devel clang

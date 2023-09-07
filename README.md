@@ -9,7 +9,7 @@ Here is a list of currently supported and unsupported but possible future featur
 ### HDFS Operations
 - [x] Listing
 - [x] Reading
-- [ ] Writing
+- [x] Writing
 - [x] Rename
 - [x] Delete
 
@@ -36,7 +36,7 @@ Here is a list of currently supported and unsupported but possible future featur
 
 ### Mac
 ```
-brew install protobuf gsasl krb5
+brew install gsasl krb5
 # You might need these env vars on newer Macs
 export BINDGEN_EXTRA_CLANG_ARGS="-I/opt/homebrew/include"
 export LIBRARY_PATH=/opt/homebrew/lib
@@ -45,7 +45,7 @@ cargo build --all-features
 
 ### Ubuntu
 ```
-apt-get install clang protobuf-compiler libkrb5-dev libgsasl-dev
+apt-get install clang libkrb5-dev libgsasl-dev
 cargo build --all-features
 ```
 

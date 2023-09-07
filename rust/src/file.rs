@@ -1,11 +1,14 @@
+use std::sync::Arc;
+
 use bytes::{Bytes, BytesMut};
 use futures::future::join_all;
 use log::debug;
 
+use crate::hdfs::protocol::NamenodeProtocol;
 use crate::proto::hdfs;
 use crate::Result;
 
-use crate::hdfs::datanode::BlockReader;
+use crate::hdfs::datanode::{BlockReader, BlockWriter};
 
 pub struct FileReader {
     located_blocks: hdfs::LocatedBlocksProto,
@@ -107,5 +110,99 @@ impl FileReader {
                 }
             })
             .collect()
+    }
+}
+
+pub struct FileWriter {
+    src: String,
+    protocol: Arc<NamenodeProtocol>,
+    status: hdfs::HdfsFileStatusProto,
+    server_defaults: hdfs::FsServerDefaultsProto,
+    block_writer: Option<BlockWriter>,
+    closed: bool,
+    bytes_written: usize,
+}
+
+impl FileWriter {
+    pub(crate) fn new(
+        protocol: Arc<NamenodeProtocol>,
+        src: String,
+        status: hdfs::HdfsFileStatusProto,
+        server_defaults: hdfs::FsServerDefaultsProto,
+    ) -> Self {
+        Self {
+            protocol,
+            src,
+            status,
+            server_defaults,
+            block_writer: None,
+            closed: false,
+            bytes_written: 0,
+        }
+    }
+
+    async fn create_block_writer(&self) -> Result<BlockWriter> {
+        let new_block = self
+            .protocol
+            .add_block(
+                &self.src,
+                self.block_writer.as_ref().map(|b| b.get_extended_block()),
+                self.status.file_id,
+            )
+            .await?;
+
+        Ok(BlockWriter::new(
+            new_block.block,
+            self.status.blocksize() as usize,
+            self.server_defaults.clone(),
+        )
+        .await?)
+    }
+
+    async fn get_block_writer(&mut self) -> Result<&mut BlockWriter> {
+        // If the current writer is full, close it
+        if let Some(block_writer) = self.block_writer.as_mut() {
+            if block_writer.is_full() {
+                block_writer.close().await?;
+                self.block_writer = Some(self.create_block_writer().await?);
+            }
+        }
+
+        // If we haven't created a writer yet, create one
+        if self.block_writer.is_none() {
+            self.block_writer = Some(self.create_block_writer().await?);
+        }
+
+        Ok(self.block_writer.as_mut().unwrap())
+    }
+
+    pub async fn write(&mut self, mut buf: Bytes) -> Result<()> {
+        // Create a shallow copy of the bytes instance to mutate and track what's been read
+        while !buf.is_empty() {
+            let block_writer = self.get_block_writer().await?;
+
+            block_writer.write(&mut buf).await?;
+        }
+
+        self.bytes_written += buf.len();
+
+        Ok(())
+    }
+
+    pub async fn close(&mut self) -> Result<()> {
+        if !self.closed {
+            if let Some(block_writer) = self.block_writer.as_mut() {
+                block_writer.close().await?;
+            }
+            self.protocol
+                .complete(
+                    &self.src,
+                    self.block_writer.as_ref().map(|b| b.get_extended_block()),
+                    self.status.file_id,
+                )
+                .await?;
+            self.closed = true;
+        }
+        Ok(())
     }
 }

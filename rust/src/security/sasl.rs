@@ -343,15 +343,15 @@ impl SaslWriter {
         let message_buf = message.encode_length_delimited_to_vec();
         let size = (header_buf.len() + message_buf.len()) as u32;
 
-        self.stream.write(&size.to_be_bytes()).await?;
-        self.stream.write(&header_buf).await?;
-        self.stream.write(&message_buf).await?;
+        self.stream.write_all(&size.to_be_bytes()).await?;
+        self.stream.write_all(&header_buf).await?;
+        self.stream.write_all(&message_buf).await?;
         self.stream.flush().await?;
 
         Ok(())
     }
 
-    pub(crate) async fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    pub(crate) async fn write(&mut self, buf: &[u8]) -> io::Result<()> {
         if self.session.is_some() {
             let mut rpc_sasl = RpcSaslProto::default();
             rpc_sasl.state = SaslState::Wrap as i32;
@@ -369,10 +369,10 @@ impl SaslWriter {
             rpc_sasl.token = Some(encoded);
 
             self.send_sasl_message(&rpc_sasl).await?;
-            Ok(buf.len())
         } else {
-            self.stream.write(buf).await
+            self.stream.write_all(buf).await?
         }
+        Ok(())
     }
 }
 

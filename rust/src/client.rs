@@ -8,12 +8,38 @@ use url::Url;
 
 use crate::common::config::Configuration;
 use crate::error::{HdfsError, Result};
-use crate::file::FileReader;
+use crate::file::{FileReader, FileWriter};
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
 
 use crate::proto::hdfs::HdfsFileStatusProto;
+
+#[derive(Clone)]
+pub struct WriteOptions {
+    // Block size. Default is retrieved from the server.
+    pub block_size: Option<u64>,
+    // Replication factor. Default is retrieved from the server.
+    pub replication: Option<u32>,
+    // Unix file permission, defaults to 755
+    pub permission: u32,
+    // Whether to overwrite the file, defaults to false
+    pub overwrite: bool,
+    // Whether to create any missing parent directories, defaults to true
+    pub create_parent: bool,
+}
+
+impl Default for WriteOptions {
+    fn default() -> Self {
+        Self {
+            block_size: None,
+            replication: None,
+            permission: 0o755,
+            overwrite: false,
+            create_parent: true,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Client {
@@ -97,6 +123,48 @@ impl Client {
                 }
             }
             None => Err(HdfsError::FileNotFound(path.to_string())),
+        }
+    }
+
+    pub async fn create(&self, src: &str, write_options: WriteOptions) -> Result<FileWriter> {
+        let server_defaults = self.protocol.get_server_defaults().await?.server_defaults;
+
+        let block_size = write_options
+            .block_size
+            .unwrap_or(server_defaults.block_size);
+        let replication = write_options
+            .replication
+            .unwrap_or(server_defaults.replication);
+
+        let create_response = self
+            .protocol
+            .create(
+                src,
+                write_options.permission,
+                write_options.overwrite,
+                write_options.create_parent,
+                replication,
+                block_size,
+            )
+            .await?;
+
+        match create_response.fs {
+            Some(status) => {
+                if status.ec_policy.is_some() {
+                    return Err(HdfsError::UnsupportedFeature("Erasure coding".to_string()));
+                }
+                if status.file_encryption_info.is_some() {
+                    return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
+                }
+
+                Ok(FileWriter::new(
+                    Arc::clone(&self.protocol),
+                    src.to_string(),
+                    status,
+                    server_defaults,
+                ))
+            }
+            None => Err(HdfsError::FileNotFound(src.to_string())),
         }
     }
 

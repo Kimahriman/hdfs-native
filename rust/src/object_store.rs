@@ -3,7 +3,7 @@ use std::{
     future,
 };
 
-use crate::{client::FileStatus, Client, HdfsError};
+use crate::{client::FileStatus, Client, HdfsError, WriteOptions};
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -34,25 +34,33 @@ impl Display for HdfsObjectStore {
 impl ObjectStore for HdfsObjectStore {
     /// Save the provided bytes to the specified location
     ///
-    /// The operation is guaranteed to be atomic, it will either successfully
-    /// write the entirety of `bytes` to `location`, or fail. No clients
-    /// should be able to observe a partially written object
-    async fn put(&self, _location: &Path, _bytes: Bytes) -> Result<()> {
-        Err(object_store::Error::NotImplemented)
+    /// To make the operation atomic, we write to a temporary file ".{location}.tmp" and rename
+    /// on a successful write.
+    async fn put(&self, location: &Path, bytes: Bytes) -> Result<()> {
+        let filename = Self::make_absolute_file(location);
+        let tmp_filename = format!(".{}.tmp", filename);
+
+        // First we need to check if the tmp file exists so we know whether to overwrite
+        let overwrite = match self.client.get_file_info(&tmp_filename).await {
+            Ok(_) => true,
+            Err(HdfsError::FileNotFound(_)) => false,
+            Err(e) => Err(e)?,
+        };
+
+        let mut write_options = WriteOptions::default();
+        write_options.overwrite = overwrite;
+
+        let mut writer = self.client.create(&tmp_filename, write_options).await?;
+        writer.write(bytes).await?;
+        writer.close().await?;
+
+        self.client.rename(&tmp_filename, &filename, true).await?;
+
+        Ok(())
     }
 
-    /// Get a multi-part upload that allows writing data in chunks
-    ///
-    /// Most cloud-based uploads will buffer and upload parts in parallel.
-    ///
-    /// To complete the upload, [AsyncWrite::poll_shutdown] must be called
-    /// to completion. This operation is guaranteed to be atomic, it will either
-    /// make all the written data available at `location`, or fail. No clients
-    /// should be able to observe a partially written object
-    ///
-    /// For some object stores (S3, GCS, and local in particular), if the
-    /// writer fails or panics, you must call [ObjectStore::abort_multipart]
-    /// to clean up partially written data.
+    /// Currently not implemented. Once object_store is upgraded to 0.7, we can implement this
+    /// using the PutPart trait in the multipart mod that was made public.
     async fn put_multipart(
         &self,
         _location: &Path,
