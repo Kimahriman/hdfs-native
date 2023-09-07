@@ -17,7 +17,7 @@ bytes = "1"
 chrono = { version = "0.4", optional = true }
 crc = "3"
 futures = "0.3"
-gsasl-sys = { version = "0.2", default-features = true, optional = true }
+gsasl-sys = { version = "0.2", optional = true }
 libc = "0.2"
 libgssapi = { version = "0.6", default_features = false, optional = true }
 log = "0.4"
