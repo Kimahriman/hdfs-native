@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures::stream::BoxStream;
@@ -72,7 +73,7 @@ impl Client {
     /// Retrieve the file status for the file at `path`.
     pub async fn get_file_info(&self, path: &str) -> Result<FileStatus> {
         match self.protocol.get_file_info(path).await?.fs {
-            Some(status) => Ok(FileStatus::from(status)),
+            Some(status) => Ok(FileStatus::from(status, path)),
             None => Err(HdfsError::FileNotFound(path.to_string())),
         }
     }
@@ -249,7 +250,7 @@ impl DirListingIterator {
             }
         }
         if let Some(next) = self.partial_listing.pop_front() {
-            Some(Ok(FileStatus::from(next)))
+            Some(Ok(FileStatus::from(next, &self.path)))
         } else {
             None
         }
@@ -319,11 +320,21 @@ pub struct FileStatus {
     pub access_time: u64,
 }
 
-impl From<HdfsFileStatusProto> for FileStatus {
-    fn from(value: HdfsFileStatusProto) -> Self {
+impl FileStatus {
+    fn from(value: HdfsFileStatusProto, base_path: &str) -> Self {
+        let mut path = PathBuf::from(base_path);
+        if let Ok(relative_path) = std::str::from_utf8(&value.path) {
+            if relative_path.len() > 0 {
+                path.push(relative_path)
+            }
+        }
+
         FileStatus {
             isdir: value.file_type() == FileType::IsDir,
-            path: String::from_utf8(value.path).unwrap_or(String::new()),
+            path: path
+                .to_str()
+                .map(|x| x.to_string())
+                .unwrap_or(String::new()),
             length: value.length as usize,
             permission: value.permission.perm as u16,
             owner: value.owner,

@@ -98,6 +98,8 @@ pub(crate) async fn test_with_features(features: &HashSet<DfsFeatures>) -> Resul
     test_rename(&client).await?;
     test_dirs(&client).await?;
     test_write(&client).await?;
+    // We use writing to create files, so do this after
+    test_recursive_listing(&client).await?;
 
     #[cfg(feature = "object_store")]
     test_object_store(client).await.unwrap();
@@ -108,7 +110,7 @@ pub(crate) async fn test_with_features(features: &HashSet<DfsFeatures>) -> Resul
 async fn test_file_info(client: &Client) -> Result<()> {
     let status = client.get_file_info("/testfile").await?;
     // Path is empty, I guess because we already know what file we just got the info for?
-    assert_eq!(status.path, "");
+    assert_eq!(status.path, "/testfile");
     assert_eq!(status.length, TEST_FILE_INTS * 4);
     Ok(())
 }
@@ -117,7 +119,7 @@ async fn test_listing(client: &Client) -> Result<()> {
     let statuses = client.list_status("/", false).await?;
     assert_eq!(statuses.len(), 1);
     let status = &statuses[0];
-    assert_eq!(status.path, "testfile");
+    assert_eq!(status.path, "/testfile");
     assert_eq!(status.length, TEST_FILE_INTS * 4);
     Ok(())
 }
@@ -219,6 +221,30 @@ async fn test_write(client: &Client) -> Result<()> {
 
     assert!(client.delete("/newfile", false).await.is_ok_and(|r| r));
 
+    Ok(())
+}
+
+async fn test_recursive_listing(client: &Client) -> Result<()> {
+    let write_options = WriteOptions::default();
+    client.mkdirs("/dir/nested", 0o755, true).await?;
+    client
+        .create("/dir/file1", write_options.clone())
+        .await?
+        .close()
+        .await?;
+    client
+        .create("/dir/nested/file2", write_options.clone())
+        .await?
+        .close()
+        .await?;
+    client
+        .create("/dir/nested/file3", write_options.clone())
+        .await?
+        .close()
+        .await?;
+
+    let statuses = client.list_status("/dir", true).await?;
+    assert_eq!(statuses.len(), 4);
     Ok(())
 }
 
