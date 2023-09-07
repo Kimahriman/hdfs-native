@@ -2,8 +2,8 @@ name: python-release
 
 on:
   push:
-    branches:
-      - master
+    # branches:
+    #   - master
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
@@ -39,7 +39,7 @@ jobs:
           sccache: 'true'
           container: quay.io/pypa/manylinux_2_28_${{ matrix.target }}:latest
           before-script-linux:
-            yum install -y epel-release && yum install -y krb5-devel libgsasl-devel clang
+            yum install -y epel-release && yum install -y protobuf-compiler krb5-devel libgsasl-devel clang
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
