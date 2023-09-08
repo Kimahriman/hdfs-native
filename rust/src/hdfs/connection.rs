@@ -555,9 +555,14 @@ impl DatanodeConnection {
                     break;
                 }
                 if let Ok(ack) = next_ack {
-                    if let Err(error) = sender.send(ack).await {
-                        error!("Failed to send ack to receiver: {:?}", error);
-                        break;
+                    if let Some(ack_proto) = ack {
+                        if let Err(error) = sender.send(ack_proto).await {
+                            error!("Failed to send ack to receiver: {:?}", error);
+                            break;
+                        }
+                    } else {
+                        // Stream has been closed, return
+                        return;
                     }
                 }
             }
@@ -565,8 +570,16 @@ impl DatanodeConnection {
         Ok(())
     }
 
-    async fn read_ack(reader: &mut BufReader<OwnedReadHalf>) -> Result<hdfs::PipelineAckProto> {
+    async fn read_ack(
+        reader: &mut BufReader<OwnedReadHalf>,
+    ) -> Result<Option<hdfs::PipelineAckProto>> {
         let buf = reader.fill_buf().await?;
+
+        if buf.is_empty() {
+            // The stream has been closed
+            return Ok(None);
+        }
+
         let ack_length = prost::decode_length_delimiter(buf)?;
         let total_size = ack_length + prost::length_delimiter_len(ack_length);
 
@@ -574,6 +587,6 @@ impl DatanodeConnection {
         reader.read_exact(&mut response_buf).await?;
 
         let response = hdfs::PipelineAckProto::decode_length_delimited(response_buf.freeze())?;
-        Ok(response)
+        Ok(Some(response))
     }
 }

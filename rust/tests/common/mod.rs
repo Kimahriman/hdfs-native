@@ -216,7 +216,17 @@ async fn test_write(client: &Client) -> Result<()> {
         );
 
         let mut reader = client.read("/newfile").await?;
-        assert_eq!(buf, reader.read(reader.file_length()).await?);
+        let read_data = reader.read(reader.file_length()).await?;
+
+        assert_eq!(buf.len(), read_data.len());
+
+        for pos in 0..buf.len() {
+            assert_eq!(
+                buf[pos], read_data[pos],
+                "data is different as position {} for size {}",
+                pos, size_to_check
+            );
+        }
     }
 
     assert!(client.delete("/newfile", false).await.is_ok_and(|r| r));

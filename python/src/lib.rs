@@ -3,7 +3,10 @@ use std::sync::Arc;
 
 use ::hdfs_native::file::{FileReader, FileWriter};
 use ::hdfs_native::WriteOptions;
-use ::hdfs_native::{client::FileStatus, Client};
+use ::hdfs_native::{
+    client::{FileStatus, ListStatusIterator},
+    Client,
+};
 use bytes::Bytes;
 use log::LevelFilter;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
@@ -38,6 +41,29 @@ impl From<FileStatus> for PyFileStatus {
             group: value.group,
             modification_time: value.modification_time,
             access_time: value.access_time,
+        }
+    }
+}
+
+#[pyclass(name = "FileStatusIter")]
+struct PyFileStatusIter {
+    inner: ListStatusIterator,
+    rt: Arc<Runtime>,
+}
+
+#[pymethods]
+impl PyFileStatusIter {
+    pub fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyHdfsResult<Option<PyFileStatus>> {
+        // This is dumb, figure out how to get around the double borrow here
+        let rt = Arc::clone(&slf.rt);
+        if let Some(result) = rt.block_on(slf.inner.next()) {
+            Ok(Some(PyFileStatus::from(result?)))
+        } else {
+            Ok(None)
         }
     }
 }

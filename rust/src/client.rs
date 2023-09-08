@@ -257,7 +257,7 @@ impl DirListingIterator {
     }
 }
 
-struct ListStatusIterator {
+pub struct ListStatusIterator {
     protocol: Arc<NamenodeProtocol>,
     recursive: bool,
     iters: Vec<DirListingIterator>,
