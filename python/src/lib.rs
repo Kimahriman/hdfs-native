@@ -185,13 +185,12 @@ impl PyClient {
             .map(PyFileStatus::from)?)
     }
 
-    pub fn list_status(&self, path: &str, recursive: bool) -> PyHdfsResult<Vec<PyFileStatus>> {
-        Ok(self
-            .rt
-            .block_on(self.inner.list_status(path, recursive))?
-            .into_iter()
-            .map(PyFileStatus::from)
-            .collect())
+    pub fn list_status(&self, path: &str, recursive: bool) -> PyFileStatusIter {
+        let inner = self.inner.list_status_iter(path, recursive);
+        PyFileStatusIter {
+            inner,
+            rt: Arc::clone(&self.rt),
+        }
     }
 
     pub fn read(&self, path: &str) -> PyHdfsResult<PyFileReader> {

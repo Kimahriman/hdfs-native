@@ -137,6 +137,7 @@ impl ObjectStore for HdfsObjectStore {
                     .unwrap_or("".to_string()),
                 true,
             )
+            .into_stream()
             .filter(|res| {
                 let result = if let Ok(status) = res {
                     !status.isdir

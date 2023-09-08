@@ -81,8 +81,11 @@ impl Client {
     /// Retrives a list of all files in directories located at `path`. Wrapper around `list_status_iter` that
     /// returns Err if any part of the stream fails, or Ok if all file statuses were found successfully.
     pub async fn list_status(&self, path: &str, recursive: bool) -> Result<Vec<FileStatus>> {
-        let stream = self.list_status_iter(path, recursive);
-        let statuses = stream.collect::<Vec<Result<FileStatus>>>().await;
+        let iter = self.list_status_iter(path, recursive);
+        let statuses = iter
+            .into_stream()
+            .collect::<Vec<Result<FileStatus>>>()
+            .await;
 
         let mut resolved_statues = Vec::<FileStatus>::with_capacity(statuses.len());
         for status in statuses.into_iter() {
@@ -92,14 +95,9 @@ impl Client {
         Ok(resolved_statues)
     }
 
-    /// Retrives a stream of all files in directories located at `path`.
-    pub fn list_status_iter(&self, path: &str, recursive: bool) -> BoxStream<Result<FileStatus>> {
-        let iter = ListStatusIterator::new(path.to_string(), self.protocol.clone(), recursive);
-        let listing = stream::unfold(iter, |mut state| async move {
-            let next = state.next().await;
-            next.map(|n| (n, state))
-        });
-        Box::pin(listing)
+    /// Retrives an iterator of all files in directories located at `path`.
+    pub fn list_status_iter(&self, path: &str, recursive: bool) -> ListStatusIterator {
+        ListStatusIterator::new(path.to_string(), self.protocol.clone(), recursive)
     }
 
     /// Opens a file reader for the file at `path`. Path should not include a scheme.
@@ -305,6 +303,14 @@ impl ListStatusIterator {
         }
 
         next_file
+    }
+
+    pub fn into_stream(self) -> BoxStream<'static, Result<FileStatus>> {
+        let listing = stream::unfold(self, |mut state| async move {
+            let next = state.next().await;
+            next.map(|n| (n, state))
+        });
+        Box::pin(listing)
     }
 }
 
