@@ -37,9 +37,9 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
+          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml --features protobuf-vendored
           sccache: 'true'
-          container: quay.io/pypa/manylinux_2014_${{ matrix.target }}:latest
+          container: quay.io/pypa/manylinux2014_${{ matrix.target }}:latest
           before-script-linux:
             yum install -y epel-release && yum install -y krb5-devel libgsasl-devel llvm-toolchain-7.0
             scl enable llvm-toolchain-7.0 bash
