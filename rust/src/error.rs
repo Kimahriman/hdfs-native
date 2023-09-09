@@ -11,6 +11,10 @@ pub enum HdfsError {
     IOError(#[from] io::Error),
     #[error("data transfer error")]
     DataTransferError(String),
+    #[error("invalid path")]
+    InvalidPath(String),
+    #[error("operation failed")]
+    OperationFailed(String),
     #[error("file not found")]
     FileNotFound(String),
     #[error("blocks not found")]

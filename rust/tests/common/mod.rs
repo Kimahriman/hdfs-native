@@ -1,6 +1,6 @@
 pub(crate) mod minidfs;
 
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use hdfs_native::client::WriteOptions;
 #[cfg(feature = "object_store")]
 use hdfs_native::object_store::HdfsObjectStore;
@@ -269,6 +269,7 @@ async fn test_object_store(client: Client) -> object_store::Result<()> {
     test_object_store_list(&store).await?;
     test_object_store_rename(&store).await?;
     test_object_store_read(&store).await?;
+    test_object_store_write(&store).await?;
 
     Ok(())
 }
@@ -341,5 +342,49 @@ async fn test_object_store_read(store: &HdfsObjectStore) -> object_store::Result
     let mut dst = [0u8; 4];
     dst.copy_from_slice(&buf[..]);
     assert_eq!(i32::from_be_bytes(dst), TEST_FILE_INTS as i32 / 2);
+    Ok(())
+}
+
+#[cfg(feature = "object_store")]
+async fn test_object_store_write(store: &HdfsObjectStore) -> object_store::Result<()> {
+    use object_store::{path::Path, ObjectStore};
+
+    store.put(&Path::from("/newfile"), Bytes::new()).await?;
+    store.head(&Path::from("/newfile")).await?;
+
+    // Check a small files, a file that is exactly one block, and a file slightly bigger than a block
+    for size_to_check in [16i32, 128 * 1024 * 1024, 130 * 1024 * 1024] {
+        let ints_to_write = size_to_check / 4;
+
+        // let mut writer = client.create("/newfile", write_options.clone()).await?;
+
+        let mut data = BytesMut::with_capacity(size_to_check as usize);
+        for i in 0..ints_to_write {
+            data.put_i32(i);
+        }
+
+        let buf = data.freeze();
+        store.put(&Path::from("/newfile"), buf.clone()).await?;
+
+        assert_eq!(
+            store.head(&Path::from("/newfile")).await?.size,
+            size_to_check as usize
+        );
+
+        let read_data = store.get(&Path::from("/newfile")).await?.bytes().await?;
+
+        assert_eq!(buf.len(), read_data.len());
+
+        for pos in 0..buf.len() {
+            assert_eq!(
+                buf[pos], read_data[pos],
+                "data is different as position {} for size {}",
+                pos, size_to_check
+            );
+        }
+    }
+
+    store.delete(&Path::from("/newfile")).await?;
+
     Ok(())
 }

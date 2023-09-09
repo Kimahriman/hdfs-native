@@ -1,6 +1,7 @@
 use std::{
     fmt::{Display, Formatter},
     future,
+    path::PathBuf,
 };
 
 use crate::{client::FileStatus, Client, HdfsError, WriteOptions};
@@ -34,11 +35,24 @@ impl Display for HdfsObjectStore {
 impl ObjectStore for HdfsObjectStore {
     /// Save the provided bytes to the specified location
     ///
-    /// To make the operation atomic, we write to a temporary file ".{location}.tmp" and rename
+    /// To make the operation atomic, we write to a temporary file ".{filename}.tmp" and rename
     /// on a successful write.
     async fn put(&self, location: &Path, bytes: Bytes) -> Result<()> {
-        let filename = make_absolute_file(location);
-        let tmp_filename = format!(".{}.tmp", filename);
+        let final_file_path = make_absolute_file(location);
+        let path_buf = PathBuf::from(&final_file_path);
+
+        let file_name = path_buf
+            .file_name()
+            .ok_or(HdfsError::InvalidPath("path missing filename".to_string()))?
+            .to_str()
+            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))?
+            .to_string();
+
+        let tmp_filename = path_buf
+            .with_file_name(format!(".{}.tmp", file_name))
+            .to_str()
+            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))?
+            .to_string();
 
         // First we need to check if the tmp file exists so we know whether to overwrite
         let overwrite = match self.client.get_file_info(&tmp_filename).await {
@@ -54,7 +68,9 @@ impl ObjectStore for HdfsObjectStore {
         writer.write(bytes).await?;
         writer.close().await?;
 
-        self.client.rename(&tmp_filename, &filename, true).await?;
+        self.client
+            .rename(&tmp_filename, &final_file_path, true)
+            .await?;
 
         Ok(())
     }
@@ -118,8 +134,19 @@ impl ObjectStore for HdfsObjectStore {
     }
 
     /// Delete the object at the specified location.
-    async fn delete(&self, _location: &Path) -> Result<()> {
-        Err(object_store::Error::NotImplemented)
+    async fn delete(&self, location: &Path) -> Result<()> {
+        let result = self
+            .client
+            .delete(&make_absolute_file(location), false)
+            .await?;
+
+        if !result {
+            Err(HdfsError::OperationFailed(
+                "failed to delete object".to_string(),
+            ))?
+        }
+
+        Ok(())
     }
 
     /// List all the objects with the given prefix.
