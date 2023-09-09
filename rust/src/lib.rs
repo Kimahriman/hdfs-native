@@ -5,13 +5,21 @@
 //! Create a client to a single NameNode
 //! ```rust
 //! use hdfs_native::Client;
-//! let client = Client::new("hdfs://localhost:9000").unwrap();
+//! # use hdfs_native::Result;
+//! # fn main() -> Result<()> {
+//! let client = Client::new("hdfs://localhost:9000")?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! Create a client for a Name Service
 //! ```rust
 //! use hdfs_native::Client;
-//! let client = Client::new("hdfs://ns").unwrap();
+//! # use hdfs_native::Result;
+//! # fn main() -> Result<()> {
+//! let client = Client::new("hdfs://ns")?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Optional cargo package features
@@ -19,6 +27,7 @@
 //! - `token` - include support for Token authentication. Uses the gsasl native library. Only
 //!   supports authentication, not integrity or privacy modes.
 //! - `object_store` - an `object_store` implementation for HDFS.
+//! - `protobuf-src` - compiles protobuf from source to avoid having to pre-install it
 
 pub mod client;
 pub(crate) mod common;

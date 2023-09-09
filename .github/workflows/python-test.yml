@@ -23,7 +23,7 @@ jobs:
           python-version: 3.7
       - name: Install dev dependencies
         run: |
-          pip3 install .[devel]
+          pip3 install mypy
       - name: Type checking
         run: |
           mypy python
@@ -38,6 +38,6 @@ jobs:
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml --features protobuf-vendored
           sccache: 'true'
           manylinux: '2014'
-          before-script-linux:
+          before-script-linux: |
             yum install -y epel-release && yum install -y krb5-devel libgsasl-devel llvm-toolset-7.0
             scl enable llvm-toolset-7.0 bash

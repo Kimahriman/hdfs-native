@@ -44,5 +44,4 @@ which = "4"
 [features]
 kerberos = ["libgssapi"]
 object_store = ["dep:object_store", "async-trait", "chrono"]
-protobuf-vendored = ["protobuf-src"]
 token = ["gsasl-sys"]
