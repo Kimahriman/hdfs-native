@@ -2,8 +2,8 @@ name: python-release
 
 on:
   push:
-    # branches:
-    #   - master
+    branches:
+      - master
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
@@ -11,6 +11,7 @@ jobs:
   validate-release-tag:
     name: Validate git tag
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v3
       - name: compare git tag with cargo metadata
@@ -26,7 +27,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target: [x86_64, aarch64]
+        # target: [x86_64, aarch64]
+        target: [x86_64]
     steps:
       - uses: actions/checkout@v3
       - name: Setup QEMU
@@ -37,9 +39,10 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
-          container: quay.io/pypa/manylinux_2_28_${{ matrix.target }}:latest
+          container: quay.io/pypa/manylinux_2014_${{ matrix.target }}:latest
           before-script-linux:
-            yum install -y epel-release && yum install -y protobuf-compiler krb5-devel libgsasl-devel clang
+            yum install -y epel-release && yum install -y krb5-devel libgsasl-devel llvm-toolchain-7.0
+            scl enable llvm-toolchain-7.0 bash
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
@@ -78,7 +81,7 @@ jobs:
       - uses: actions/checkout@v3
       - name: Install native libs
         run:
-          brew install krb5 gsasl
+          brew install protobuf krb5 gsasl
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -112,6 +115,7 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: [linux, macos, sdist]
     steps:
       - uses: actions/download-artifact@v3
