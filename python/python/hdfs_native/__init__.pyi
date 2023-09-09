@@ -37,7 +37,7 @@ class FileWriter:
         """Closes the file and saves the final metadata to the NameNode"""
 
 class Client:
-    def __init__(self, url: str) -> Client:
+    def __init__(self, url: str) -> None:
         """Creates a new Client for the NameNode or Name Service defined by `url`"""
 
     def get_file_info(self, path: str) -> FileStatus:

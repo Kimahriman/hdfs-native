@@ -8,16 +8,36 @@ on:
   #   branches:
   #     - "*"
 
+defaults:
+  run:
+    working-directory: ./python
+
 jobs:
-  test:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.7
+      - name: Install dev dependencies
+        run: |
+          pip3 install .[devel]
+      - name: Type checking
+        run: |
+          mypy python
+
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - name: Build wheel
         uses: PyO3/maturin-action@v1
         with:
-          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
+          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml --features protobuf-vendored
           sccache: 'true'
-          manylinux: '2_28'
+          manylinux: '2014'
           before-script-linux:
-            yum install -y epel-release && yum install -y protobuf-compiler krb5-devel libgsasl-devel clang
+            yum install -y epel-release && yum install -y krb5-devel libgsasl-devel llvm-toolset-7.0
+            scl enable llvm-toolset-7.0 bash
