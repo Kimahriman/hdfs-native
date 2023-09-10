@@ -40,4 +40,3 @@ jobs:
           manylinux: '2014'
           before-script-linux: |
             yum install -y epel-release && yum install -y krb5-devel libgsasl-devel llvm-toolset-7.0
-            source scl_source enable llvm-toolset-7.0
