@@ -1,10 +1,10 @@
 use std::io::Result;
 
-#[cfg(feature = "protobuf_vendored")]
+#[cfg(feature = "protobuf-src")]
 use protobuf_src;
 
 fn main() -> Result<()> {
-    #[cfg(feature = "protobuf_vendored")]
+    #[cfg(feature = "protobuf-src")]
     std::env::set_var("PROTOC", protobuf_src::protoc());
 
     prost_build::compile_protos(
