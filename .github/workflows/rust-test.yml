@@ -18,12 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Install minimal stable with clippy and rustfmt
-        uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@master
         with:
-          profile: default
           toolchain: stable
-          override: true
 
       - name: Format
         run: cargo fmt -- --check
@@ -41,12 +38,9 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Install minimal stable with clippy and rustfmt
-        uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@master
         with:
-          profile: default
           toolchain: stable
-          override: true
 
       - uses: Swatinem/rust-cache@v2
 
@@ -94,11 +88,9 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Install minimal stable with clippy and rustfmt
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: default
-          toolchain: "stable"
-          override: true
+          toolchain: stable
 
       - uses: Swatinem/rust-cache@v2
 
