@@ -37,5 +37,6 @@ jobs:
         with:
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml --features protobuf-vendored
           sccache: 'true'
+          manylinux: '2014'
           before-script-linux: |
             yum install -y epel-release && yum install -y krb5-devel libgsasl-devel llvm-toolset-7.0
