@@ -38,6 +38,6 @@ jobs:
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml --features protobuf-vendored
           sccache: 'true'
           manylinux: '2014'
-          docker-options: -e LIBCLANG_PATH=/opt/rh/llvm-toolset-7.0/root/bin -e LD_LIBRARY_PATH=/opt/rh/llvm-toolset-7.0/root/usr/lib64
+          docker-options: -e LIBCLANG_PATH=/opt/rh/llvm-toolset-7.0/root/lib64 -e LD_LIBRARY_PATH=/opt/rh/llvm-toolset-7.0/root/usr/lib64
           before-script-linux: |
             yum install -y epel-release && yum install -y krb5-devel libgsasl-devel llvm-toolset-7.0
