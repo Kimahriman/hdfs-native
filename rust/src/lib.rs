@@ -33,7 +33,7 @@ pub mod client;
 pub(crate) mod common;
 pub(crate) mod error;
 pub mod file;
-pub mod hdfs;
+pub(crate) mod hdfs;
 pub(crate) mod proto;
 pub(crate) mod security;
 
