@@ -32,4 +32,4 @@ tokio = { version = "1.28", features = ["rt-multi-thread"] }
 
 
 [features]
-protobuf-vendored = ["hdfs-native/protobuf-src"]
+protobuf-src = ["hdfs-native/protobuf-src"]
