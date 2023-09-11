@@ -8,17 +8,22 @@ use crate::hdfs::protocol::NamenodeProtocol;
 use crate::proto::hdfs;
 use crate::Result;
 
-use crate::hdfs::datanode::{BlockReader, BlockWriter};
+use crate::hdfs::datanode::{BlockReader, BlockWriter, EcSchema};
 
 pub struct FileReader {
     located_blocks: hdfs::LocatedBlocksProto,
+    ec_schema: Option<EcSchema>,
     position: usize,
 }
 
 impl FileReader {
-    pub(crate) fn new(located_blocks: hdfs::LocatedBlocksProto) -> Self {
+    pub(crate) fn new(
+        located_blocks: hdfs::LocatedBlocksProto,
+        ec_schema: Option<EcSchema>,
+    ) -> Self {
         Self {
             located_blocks,
+            ec_schema,
             position: 0,
         }
     }
@@ -101,6 +106,7 @@ impl FileReader {
                     let block_end = usize::min(offset + len, block_file_end) - block_file_start;
                     Some(BlockReader::new(
                         block.clone(),
+                        self.ec_schema.clone(),
                         block_start,
                         block_end - block_start,
                     ))

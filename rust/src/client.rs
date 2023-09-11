@@ -10,6 +10,7 @@ use url::Url;
 use crate::common::config::Configuration;
 use crate::error::{HdfsError, Result};
 use crate::file::{FileReader, FileWriter};
+use crate::hdfs::datanode::resolve_ec_policy;
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
@@ -105,9 +106,11 @@ impl Client {
         let located_info = self.protocol.get_located_file_info(path).await?;
         match located_info.fs {
             Some(status) => {
-                if status.ec_policy.is_some() {
-                    return Err(HdfsError::UnsupportedFeature("Erasure coding".to_string()));
-                }
+                let ec_schema = if let Some(ec_policy) = status.ec_policy.as_ref() {
+                    Some(resolve_ec_policy(ec_policy)?)
+                } else {
+                    None
+                };
                 if status.file_encryption_info.is_some() {
                     return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
                 }
@@ -116,7 +119,7 @@ impl Client {
                 }
 
                 if let Some(locations) = status.locations {
-                    Ok(FileReader::new(locations))
+                    Ok(FileReader::new(locations, ec_schema))
                 } else {
                     Err(HdfsError::BlocksNotFound(path.to_string()))
                 }

@@ -13,17 +13,95 @@ use super::connection::Packet;
 const HEART_BEAT_SEQNO: i64 = -1;
 const UNKNOWN_SEQNO: i64 = -1;
 
+const RS_CODEC_NAME: &str = "rs";
+const RS_LEGACY_CODEC_NAME: &str = "rs-legacy";
+const XOR_CODEC_NAME: &str = "xor";
+const DEFAULT_EC_CELL_SIZE: u32 = 1024 * 1024;
+
+#[derive(Debug, Clone)]
+pub(crate) struct EcSchema {
+    pub codec_name: String,
+    pub data_units: u32,
+    pub parity_units: u32,
+    pub cell_size: u32,
+}
+
+/// Hadoop hard codes a default list of EC policies by ID
+pub(crate) fn resolve_ec_policy(policy: &hdfs::ErasureCodingPolicyProto) -> Result<EcSchema> {
+    if let Some(schema) = policy.schema.as_ref() {
+        return Ok(EcSchema {
+            codec_name: schema.codec_name.clone(),
+            data_units: schema.data_units,
+            parity_units: schema.parity_units,
+            cell_size: policy.cell_size(),
+        });
+    }
+
+    match policy.id {
+        // RS-6-3-1024k
+        1 => Ok(EcSchema {
+            codec_name: RS_CODEC_NAME.to_string(),
+            data_units: 6,
+            parity_units: 3,
+            cell_size: DEFAULT_EC_CELL_SIZE,
+        }),
+        // RS-3-2-1024k
+        2 => Ok(EcSchema {
+            codec_name: RS_CODEC_NAME.to_string(),
+            data_units: 3,
+            parity_units: 2,
+            cell_size: DEFAULT_EC_CELL_SIZE,
+        }),
+        // RS-6-3-1024k
+        3 => Ok(EcSchema {
+            codec_name: RS_LEGACY_CODEC_NAME.to_string(),
+            data_units: 6,
+            parity_units: 3,
+            cell_size: DEFAULT_EC_CELL_SIZE,
+        }),
+        // XOR-2-1-1024k
+        4 => Ok(EcSchema {
+            codec_name: XOR_CODEC_NAME.to_string(),
+            data_units: 2,
+            parity_units: 1,
+            cell_size: DEFAULT_EC_CELL_SIZE,
+        }),
+        // RS-10-4-1024k
+        5 => Ok(EcSchema {
+            codec_name: RS_CODEC_NAME.to_string(),
+            data_units: 10,
+            parity_units: 4,
+            cell_size: DEFAULT_EC_CELL_SIZE,
+        }),
+        _ => Err(HdfsError::UnsupportedErasureCodingPolicy(format!(
+            "ID: {}",
+            policy.id
+        ))),
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct BlockReader {
     block: hdfs::LocatedBlockProto,
+    ec_schema: Option<EcSchema>,
     offset: usize,
     pub(crate) len: usize,
 }
 
 impl BlockReader {
-    pub fn new(block: hdfs::LocatedBlockProto, offset: usize, len: usize) -> Self {
+    pub fn new(
+        block: hdfs::LocatedBlockProto,
+        ec_schema: Option<EcSchema>,
+        offset: usize,
+        len: usize,
+    ) -> Self {
         assert!(len > 0);
-        BlockReader { block, offset, len }
+        BlockReader {
+            block,
+            ec_schema,
+            offset,
+            len,
+        }
     }
 
     /// Select a best order to try the datanodes in. For now just use the order we
