@@ -11,20 +11,25 @@ use crate::Result;
 use crate::hdfs::datanode::{BlockReader, BlockWriter};
 
 pub struct FileReader {
+    status: hdfs::HdfsFileStatusProto,
     located_blocks: hdfs::LocatedBlocksProto,
     position: usize,
 }
 
 impl FileReader {
-    pub(crate) fn new(located_blocks: hdfs::LocatedBlocksProto) -> Self {
+    pub(crate) fn new(
+        status: hdfs::HdfsFileStatusProto,
+        located_blocks: hdfs::LocatedBlocksProto,
+    ) -> Self {
         Self {
+            status,
             located_blocks,
             position: 0,
         }
     }
 
     pub fn file_length(&self) -> usize {
-        self.located_blocks.file_length as usize
+        self.status.length as usize
     }
 
     /// Read up to `len` bytes into a new [Bytes] object, advancing the internal position in the file.

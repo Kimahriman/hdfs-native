@@ -104,7 +104,7 @@ impl Client {
     pub async fn read(&self, path: &str) -> Result<FileReader> {
         let located_info = self.protocol.get_located_file_info(path).await?;
         match located_info.fs {
-            Some(status) => {
+            Some(mut status) => {
                 if status.ec_policy.is_some() {
                     return Err(HdfsError::UnsupportedFeature("Erasure coding".to_string()));
                 }
@@ -115,8 +115,8 @@ impl Client {
                     return Err(HdfsError::IsADirectoryError(path.to_string()));
                 }
 
-                if let Some(locations) = status.locations {
-                    Ok(FileReader::new(locations))
+                if let Some(locations) = status.locations.take() {
+                    Ok(FileReader::new(status, locations))
                 } else {
                     Err(HdfsError::BlocksNotFound(path.to_string()))
                 }
