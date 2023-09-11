@@ -7,7 +7,7 @@ use std::{
 use crate::{client::FileStatus, Client, HdfsError, WriteOptions};
 use async_trait::async_trait;
 use bytes::Bytes;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{NaiveDateTime, TimeZone, Utc};
 use futures::stream::{self, BoxStream, StreamExt};
 use object_store::{
     path::Path, GetOptions, GetResult, ListResult, MultipartId, ObjectMeta, ObjectStore, Result,
@@ -124,9 +124,8 @@ impl ObjectStore for HdfsObjectStore {
 
         Ok(ObjectMeta {
             location: location.clone(),
-            last_modified: DateTime::<Utc>::from_utc(
-                NaiveDateTime::from_timestamp_opt(status.modification_time as i64, 0).unwrap(),
-                Utc,
+            last_modified: Utc.from_utc_datetime(
+                &NaiveDateTime::from_timestamp_opt(status.modification_time as i64, 0).unwrap(),
             ),
             size: status.length,
             e_tag: None,
@@ -277,9 +276,8 @@ fn make_absolute_dir(path: &Path) -> String {
 fn create_object_meta(status: &FileStatus) -> ObjectMeta {
     ObjectMeta {
         location: Path::from(status.path.clone()),
-        last_modified: DateTime::<Utc>::from_utc(
-            NaiveDateTime::from_timestamp_opt(status.modification_time as i64, 0).unwrap(),
-            Utc,
+        last_modified: Utc.from_utc_datetime(
+            &NaiveDateTime::from_timestamp_opt(status.modification_time as i64, 0).unwrap(),
         ),
         size: status.length,
         e_tag: None,
