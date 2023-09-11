@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Iterator, Optional
 
 
 class FileStatus:
@@ -43,7 +43,7 @@ class Client:
     def get_file_info(self, path: str) -> FileStatus:
         """Gets the file status for the file at `path`"""
 
-    def list_status(self, path: str, recursive: bool) -> List[FileStatus]:
+    def list_status(self, path: str, recursive: bool) -> Iterator[FileStatus]:
         """Gets the status of files rooted at `path`. If `recursive` is true, lists all files recursively."""
 
     def read(self, path: str) -> FileReader:
