@@ -111,6 +111,7 @@ impl Client {
                 } else {
                     None
                 };
+
                 if status.file_encryption_info.is_some() {
                     return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
                 }
@@ -118,8 +119,8 @@ impl Client {
                     return Err(HdfsError::IsADirectoryError(path.to_string()));
                 }
 
-                if let Some(locations) = status.locations {
-                    Ok(FileReader::new(locations, ec_schema))
+                if let Some(locations) = status.locations.take() {
+                    Ok(FileReader::new(status, locations, ec_policy))
                 } else {
                     Err(HdfsError::BlocksNotFound(path.to_string()))
                 }

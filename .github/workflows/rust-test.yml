@@ -109,4 +109,4 @@ jobs:
           echo "$GITHUB_WORKSPACE/hadoop-3.3.6/bin" >> $GITHUB_PATH
 
       - name: Run tests
-        run: cargo test --features kerberos,token,object_store -- --test-threads=1 --nocapture
+        run: cargo test --features kerberos,token,object_store -- --test-threads=1

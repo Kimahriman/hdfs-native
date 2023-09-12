@@ -27,8 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # target: [x86_64, aarch64]
-        target: [x86_64]
+        target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v3
       - name: Setup QEMU
@@ -37,12 +36,12 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml --features protobuf-vendored
+          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml --features protobuf-src
           sccache: 'true'
           container: quay.io/pypa/manylinux2014_${{ matrix.target }}:latest
-          before-script-linux:
-            yum install -y epel-release && yum install -y krb5-devel libgsasl-devel llvm-toolchain-7.0
-            scl enable llvm-toolchain-7.0 bash
+          docker-options: -e LD_LIBRARY_PATH=/opt/rh/llvm-toolset-7.0/root/usr/lib64 -e LLVM_CONFIG_PATH=/opt/rh/llvm-toolset-7.0/root/usr/bin/llvm-config
+          before-script-linux: |
+            yum install -y epel-release && yum install -y krb5-devel libgsasl-devel llvm-toolset-7.0-clang llvm-toolset-7.0-llvm-devel
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:

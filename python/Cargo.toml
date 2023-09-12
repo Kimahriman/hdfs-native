@@ -7,7 +7,7 @@ homepage = "https://github.com/Kimahriman/hdfs-native"
 repository = "https://github.com/Kimahriman/hdfs-native"
 keywords = ["hadoop", "hdfs"]
 description = "Python bindings for native HDFS client implementation in Rust"
-license = "MIT"
+license = "Apache-2.0"
 publish = false
 exclude = [
     ".gitignore",
@@ -32,4 +32,4 @@ tokio = { version = "1.28", features = ["rt-multi-thread"] }
 
 
 [features]
-protobuf-vendored = ["hdfs-native/protobuf-src"]
+protobuf-src = ["hdfs-native/protobuf-src"]
