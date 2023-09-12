@@ -105,7 +105,7 @@ impl Client {
     pub async fn read(&self, path: &str) -> Result<FileReader> {
         let located_info = self.protocol.get_located_file_info(path).await?;
         match located_info.fs {
-            Some(status) => {
+            Some(mut status) => {
                 let ec_schema = if let Some(ec_policy) = status.ec_policy.as_ref() {
                     Some(resolve_ec_policy(ec_policy)?)
                 } else {
@@ -120,7 +120,7 @@ impl Client {
                 }
 
                 if let Some(locations) = status.locations.take() {
-                    Ok(FileReader::new(status, locations, ec_policy))
+                    Ok(FileReader::new(status, locations, ec_schema))
                 } else {
                     Err(HdfsError::BlocksNotFound(path.to_string()))
                 }

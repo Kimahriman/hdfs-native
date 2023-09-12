@@ -26,6 +26,21 @@ pub(crate) struct EcSchema {
     pub cell_size: u32,
 }
 
+impl EcSchema {
+    /// Returns the cell number (0-based) containing the offset
+    fn cell_for_offset(&self, offset: usize) -> usize {
+        offset / self.cell_size as usize
+    }
+
+    fn row_for_cell(&self, cell_id: usize) -> usize {
+        cell_id / self.data_units as usize
+    }
+
+    fn offset_for_row(&self, row_id: usize) -> usize {
+        row_id * self.cell_size as usize
+    }
+}
+
 /// Hadoop hard codes a default list of EC policies by ID
 pub(crate) fn resolve_ec_policy(policy: &hdfs::ErasureCodingPolicyProto) -> Result<EcSchema> {
     if let Some(schema) = policy.schema.as_ref() {
@@ -112,10 +127,20 @@ impl BlockReader {
 
     pub(crate) async fn read(&self, buf: &mut [u8]) -> Result<()> {
         assert!(buf.len() == self.len);
+        if let Some(ec_schema) = self.ec_schema.as_ref() {
+            self.read_striped(ec_schema, buf).await
+        } else {
+            self.read_replicated(buf).await
+        }
+    }
+
+    async fn read_replicated(&self, buf: &mut [u8]) -> Result<()> {
         let datanodes = self.choose_datanodes();
         let mut index = 0;
         loop {
-            let result = self.read_from_datanode(datanodes[index], buf).await;
+            let result = self
+                .read_from_datanode(datanodes[index], self.offset, self.len, buf)
+                .await;
             if result.is_ok() || index >= datanodes.len() - 1 {
                 return Ok(result?);
             } else {
@@ -125,9 +150,57 @@ impl BlockReader {
         }
     }
 
+    /// Erasure coded data is stored in "cells" that are striped across Data Nodes.
+    /// An example of what 3-2-1024k cells would look like:
+    /// ----------------------------------------------
+    /// | blk_0  | blk_1  | blk_2  | blk_3  | blk_4  |
+    /// |--------|--------|--------|--------|--------|
+    /// | cell_0 | cell_1 | cell_2 | parity | parity |
+    /// | cell_3 | cell_4 | cell_5 | parity | parity |
+    /// ----------------------------------------------
+    ///
+    /// Where cell_0 contains the first 1024k bytes, cell_1 contains the next 1024k bytes, and so on.
+    ///
+    /// For an initial, simple implementation, determine the cells containing the start and end
+    /// of the range being requested, and request all "rows" or horizontal stripes of data containing
+    /// and between the start and end cell. So if the read range starts in cell_1 and ends in cell_4,
+    /// simply read all data blocks for cell_0 through cell_5.
+    ///
+    /// We then convert these logical horizontal stripes into vertical stripes to read from each block/DataNode.
+    /// In this case, we will have one read for cell_0 and cell_3 from blk_0, one for cell_1 and cell_4 from blk_1,
+    /// and one for cell_2 and cell_5 from blk_2. If all of these reads succeed, we know we have everything we need
+    /// to reconstruct the data being requested. If any read fails, we will then request the parity cells for the same
+    /// vertical range of cells. If more data block reads fail then parity blocks exist, the read will fail.
+    ///
+    /// Once we have enough of the vertical stripes, we can then convert those back into horizontal stripes to
+    /// re-create each "row" of data. Then we simply need to take the range being requested out of the range
+    /// we reconstructed.
+    ///
+    /// In the future we can look at making this more efficient by not reading as many extra cells that aren't
+    /// part of the range being requested at all. Currently the overhead of not doing this would be up to
+    /// `data_units * cell_size * 2` of extra data being read from disk (basically two extra "rows" of data).
+    ///
+    /// When calculating cells from offsets, we use inclusive values to make sure we don't request extra data.
+    async fn read_striped(&self, ec_schema: &EcSchema, buf: &mut [u8]) -> Result<()> {
+        // Cell IDs for the range we are reading
+        let starting_cell = ec_schema.cell_for_offset(self.offset);
+        let ending_cell = ec_schema.cell_for_offset(self.offset + self.len - 1);
+
+        // Logical rows or horizontal stripes we need to read
+        let starting_row = ec_schema.row_for_cell(starting_cell);
+        let ending_row = ec_schema.row_for_cell(ending_cell);
+
+        let block_start = ec_schema.offset_for_row(starting_row);
+        let block_end = ec_schema.offset_for_row(ending_row);
+
+        Ok(())
+    }
+
     async fn read_from_datanode(
         &self,
         datanode: &hdfs::DatanodeIdProto,
+        offset: usize,
+        len: usize,
         mut buf: &mut [u8],
     ) -> Result<()> {
         let mut conn =
@@ -136,8 +209,8 @@ impl BlockReader {
 
         let mut message = hdfs::OpReadBlockProto::default();
         message.header = conn.build_header(&self.block.b, Some(self.block.block_token.clone()));
-        message.offset = self.offset as u64;
-        message.len = self.len as u64;
+        message.offset = offset as u64;
+        message.len = len as u64;
         message.send_checksums = Some(false);
 
         conn.send(Op::ReadBlock, &message).await?;
@@ -146,10 +219,10 @@ impl BlockReader {
 
         // First handle the offset into the first packet
         let mut packet = conn.read_packet().await?;
-        let packet_offset = self.offset - packet.header.offset_in_block as usize;
+        let packet_offset = offset - packet.header.offset_in_block as usize;
         let data_len = packet.header.data_len as usize - packet_offset;
-        let data_to_read = usize::min(data_len, self.len);
-        let mut data_left = self.len - data_to_read;
+        let data_to_read = usize::min(data_len, len);
+        let mut data_left = len - data_to_read;
         buf.put(
             packet
                 .get_data()
