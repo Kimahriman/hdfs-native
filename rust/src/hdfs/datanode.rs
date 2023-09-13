@@ -1,4 +1,7 @@
-use bytes::{BufMut, Bytes};
+use std::collections::HashMap;
+
+use bytes::{BufMut, Bytes, BytesMut};
+use futures::future::{self, join_all};
 use log::{debug, error, warn};
 use tokio::sync::{mpsc, oneshot};
 
@@ -38,6 +41,23 @@ impl EcSchema {
 
     fn offset_for_row(&self, row_id: usize) -> usize {
         row_id * self.cell_size as usize
+    }
+
+    fn max_offset(&self, data_unit: u32, block_size: usize) -> usize {
+        // Get the number of bytes in the vertical slice for full rows
+        let full_rows = block_size / (self.cell_size * self.data_units) as usize;
+        let full_row_bytes = full_rows * self.cell_size as usize;
+
+        let remaining_block_bytes = block_size - full_row_bytes;
+        if remaining_block_bytes < data_unit as usize * self.cell_size as usize {
+            0
+        } else {
+            usize::min(
+                data_unit as usize * self.cell_size as usize - remaining_block_bytes,
+                self.cell_size as usize,
+            )
+        };
+        full_row_bytes + remaining_block_bytes
     }
 }
 
@@ -192,6 +212,68 @@ impl BlockReader {
 
         let block_start = ec_schema.offset_for_row(starting_row);
         let block_end = ec_schema.offset_for_row(ending_row);
+        let block_read_len = block_end - block_start;
+
+        assert_eq!(self.block.block_indices().len(), self.block.locs.len());
+        let block_map: HashMap<u8, &hdfs::DatanodeInfoProto> = self
+            .block
+            .block_indices()
+            .iter()
+            .map(|i| *i)
+            .zip(self.block.locs.iter())
+            .collect();
+
+        let mut stripe_bufs = vec![
+            BytesMut::with_capacity(block_read_len);
+            (ec_schema.data_units + ec_schema.parity_units) as usize
+        ];
+
+        let mut stripe_results: Vec<Option<Bytes>> =
+            vec![None; (ec_schema.data_units + ec_schema.parity_units) as usize];
+
+        let mut futures = Vec::new();
+
+        for (index, stripe_buf) in (0..(ec_schema.data_units as u8)).zip(stripe_bufs.iter_mut()) {
+            if let Some(datanode_info) = block_map.get(&index) {
+                let max_block_offset =
+                    ec_schema.max_offset(index as u32, self.block.b.num_bytes() as usize);
+
+                let read_len = usize::min(block_end, max_block_offset) - block_start;
+
+                futures.push(self.read_from_datanode(
+                    &datanode_info.id,
+                    block_start,
+                    read_len,
+                    stripe_buf,
+                ));
+            }
+        }
+
+        // Do the actual reads and count how many data blocks failed
+        let mut failed_data_blocks = 0u32;
+        for (index, future) in join_all(futures).await.into_iter().enumerate() {
+            if future.is_err() {
+                failed_data_blocks += 1;
+            } else {
+                stripe_results[index] = Some(stripe_bufs[index].freeze());
+            }
+        }
+
+        let mut blocks_needed = failed_data_blocks;
+        let mut parity_unit = 0u32;
+        while blocks_needed > 0 && parity_unit < ec_schema.parity_units {
+            let block_index = (ec_schema.data_units + parity_unit) as u8;
+            let striped_buf = &mut stripe_bufs[block_index as usize];
+            let datanode_info = block_map.get(&block_index).unwrap();
+            let result = self
+                .read_from_datanode(&datanode_info.id, block_start, block_read_len, striped_buf)
+                .await;
+
+            if result.is_ok() {
+                blocks_needed -= 1;
+            }
+            parity_unit += 1;
+        }
 
         Ok(())
     }
