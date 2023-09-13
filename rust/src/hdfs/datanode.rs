@@ -223,39 +223,28 @@ impl BlockReader {
             .zip(self.block.locs.iter())
             .collect();
 
-        let mut stripe_bufs = vec![
-            BytesMut::with_capacity(block_read_len);
-            (ec_schema.data_units + ec_schema.parity_units) as usize
-        ];
-
         let mut stripe_results: Vec<Option<Bytes>> =
             vec![None; (ec_schema.data_units + ec_schema.parity_units) as usize];
 
         let mut futures = Vec::new();
 
-        for (index, stripe_buf) in (0..(ec_schema.data_units as u8)).zip(stripe_bufs.iter_mut()) {
-            if let Some(datanode_info) = block_map.get(&index) {
-                let max_block_offset =
-                    ec_schema.max_offset(index as u32, self.block.b.num_bytes() as usize);
-
-                let read_len = usize::min(block_end, max_block_offset) - block_start;
-
-                futures.push(self.read_from_datanode(
-                    &datanode_info.id,
-                    block_start,
-                    read_len,
-                    stripe_buf,
-                ));
-            }
+        for index in 0..ec_schema.data_units as u8 {
+            futures.push(self.read_vertical_stripe(
+                ec_schema,
+                index,
+                block_map.get(&index),
+                block_start,
+                block_read_len,
+            ));
         }
 
         // Do the actual reads and count how many data blocks failed
         let mut failed_data_blocks = 0u32;
-        for (index, future) in join_all(futures).await.into_iter().enumerate() {
-            if future.is_err() {
-                failed_data_blocks += 1;
+        for (index, result) in join_all(futures).await.into_iter().enumerate() {
+            if let Ok(bytes) = result {
+                stripe_results[index] = Some(bytes);
             } else {
-                stripe_results[index] = Some(stripe_bufs[index].freeze());
+                failed_data_blocks += 1;
             }
         }
 
@@ -263,19 +252,59 @@ impl BlockReader {
         let mut parity_unit = 0u32;
         while blocks_needed > 0 && parity_unit < ec_schema.parity_units {
             let block_index = (ec_schema.data_units + parity_unit) as u8;
-            let striped_buf = &mut stripe_bufs[block_index as usize];
+            let mut stripe_buf = BytesMut::with_capacity(block_read_len);
             let datanode_info = block_map.get(&block_index).unwrap();
             let result = self
-                .read_from_datanode(&datanode_info.id, block_start, block_read_len, striped_buf)
+                .read_from_datanode(
+                    &datanode_info.id,
+                    block_start,
+                    block_read_len,
+                    &mut stripe_buf,
+                )
                 .await;
 
             if result.is_ok() {
+                stripe_results[block_index as usize] = Some(stripe_buf.freeze());
                 blocks_needed -= 1;
             }
             parity_unit += 1;
         }
 
         Ok(())
+    }
+
+    fn ec_decode(
+        &self,
+        ec_schema: &EcSchema,
+        vertical_stripes: Vec<Option<Bytes>>,
+    ) -> Result<Bytes> {
+        Ok(Bytes::new())
+    }
+
+    async fn read_vertical_stripe(
+        &self,
+        ec_schema: &EcSchema,
+        index: u8,
+        datanode: Option<&&hdfs::DatanodeInfoProto>,
+        offset: usize,
+        len: usize,
+    ) -> Result<Bytes> {
+        let mut buf = BytesMut::with_capacity(len);
+        if let Some(datanode_info) = datanode {
+            let max_block_offset =
+                ec_schema.max_offset(index as u32, self.block.b.num_bytes() as usize);
+
+            let read_len = usize::min(len, max_block_offset - offset);
+
+            self.read_from_datanode(&datanode_info.id, offset, read_len, &mut buf)
+                .await?;
+        }
+
+        // Extend the buffer to the full length with 0's. Data content shouldn't be read from here
+        // but any decoding that happens will need/expect each cell to be full (I think?)
+        buf.resize(len, 0);
+
+        Ok(buf.freeze())
     }
 
     async fn read_from_datanode(
