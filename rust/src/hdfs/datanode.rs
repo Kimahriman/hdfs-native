@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use bytes::{BufMut, Bytes, BytesMut};
-use futures::future::{self, join_all};
-use log::{debug, error, warn};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use futures::future::join_all;
+use log::{debug, error, info, warn};
+use reed_solomon_erasure::galois_8::ReedSolomon;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
@@ -30,6 +31,10 @@ pub(crate) struct EcSchema {
 }
 
 impl EcSchema {
+    fn row_size(&self) -> usize {
+        self.cell_size as usize * self.data_units as usize
+    }
+
     /// Returns the cell number (0-based) containing the offset
     fn cell_for_offset(&self, offset: usize) -> usize {
         offset / self.cell_size as usize
@@ -45,19 +50,24 @@ impl EcSchema {
 
     fn max_offset(&self, data_unit: u32, block_size: usize) -> usize {
         // Get the number of bytes in the vertical slice for full rows
-        let full_rows = block_size / (self.cell_size * self.data_units) as usize;
-        let full_row_bytes = full_rows * self.cell_size as usize;
+        let full_rows = block_size / self.row_size();
+        let full_row_bytes = full_rows * self.row_size();
 
         let remaining_block_bytes = block_size - full_row_bytes;
-        if remaining_block_bytes < data_unit as usize * self.cell_size as usize {
-            0
-        } else {
-            usize::min(
-                data_unit as usize * self.cell_size as usize - remaining_block_bytes,
-                self.cell_size as usize,
-            )
-        };
-        full_row_bytes + remaining_block_bytes
+
+        info!(
+            "Getting max offset. full_row_bytes: {}, remaining_block_bytes: {}",
+            full_row_bytes, remaining_block_bytes
+        );
+        let bytes_in_last_row: usize =
+            if remaining_block_bytes < data_unit as usize * self.cell_size as usize {
+                0
+            } else if remaining_block_bytes > (data_unit + 1) as usize * self.cell_size as usize {
+                self.cell_size as usize
+            } else {
+                remaining_block_bytes - data_unit as usize * self.cell_size as usize
+            };
+        full_rows * self.cell_size as usize + bytes_in_last_row
     }
 }
 
@@ -199,20 +209,24 @@ impl BlockReader {
     /// In the future we can look at making this more efficient by not reading as many extra cells that aren't
     /// part of the range being requested at all. Currently the overhead of not doing this would be up to
     /// `data_units * cell_size * 2` of extra data being read from disk (basically two extra "rows" of data).
-    ///
-    /// When calculating cells from offsets, we use inclusive values to make sure we don't request extra data.
-    async fn read_striped(&self, ec_schema: &EcSchema, buf: &mut [u8]) -> Result<()> {
-        // Cell IDs for the range we are reading
+    async fn read_striped(&self, ec_schema: &EcSchema, mut buf: &mut [u8]) -> Result<()> {
+        // Cell IDs for the range we are reading, inclusive
         let starting_cell = ec_schema.cell_for_offset(self.offset);
         let ending_cell = ec_schema.cell_for_offset(self.offset + self.len - 1);
 
-        // Logical rows or horizontal stripes we need to read
+        // Logical rows or horizontal stripes we need to read, tail-exclusive
         let starting_row = ec_schema.row_for_cell(starting_cell);
-        let ending_row = ec_schema.row_for_cell(ending_cell);
+        let ending_row = ec_schema.row_for_cell(ending_cell) + 1;
 
+        // Block start/end within each vertical stripe, tail-exclusive
         let block_start = ec_schema.offset_for_row(starting_row);
         let block_end = ec_schema.offset_for_row(ending_row);
         let block_read_len = block_end - block_start;
+
+        debug!(
+            "block_start {}, block_end {}, block_read_len {}",
+            block_start, block_end, block_read_len
+        );
 
         assert_eq!(self.block.block_indices().len(), self.block.locs.len());
         let block_map: HashMap<u8, &hdfs::DatanodeInfoProto> = self
@@ -223,7 +237,7 @@ impl BlockReader {
             .zip(self.block.locs.iter())
             .collect();
 
-        let mut stripe_results: Vec<Option<Bytes>> =
+        let mut stripe_results: Vec<Option<BytesMut>> =
             vec![None; (ec_schema.data_units + ec_schema.parity_units) as usize];
 
         let mut futures = Vec::new();
@@ -248,11 +262,13 @@ impl BlockReader {
             }
         }
 
+        debug!("Failed blocks: {}", failed_data_blocks);
+
         let mut blocks_needed = failed_data_blocks;
         let mut parity_unit = 0u32;
         while blocks_needed > 0 && parity_unit < ec_schema.parity_units {
             let block_index = (ec_schema.data_units + parity_unit) as u8;
-            let mut stripe_buf = BytesMut::with_capacity(block_read_len);
+            let mut stripe_buf = BytesMut::zeroed(block_read_len);
             let datanode_info = block_map.get(&block_index).unwrap();
             let result = self
                 .read_from_datanode(
@@ -264,10 +280,34 @@ impl BlockReader {
                 .await;
 
             if result.is_ok() {
-                stripe_results[block_index as usize] = Some(stripe_buf.freeze());
+                stripe_results[block_index as usize] = Some(stripe_buf);
                 blocks_needed -= 1;
             }
             parity_unit += 1;
+        }
+
+        let decoded_bufs = self.ec_decode(ec_schema, stripe_results)?;
+        let mut bytes_to_skip = self.offset
+            - starting_row * ec_schema.data_units as usize * ec_schema.cell_size as usize;
+        let mut bytes_to_write = self.len;
+        for mut cell in decoded_bufs.into_iter() {
+            if bytes_to_skip > 0 {
+                if cell.len() > bytes_to_skip {
+                    bytes_to_skip -= cell.len();
+                    continue;
+                } else {
+                    cell.advance(bytes_to_skip);
+                    bytes_to_skip = 0;
+                }
+            }
+
+            if buf.len() >= bytes_to_write {
+                buf.put(cell.split_to(bytes_to_write));
+                break;
+            } else {
+                bytes_to_write -= cell.len();
+                buf.put(cell);
+            }
         }
 
         Ok(())
@@ -276,9 +316,34 @@ impl BlockReader {
     fn ec_decode(
         &self,
         ec_schema: &EcSchema,
-        vertical_stripes: Vec<Option<Bytes>>,
-    ) -> Result<Bytes> {
-        Ok(Bytes::new())
+        mut vertical_stripes: Vec<Option<BytesMut>>,
+    ) -> Result<Vec<Bytes>> {
+        let mut cells: Vec<Bytes> = Vec::new();
+        if !vertical_stripes
+            .iter()
+            .enumerate()
+            .all(|(index, stripe)| stripe.is_some() || index >= ec_schema.data_units as usize)
+        {
+            let codec = ReedSolomon::new(
+                ec_schema.data_units as usize,
+                ec_schema.parity_units as usize,
+            )?;
+            codec.reconstruct_data(&mut vertical_stripes)?;
+        }
+
+        while vertical_stripes[0].as_ref().is_some_and(|b| !b.is_empty()) {
+            for index in 0..ec_schema.data_units {
+                cells.push(
+                    vertical_stripes[index as usize]
+                        .as_mut()
+                        .unwrap()
+                        .split_to(ec_schema.cell_size as usize)
+                        .freeze(),
+                )
+            }
+        }
+
+        Ok(cells)
     }
 
     async fn read_vertical_stripe(
@@ -288,23 +353,24 @@ impl BlockReader {
         datanode: Option<&&hdfs::DatanodeInfoProto>,
         offset: usize,
         len: usize,
-    ) -> Result<Bytes> {
-        let mut buf = BytesMut::with_capacity(len);
+    ) -> Result<BytesMut> {
+        let mut buf = BytesMut::zeroed(len);
         if let Some(datanode_info) = datanode {
             let max_block_offset =
                 ec_schema.max_offset(index as u32, self.block.b.num_bytes() as usize);
 
             let read_len = usize::min(len, max_block_offset - offset);
 
+            debug!(
+                "Reading from datanode {} of len {}, max offset {}",
+                index, len, max_block_offset
+            );
+
             self.read_from_datanode(&datanode_info.id, offset, read_len, &mut buf)
                 .await?;
         }
 
-        // Extend the buffer to the full length with 0's. Data content shouldn't be read from here
-        // but any decoding that happens will need/expect each cell to be full (I think?)
-        buf.resize(len, 0);
-
-        Ok(buf.freeze())
+        Ok(buf)
     }
 
     async fn read_from_datanode(
@@ -328,17 +394,23 @@ impl BlockReader {
         let response = conn.read_block_op_response().await?;
         debug!("Block read op response {:?}", response);
 
+        if response.status() != hdfs::Status::Success {
+            return Err(HdfsError::DataTransferError(response.message().to_string()));
+        }
+
+        debug!("Length of provided buf {:?}", buf.len());
+
         // First handle the offset into the first packet
         let mut packet = conn.read_packet().await?;
         let packet_offset = offset - packet.header.offset_in_block as usize;
         let data_len = packet.header.data_len as usize - packet_offset;
         let data_to_read = usize::min(data_len, len);
         let mut data_left = len - data_to_read;
-        buf.put(
-            packet
-                .get_data()
-                .slice(packet_offset..(packet_offset + data_to_read)),
-        );
+
+        let packet_data = packet.get_data();
+        debug!("Got first packet: {}", packet_data.len());
+        buf.put(packet_data.slice(packet_offset..(packet_offset + data_to_read)));
+        debug!("Put into buf");
 
         while data_left > 0 {
             packet = conn.read_packet().await?;

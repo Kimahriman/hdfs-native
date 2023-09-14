@@ -3,6 +3,7 @@ use std::io;
 #[cfg(feature = "kerberos")]
 use libgssapi::error::Error as GssapiError;
 use prost::DecodeError;
+use reed_solomon_erasure::Error as ReedSolomonError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -25,6 +26,8 @@ pub enum HdfsError {
     UnsupportedErasureCodingPolicy(String),
     #[error("operation not supported")]
     UnsupportedFeature(String),
+    #[error("erasure coding error")]
+    ErasureCodingError(#[from] ReedSolomonError),
     #[error("interal error, this shouldn't happen")]
     InternalError(String),
     #[error("failed to decode RPC response")]
