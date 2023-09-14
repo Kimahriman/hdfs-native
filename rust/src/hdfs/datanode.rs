@@ -8,7 +8,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     hdfs::connection::{DatanodeConnection, Op},
-    proto::hdfs,
+    proto::{common, hdfs},
     HdfsError, Result,
 };
 
@@ -169,7 +169,14 @@ impl BlockReader {
         let mut index = 0;
         loop {
             let result = self
-                .read_from_datanode(datanodes[index], self.offset, self.len, buf)
+                .read_from_datanode(
+                    datanodes[index],
+                    &self.block.b,
+                    &self.block.block_token,
+                    self.offset,
+                    self.len,
+                    buf,
+                )
                 .await;
             if result.is_ok() || index >= datanodes.len() - 1 {
                 return Ok(result?);
@@ -268,19 +275,19 @@ impl BlockReader {
         let mut parity_unit = 0u32;
         while blocks_needed > 0 && parity_unit < ec_schema.parity_units {
             let block_index = (ec_schema.data_units + parity_unit) as u8;
-            let mut stripe_buf = BytesMut::zeroed(block_read_len);
             let datanode_info = block_map.get(&block_index).unwrap();
             let result = self
-                .read_from_datanode(
-                    &datanode_info.id,
+                .read_vertical_stripe(
+                    ec_schema,
+                    block_index,
+                    Some(&&datanode_info),
                     block_start,
                     block_read_len,
-                    &mut stripe_buf,
                 )
                 .await;
 
-            if result.is_ok() {
-                stripe_results[block_index as usize] = Some(stripe_buf);
+            if let Ok(bytes) = result {
+                stripe_results[block_index as usize] = Some(bytes);
                 blocks_needed -= 1;
             }
             parity_unit += 1;
@@ -301,7 +308,7 @@ impl BlockReader {
                 }
             }
 
-            if buf.len() >= bytes_to_write {
+            if cell.len() >= bytes_to_write {
                 buf.put(cell.split_to(bytes_to_write));
                 break;
             } else {
@@ -324,6 +331,11 @@ impl BlockReader {
             .enumerate()
             .all(|(index, stripe)| stripe.is_some() || index >= ec_schema.data_units as usize)
         {
+            if ec_schema.codec_name != "rs" {
+                return Err(HdfsError::UnsupportedErasureCodingPolicy(
+                    ec_schema.codec_name.clone(),
+                ));
+            }
             let codec = ReedSolomon::new(
                 ec_schema.data_units as usize,
                 ec_schema.parity_units as usize,
@@ -366,8 +378,23 @@ impl BlockReader {
                 index, len, max_block_offset
             );
 
-            self.read_from_datanode(&datanode_info.id, offset, read_len, &mut buf)
-                .await?;
+            // Each vertical stripe has a block ID of the original located block ID + block index
+            // That was fun to figure out
+            let mut block = self.block.b.clone();
+            block.block_id += index as u64;
+
+            // The token of the first block is the main one, then all the rest are in the `block_tokens` list
+            let token = &self.block.block_tokens[index as usize];
+
+            self.read_from_datanode(
+                &datanode_info.id,
+                &block,
+                &token,
+                offset,
+                read_len,
+                &mut buf,
+            )
+            .await?;
         }
 
         Ok(buf)
@@ -376,19 +403,25 @@ impl BlockReader {
     async fn read_from_datanode(
         &self,
         datanode: &hdfs::DatanodeIdProto,
+        block: &hdfs::ExtendedBlockProto,
+        token: &common::TokenProto,
         offset: usize,
         len: usize,
         mut buf: &mut [u8],
     ) -> Result<()> {
+        assert!(len > 0);
+
         let mut conn =
             DatanodeConnection::connect(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
                 .await?;
 
         let mut message = hdfs::OpReadBlockProto::default();
-        message.header = conn.build_header(&self.block.b, Some(self.block.block_token.clone()));
+        message.header = conn.build_header(&block, Some(token.clone()));
         message.offset = offset as u64;
         message.len = len as u64;
         message.send_checksums = Some(false);
+
+        debug!("Block read op request {:?}", &message);
 
         conn.send(Op::ReadBlock, &message).await?;
         let response = conn.read_block_op_response().await?;

@@ -73,6 +73,7 @@ public class Main {
         HdfsConfiguration hdfsConf = new HdfsConfiguration(conf);
         MiniDFSCluster dfs = new MiniDFSCluster.Builder(hdfsConf)
             .nameNodePort(9000)
+            .nameNodeHttpPort(9870)
             .nnTopology(nnTopology)
             .numDataNodes(5)
             .build();

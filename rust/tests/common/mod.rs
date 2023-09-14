@@ -1,16 +1,16 @@
 pub(crate) mod ec;
 pub(crate) mod minidfs;
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
 use hdfs_native::client::WriteOptions;
-#[cfg(feature = "object_store")]
-use hdfs_native::object_store::HdfsObjectStore;
 use hdfs_native::{client::Client, Result};
 use std::collections::HashSet;
 use std::io::{BufWriter, Write};
 use std::process::Command;
 use tempfile::NamedTempFile;
 use which::which;
+#[cfg(feature = "object_store")]
+use {bytes::Bytes, hdfs_native::object_store::HdfsObjectStore};
 
 use crate::common::minidfs::MiniDfs;
 

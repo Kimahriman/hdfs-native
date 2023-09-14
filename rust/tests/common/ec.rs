@@ -48,23 +48,38 @@ fn verify_read(mut data: Bytes, size: usize) {
 }
 
 #[tokio::test]
-#[cfg(feature = "token")]
 async fn test_erasure_coded_read() -> Result<()> {
     let _ = env_logger::builder().is_test(true).try_init();
 
-    let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC]));
+    let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC, DfsFeatures::SECURITY]));
     let client = Client::new(&dfs.url)?;
 
-    for file_size in [16usize, 1024 * 1024, 128 * 1024 * 1024] {
-        create_file(&dfs.url, "/ec/small", file_size)?;
+    // Try a variety of sizes to catch any possible edge cases
+    let sizes_to_test = [
+        16usize,             // Small
+        1024 * 1024,         // One cell
+        1024 * 1024 - 4,     // Just smaller than one cell
+        1024 * 1024 + 4,     // Just bigger than one cell
+        1024 * 1024 * 3 * 5, // Five "rows" of cells
+        1024 * 1024 * 3 * 5 - 4,
+        1024 * 1024 * 3 * 5 + 4,
+        128 * 1024 * 1024,
+        128 * 1024 * 1024 - 4,
+        120 * 1024 * 1024 + 4,
+    ];
 
-        let mut reader = client.read("/ec/small").await?;
+    for file_size in sizes_to_test {
+        create_file(&dfs.url, "/ec/testfile", file_size)?;
+
+        let mut reader = client.read("/ec/testfile").await?;
         assert_eq!(reader.file_length(), file_size);
 
         let data = reader.read(reader.file_length()).await?;
 
         verify_read(data, file_size);
     }
+
+    assert!(client.delete("/ec/testfile", false).await?);
 
     Ok(())
 }
