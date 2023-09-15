@@ -6,6 +6,7 @@ use tempfile::NamedTempFile;
 use which::which;
 
 use crate::common::minidfs::{DfsFeatures, MiniDfs};
+use hdfs_native::test::{EcFaultInjection, EC_FAULT_INJECTOR};
 use hdfs_native::{client::Client, Result};
 
 fn create_file(url: &str, path: &str, size: usize) -> io::Result<()> {
@@ -43,7 +44,7 @@ fn verify_read(mut data: Bytes, size: usize) {
     let num_ints = size / 4;
 
     for i in 0..num_ints as u32 {
-        assert_eq!(data.get_u32(), i);
+        assert_eq!(data.get_u32(), i, "Different values at integer {}", i);
     }
 }
 
@@ -71,12 +72,22 @@ async fn test_erasure_coded_read() -> Result<()> {
     for file_size in sizes_to_test {
         create_file(&dfs.url, "/ec/testfile", file_size)?;
 
-        let mut reader = client.read("/ec/testfile").await?;
+        let reader = client.read("/ec/testfile").await?;
         assert_eq!(reader.file_length(), file_size);
 
-        let data = reader.read(reader.file_length()).await?;
+        for faults in 0..3 {
+            let _ = EC_FAULT_INJECTOR.lock().unwrap().insert(EcFaultInjection {
+                fail_blocks: (0..faults).into_iter().collect(),
+            });
+            let data = reader.read_range(0, reader.file_length()).await?;
+            verify_read(data, file_size);
+        }
 
-        verify_read(data, file_size);
+        let _ = EC_FAULT_INJECTOR.lock().unwrap().insert(EcFaultInjection {
+            fail_blocks: vec![0, 1, 2],
+        });
+
+        assert!(reader.read_range(0, reader.file_length()).await.is_err());
     }
 
     assert!(client.delete("/ec/testfile", false).await?);

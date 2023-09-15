@@ -46,3 +46,4 @@ which = "4"
 kerberos = ["libgssapi"]
 object_store = ["dep:object_store", "async-trait", "chrono"]
 token = ["gsasl-sys"]
+integration-test = []

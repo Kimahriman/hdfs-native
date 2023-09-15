@@ -48,7 +48,12 @@ impl EcSchema {
         row_id * self.cell_size as usize
     }
 
-    fn max_offset(&self, data_unit: u32, block_size: usize) -> usize {
+    fn max_offset(&self, index: u32, block_size: usize) -> usize {
+        // If it's a parity cell, the full cell should be populated
+        if index >= self.data_units {
+            return block_size;
+        }
+
         // Get the number of bytes in the vertical slice for full rows
         let full_rows = block_size / self.row_size();
         let full_row_bytes = full_rows * self.row_size();
@@ -60,12 +65,12 @@ impl EcSchema {
             full_row_bytes, remaining_block_bytes
         );
         let bytes_in_last_row: usize =
-            if remaining_block_bytes < data_unit as usize * self.cell_size as usize {
+            if remaining_block_bytes < index as usize * self.cell_size as usize {
                 0
-            } else if remaining_block_bytes > (data_unit + 1) as usize * self.cell_size as usize {
+            } else if remaining_block_bytes > (index + 1) as usize * self.cell_size as usize {
                 self.cell_size as usize
             } else {
-                remaining_block_bytes - data_unit as usize * self.cell_size as usize
+                remaining_block_bytes - index as usize * self.cell_size as usize
             };
         full_rows * self.cell_size as usize + bytes_in_last_row
     }
@@ -366,6 +371,13 @@ impl BlockReader {
         offset: usize,
         len: usize,
     ) -> Result<BytesMut> {
+        #[cfg(feature = "integration-test")]
+        if let Some(fault_injection) = crate::test::EC_FAULT_INJECTOR.lock().unwrap().as_ref() {
+            if fault_injection.fail_blocks.contains(&(index as usize)) {
+                return Err(HdfsError::InternalError("Testing error".to_string()));
+            }
+        }
+
         let mut buf = BytesMut::zeroed(len);
         if let Some(datanode_info) = datanode {
             let max_block_offset =
@@ -384,7 +396,12 @@ impl BlockReader {
             block.block_id += index as u64;
 
             // The token of the first block is the main one, then all the rest are in the `block_tokens` list
-            let token = &self.block.block_tokens[index as usize];
+            let token = &self.block.block_tokens[self
+                .block
+                .block_indices()
+                .iter()
+                .position(|x| *x == index)
+                .unwrap() as usize];
 
             self.read_from_datanode(
                 &datanode_info.id,
