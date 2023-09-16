@@ -1,10 +1,13 @@
-use bytes::{BufMut, Bytes};
-use log::{debug, error, warn};
+use std::collections::HashMap;
+
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use futures::future::join_all;
+use log::{debug, error, info, warn};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     hdfs::connection::{DatanodeConnection, Op},
-    proto::hdfs,
+    proto::{common, hdfs},
     HdfsError, Result,
 };
 
@@ -13,17 +16,140 @@ use super::connection::Packet;
 const HEART_BEAT_SEQNO: i64 = -1;
 const UNKNOWN_SEQNO: i64 = -1;
 
+const RS_CODEC_NAME: &str = "rs";
+const RS_LEGACY_CODEC_NAME: &str = "rs-legacy";
+const XOR_CODEC_NAME: &str = "xor";
+const DEFAULT_EC_CELL_SIZE: usize = 1024 * 1024;
+
+#[derive(Debug, Clone)]
+pub(crate) struct EcSchema {
+    pub codec_name: String,
+    pub data_units: usize,
+    pub parity_units: usize,
+    pub cell_size: usize,
+}
+
+impl EcSchema {
+    fn row_size(&self) -> usize {
+        self.cell_size * self.data_units
+    }
+
+    /// Returns the cell number (0-based) containing the offset
+    fn cell_for_offset(&self, offset: usize) -> usize {
+        offset / self.cell_size
+    }
+
+    fn row_for_cell(&self, cell_id: usize) -> usize {
+        cell_id / self.data_units
+    }
+
+    fn offset_for_row(&self, row_id: usize) -> usize {
+        row_id * self.cell_size
+    }
+
+    fn max_offset(&self, index: usize, block_size: usize) -> usize {
+        // If it's a parity cell, the full cell should be populated
+        if index >= self.data_units {
+            return block_size;
+        }
+
+        // Get the number of bytes in the vertical slice for full rows
+        let full_rows = block_size / self.row_size();
+        let full_row_bytes = full_rows * self.row_size();
+
+        let remaining_block_bytes = block_size - full_row_bytes;
+
+        info!(
+            "Getting max offset. full_row_bytes: {}, remaining_block_bytes: {}",
+            full_row_bytes, remaining_block_bytes
+        );
+        let bytes_in_last_row: usize = if remaining_block_bytes < index as usize * self.cell_size {
+            0
+        } else if remaining_block_bytes > (index + 1) as usize * self.cell_size {
+            self.cell_size
+        } else {
+            remaining_block_bytes - index as usize * self.cell_size
+        };
+        full_rows * self.cell_size + bytes_in_last_row
+    }
+}
+
+/// Hadoop hard codes a default list of EC policies by ID
+pub(crate) fn resolve_ec_policy(policy: &hdfs::ErasureCodingPolicyProto) -> Result<EcSchema> {
+    if let Some(schema) = policy.schema.as_ref() {
+        return Ok(EcSchema {
+            codec_name: schema.codec_name.clone(),
+            data_units: schema.data_units as usize,
+            parity_units: schema.parity_units as usize,
+            cell_size: policy.cell_size() as usize,
+        });
+    }
+
+    match policy.id {
+        // RS-6-3-1024k
+        1 => Ok(EcSchema {
+            codec_name: RS_CODEC_NAME.to_string(),
+            data_units: 6,
+            parity_units: 3,
+            cell_size: DEFAULT_EC_CELL_SIZE,
+        }),
+        // RS-3-2-1024k
+        2 => Ok(EcSchema {
+            codec_name: RS_CODEC_NAME.to_string(),
+            data_units: 3,
+            parity_units: 2,
+            cell_size: DEFAULT_EC_CELL_SIZE,
+        }),
+        // RS-6-3-1024k
+        3 => Ok(EcSchema {
+            codec_name: RS_LEGACY_CODEC_NAME.to_string(),
+            data_units: 6,
+            parity_units: 3,
+            cell_size: DEFAULT_EC_CELL_SIZE,
+        }),
+        // XOR-2-1-1024k
+        4 => Ok(EcSchema {
+            codec_name: XOR_CODEC_NAME.to_string(),
+            data_units: 2,
+            parity_units: 1,
+            cell_size: DEFAULT_EC_CELL_SIZE,
+        }),
+        // RS-10-4-1024k
+        5 => Ok(EcSchema {
+            codec_name: RS_CODEC_NAME.to_string(),
+            data_units: 10,
+            parity_units: 4,
+            cell_size: DEFAULT_EC_CELL_SIZE,
+        }),
+        _ => Err(HdfsError::UnsupportedErasureCodingPolicy(format!(
+            "ID: {}",
+            policy.id
+        ))),
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct BlockReader {
     block: hdfs::LocatedBlockProto,
+    ec_schema: Option<EcSchema>,
     offset: usize,
     pub(crate) len: usize,
 }
 
 impl BlockReader {
-    pub fn new(block: hdfs::LocatedBlockProto, offset: usize, len: usize) -> Self {
+    pub fn new(
+        block: hdfs::LocatedBlockProto,
+        ec_schema: Option<EcSchema>,
+        offset: usize,
+        len: usize,
+    ) -> Self {
         assert!(len > 0);
-        BlockReader { block, offset, len }
+        BlockReader {
+            block,
+            ec_schema,
+            offset,
+            len,
+        }
     }
 
     /// Select a best order to try the datanodes in. For now just use the order we
@@ -34,10 +160,27 @@ impl BlockReader {
 
     pub(crate) async fn read(&self, buf: &mut [u8]) -> Result<()> {
         assert!(buf.len() == self.len);
+        if let Some(ec_schema) = self.ec_schema.as_ref() {
+            self.read_striped(ec_schema, buf).await
+        } else {
+            self.read_replicated(buf).await
+        }
+    }
+
+    async fn read_replicated(&self, buf: &mut [u8]) -> Result<()> {
         let datanodes = self.choose_datanodes();
         let mut index = 0;
         loop {
-            let result = self.read_from_datanode(datanodes[index], buf).await;
+            let result = self
+                .read_from_datanode(
+                    datanodes[index],
+                    &self.block.b,
+                    &self.block.block_token,
+                    self.offset,
+                    self.len,
+                    buf,
+                )
+                .await;
             if result.is_ok() || index >= datanodes.len() - 1 {
                 return Ok(result?);
             } else {
@@ -47,36 +190,253 @@ impl BlockReader {
         }
     }
 
+    /// Erasure coded data is stored in "cells" that are striped across Data Nodes.
+    /// An example of what 3-2-1024k cells would look like:
+    /// ----------------------------------------------
+    /// | blk_0  | blk_1  | blk_2  | blk_3  | blk_4  |
+    /// |--------|--------|--------|--------|--------|
+    /// | cell_0 | cell_1 | cell_2 | parity | parity |
+    /// | cell_3 | cell_4 | cell_5 | parity | parity |
+    /// ----------------------------------------------
+    ///
+    /// Where cell_0 contains the first 1024k bytes, cell_1 contains the next 1024k bytes, and so on.
+    ///
+    /// For an initial, simple implementation, determine the cells containing the start and end
+    /// of the range being requested, and request all "rows" or horizontal stripes of data containing
+    /// and between the start and end cell. So if the read range starts in cell_1 and ends in cell_4,
+    /// simply read all data blocks for cell_0 through cell_5.
+    ///
+    /// We then convert these logical horizontal stripes into vertical stripes to read from each block/DataNode.
+    /// In this case, we will have one read for cell_0 and cell_3 from blk_0, one for cell_1 and cell_4 from blk_1,
+    /// and one for cell_2 and cell_5 from blk_2. If all of these reads succeed, we know we have everything we need
+    /// to reconstruct the data being requested. If any read fails, we will then request the parity cells for the same
+    /// vertical range of cells. If more data block reads fail then parity blocks exist, the read will fail.
+    ///
+    /// Once we have enough of the vertical stripes, we can then convert those back into horizontal stripes to
+    /// re-create each "row" of data. Then we simply need to take the range being requested out of the range
+    /// we reconstructed.
+    ///
+    /// In the future we can look at making this more efficient by not reading as many extra cells that aren't
+    /// part of the range being requested at all. Currently the overhead of not doing this would be up to
+    /// `data_units * cell_size * 2` of extra data being read from disk (basically two extra "rows" of data).
+    async fn read_striped(&self, ec_schema: &EcSchema, mut buf: &mut [u8]) -> Result<()> {
+        // Cell IDs for the range we are reading, inclusive
+        let starting_cell = ec_schema.cell_for_offset(self.offset);
+        let ending_cell = ec_schema.cell_for_offset(self.offset + self.len - 1);
+
+        // Logical rows or horizontal stripes we need to read, tail-exclusive
+        let starting_row = ec_schema.row_for_cell(starting_cell);
+        let ending_row = ec_schema.row_for_cell(ending_cell) + 1;
+
+        // Block start/end within each vertical stripe, tail-exclusive
+        let block_start = ec_schema.offset_for_row(starting_row);
+        let block_end = ec_schema.offset_for_row(ending_row);
+        let block_read_len = block_end - block_start;
+
+        assert_eq!(self.block.block_indices().len(), self.block.locs.len());
+        let block_map: HashMap<u8, &hdfs::DatanodeInfoProto> = self
+            .block
+            .block_indices()
+            .iter()
+            .map(|i| *i)
+            .zip(self.block.locs.iter())
+            .collect();
+
+        let mut stripe_results: Vec<Option<BytesMut>> =
+            vec![None; ec_schema.data_units + ec_schema.parity_units];
+
+        let mut futures = Vec::new();
+
+        for index in 0..ec_schema.data_units as u8 {
+            futures.push(self.read_vertical_stripe(
+                ec_schema,
+                index,
+                block_map.get(&index),
+                block_start,
+                block_read_len,
+            ));
+        }
+
+        // Do the actual reads and count how many data blocks failed
+        let mut failed_data_blocks = 0usize;
+        for (index, result) in join_all(futures).await.into_iter().enumerate() {
+            if let Ok(bytes) = result {
+                stripe_results[index] = Some(bytes);
+            } else {
+                failed_data_blocks += 1;
+            }
+        }
+
+        let mut blocks_needed = failed_data_blocks;
+        let mut parity_unit = 0usize;
+        while blocks_needed > 0 && parity_unit < ec_schema.parity_units {
+            let block_index = (ec_schema.data_units + parity_unit) as u8;
+            let datanode_info = block_map.get(&block_index).unwrap();
+            let result = self
+                .read_vertical_stripe(
+                    ec_schema,
+                    block_index,
+                    Some(&&datanode_info),
+                    block_start,
+                    block_read_len,
+                )
+                .await;
+
+            if let Ok(bytes) = result {
+                stripe_results[block_index as usize] = Some(bytes);
+                blocks_needed -= 1;
+            }
+            parity_unit += 1;
+        }
+
+        let decoded_bufs = self.ec_decode(ec_schema, stripe_results)?;
+        let mut bytes_to_skip =
+            self.offset - starting_row * ec_schema.data_units * ec_schema.cell_size;
+        let mut bytes_to_write = self.len;
+        for mut cell in decoded_bufs.into_iter() {
+            if bytes_to_skip > 0 {
+                if cell.len() > bytes_to_skip {
+                    bytes_to_skip -= cell.len();
+                    continue;
+                } else {
+                    cell.advance(bytes_to_skip);
+                    bytes_to_skip = 0;
+                }
+            }
+
+            if cell.len() >= bytes_to_write {
+                buf.put(cell.split_to(bytes_to_write));
+                break;
+            } else {
+                bytes_to_write -= cell.len();
+                buf.put(cell);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn ec_decode(
+        &self,
+        ec_schema: &EcSchema,
+        mut vertical_stripes: Vec<Option<BytesMut>>,
+    ) -> Result<Vec<Bytes>> {
+        let mut cells: Vec<Bytes> = Vec::new();
+        if !vertical_stripes
+            .iter()
+            .enumerate()
+            .all(|(index, stripe)| stripe.is_some() || index >= ec_schema.data_units)
+        {
+            // Always fail until decoding is figured outw it the right matrix
+            return Err(HdfsError::UnsupportedErasureCodingPolicy(
+                ec_schema.codec_name.clone(),
+            ));
+        }
+
+        while vertical_stripes[0].as_ref().is_some_and(|b| !b.is_empty()) {
+            for index in 0..ec_schema.data_units {
+                cells.push(
+                    vertical_stripes[index as usize]
+                        .as_mut()
+                        .unwrap()
+                        .split_to(ec_schema.cell_size)
+                        .freeze(),
+                )
+            }
+        }
+
+        Ok(cells)
+    }
+
+    async fn read_vertical_stripe(
+        &self,
+        ec_schema: &EcSchema,
+        index: u8,
+        datanode: Option<&&hdfs::DatanodeInfoProto>,
+        offset: usize,
+        len: usize,
+    ) -> Result<BytesMut> {
+        #[cfg(feature = "integration-test")]
+        if let Some(fault_injection) = crate::test::EC_FAULT_INJECTOR.lock().unwrap().as_ref() {
+            if fault_injection.fail_blocks.contains(&(index as usize)) {
+                return Err(HdfsError::InternalError("Testing error".to_string()));
+            }
+        }
+
+        let mut buf = BytesMut::zeroed(len);
+        if let Some(datanode_info) = datanode {
+            let max_block_offset =
+                ec_schema.max_offset(index as usize, self.block.b.num_bytes() as usize);
+
+            let read_len = usize::min(len, max_block_offset - offset);
+
+            // Each vertical stripe has a block ID of the original located block ID + block index
+            // That was fun to figure out
+            let mut block = self.block.b.clone();
+            block.block_id += index as u64;
+
+            // The token of the first block is the main one, then all the rest are in the `block_tokens` list
+            let token = &self.block.block_tokens[self
+                .block
+                .block_indices()
+                .iter()
+                .position(|x| *x == index)
+                .unwrap() as usize];
+
+            self.read_from_datanode(
+                &datanode_info.id,
+                &block,
+                &token,
+                offset,
+                read_len,
+                &mut buf,
+            )
+            .await?;
+        }
+
+        Ok(buf)
+    }
+
     async fn read_from_datanode(
         &self,
         datanode: &hdfs::DatanodeIdProto,
+        block: &hdfs::ExtendedBlockProto,
+        token: &common::TokenProto,
+        offset: usize,
+        len: usize,
         mut buf: &mut [u8],
     ) -> Result<()> {
+        assert!(len > 0);
+
         let mut conn =
             DatanodeConnection::connect(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
                 .await?;
 
         let mut message = hdfs::OpReadBlockProto::default();
-        message.header = conn.build_header(&self.block.b, Some(self.block.block_token.clone()));
-        message.offset = self.offset as u64;
-        message.len = self.len as u64;
+        message.header = conn.build_header(&block, Some(token.clone()));
+        message.offset = offset as u64;
+        message.len = len as u64;
         message.send_checksums = Some(false);
+
+        debug!("Block read op request {:?}", &message);
 
         conn.send(Op::ReadBlock, &message).await?;
         let response = conn.read_block_op_response().await?;
         debug!("Block read op response {:?}", response);
 
+        if response.status() != hdfs::Status::Success {
+            return Err(HdfsError::DataTransferError(response.message().to_string()));
+        }
+
         // First handle the offset into the first packet
         let mut packet = conn.read_packet().await?;
-        let packet_offset = self.offset - packet.header.offset_in_block as usize;
+        let packet_offset = offset - packet.header.offset_in_block as usize;
         let data_len = packet.header.data_len as usize - packet_offset;
-        let data_to_read = usize::min(data_len, self.len);
-        let mut data_left = self.len - data_to_read;
-        buf.put(
-            packet
-                .get_data()
-                .slice(packet_offset..(packet_offset + data_to_read)),
-        );
+        let data_to_read = usize::min(data_len, len);
+        let mut data_left = len - data_to_read;
+
+        let packet_data = packet.get_data();
+        buf.put(packet_data.slice(packet_offset..(packet_offset + data_to_read)));
 
         while data_left > 0 {
             packet = conn.read_packet().await?;
@@ -138,11 +498,11 @@ impl BlockWriter {
         message.storage_id = Some(block.storage_i_ds[0].clone());
         message.target_storage_ids = block.storage_i_ds[1..].to_vec();
 
-        debug!("sending write block message: {:?}", &message);
+        debug!("Block write request: {:?}", &message);
 
         connection.send(Op::WriteBlock, &message).await?;
         let response = connection.read_block_op_response().await?;
-        debug!("block write response: {:?}", response);
+        debug!("Block write response: {:?}", response);
 
         // Channel for receiving acks from the datanode
         let (ack_response_sender, ack_response_receiver) =

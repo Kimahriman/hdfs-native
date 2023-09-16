@@ -1,6 +1,8 @@
 use std::{
     collections::HashSet,
+    env,
     io::{BufRead, BufReader, Write},
+    path::PathBuf,
     process::{Child, Command, Stdio},
 };
 use which::which;
@@ -12,11 +14,11 @@ pub(crate) enum DfsFeatures {
     #[cfg(feature = "kerberos")]
     PRIVACY,
     HA,
+    EC,
 }
 
 pub(crate) struct MiniDfs {
     process: Child,
-    pub krb_conf: Option<String>,
     pub url: String,
 }
 
@@ -32,6 +34,7 @@ impl MiniDfs {
                 #[cfg(feature = "kerberos")]
                 DfsFeatures::PRIVACY => "privacy",
                 DfsFeatures::HA => "ha",
+                DfsFeatures::EC => "ec",
             };
             feature_args.push(s);
         }
@@ -63,11 +66,39 @@ impl MiniDfs {
             }
             panic!();
         }
-        let krb_conf = if features.contains(&DfsFeatures::SECURITY) {
-            Some(output.next().unwrap().unwrap())
-        } else {
-            None
-        };
+        if features.contains(&DfsFeatures::SECURITY) {
+            let krb_conf = output.next().unwrap().unwrap();
+            let kdestroy_exec = which("kdestroy").expect("Failed to find kdestroy executable");
+            Command::new(kdestroy_exec).spawn().unwrap().wait().unwrap();
+
+            if !PathBuf::from("target/test/hdfs.keytab").exists() {
+                panic!("Failed to find keytab");
+            }
+
+            if !PathBuf::from(&krb_conf).exists() {
+                panic!("Failed to find krb5.conf");
+            }
+
+            env::set_var("KRB5_CONFIG", &krb_conf);
+            env::set_var(
+                "HADOOP_OPTS",
+                &format!("-Djava.security.krb5.conf={}", &krb_conf),
+            );
+
+            // If we testing token auth, set the path to the file and make sure we don't have an old kinit, otherwise kinit
+            if features.contains(&DfsFeatures::TOKEN) {
+                env::set_var("HADOOP_TOKEN_FILE_LOCATION", "target/test/delegation_token");
+            } else {
+                let kinit_exec = which("kinit").expect("Failed to find kinit executable");
+                env::set_var("KRB5CCNAME", "FILE:target/test/krbcache");
+                Command::new(kinit_exec)
+                    .args(["-kt", "target/test/hdfs.keytab", "hdfs/localhost"])
+                    .spawn()
+                    .unwrap()
+                    .wait()
+                    .unwrap();
+            }
+        }
 
         let url = if features.contains(&DfsFeatures::HA) {
             "hdfs://minidfs-ns"
@@ -75,9 +106,10 @@ impl MiniDfs {
             "hdfs://127.0.0.1:9000"
         };
 
+        env::set_var("HADOOP_CONF_DIR", "target/test");
+
         MiniDfs {
             process: child,
-            krb_conf,
             url: url.to_string(),
         }
     }

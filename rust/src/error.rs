@@ -21,6 +21,8 @@ pub enum HdfsError {
     BlocksNotFound(String),
     #[error("path is a directory")]
     IsADirectoryError(String),
+    #[error("unsupported erasure coding policy")]
+    UnsupportedErasureCodingPolicy(String),
     #[error("operation not supported")]
     UnsupportedFeature(String),
     #[error("interal error, this shouldn't happen")]

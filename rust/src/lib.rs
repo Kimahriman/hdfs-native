@@ -44,3 +44,7 @@ pub use client::Client;
 pub use client::WriteOptions;
 pub use error::HdfsError;
 pub use error::Result;
+
+// Module for testing hooks into non-test code
+#[cfg(feature = "integration-test")]
+pub mod test;

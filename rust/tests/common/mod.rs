@@ -1,17 +1,16 @@
+pub(crate) mod ec;
 pub(crate) mod minidfs;
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
 use hdfs_native::client::WriteOptions;
-#[cfg(feature = "object_store")]
-use hdfs_native::object_store::HdfsObjectStore;
 use hdfs_native::{client::Client, Result};
 use std::collections::HashSet;
-use std::env;
 use std::io::{BufWriter, Write};
-use std::path::PathBuf;
 use std::process::Command;
 use tempfile::NamedTempFile;
 use which::which;
+#[cfg(feature = "object_store")]
+use {bytes::Bytes, hdfs_native::object_store::HdfsObjectStore};
 
 use crate::common::minidfs::MiniDfs;
 
@@ -23,43 +22,6 @@ fn setup(features: &HashSet<DfsFeatures>) -> MiniDfs {
     let hadoop_exc = which("hadoop").expect("Failed to find hadoop executable");
 
     let dfs = MiniDfs::with_features(features);
-
-    env::set_var("HADOOP_CONF_DIR", "target/test");
-
-    if features.contains(&DfsFeatures::SECURITY) {
-        let kdestroy_exec = which("kdestroy").expect("Failed to find kdestroy executable");
-        Command::new(kdestroy_exec).spawn().unwrap().wait().unwrap();
-
-        if !PathBuf::from("target/test/hdfs.keytab").exists() {
-            panic!("Failed to find keytab");
-        }
-
-        let krb_conf = dfs.krb_conf.as_ref().unwrap();
-
-        if !PathBuf::from(krb_conf).exists() {
-            panic!("Failed to find krb5.conf");
-        }
-
-        env::set_var("KRB5_CONFIG", krb_conf);
-        env::set_var(
-            "HADOOP_OPTS",
-            &format!("-Djava.security.krb5.conf={}", krb_conf),
-        );
-
-        // If we testing token auth, set the path to the file and make sure we don't have an old kinit, otherwise kinit
-        if features.contains(&DfsFeatures::TOKEN) {
-            env::set_var("HADOOP_TOKEN_FILE_LOCATION", "target/test/delegation_token");
-        } else {
-            let kinit_exec = which("kinit").expect("Failed to find kinit executable");
-            env::set_var("KRB5CCNAME", "FILE:target/test/krbcache");
-            Command::new(kinit_exec)
-                .args(["-kt", "target/test/hdfs.keytab", "hdfs/localhost"])
-                .spawn()
-                .unwrap()
-                .wait()
-                .unwrap();
-        }
-    }
 
     let mut file = NamedTempFile::new_in("target/test").unwrap();
     {

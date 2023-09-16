@@ -7,6 +7,9 @@ import java.util.HashSet;
 import java.util.Set;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.hdfs.HdfsConfiguration;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
 import org.apache.hadoop.hdfs.MiniDFSNNTopology;
@@ -62,18 +65,34 @@ public class Main {
             conf.set(DFSConfigKeys.DFS_HA_TAILEDITS_INPROGRESS_KEY, "true");
         }
 
+        int numDataNodes = 1;
+        if (flags.contains("ec")) {
+            numDataNodes = 5;
+        }
+
         HdfsConfiguration hdfsConf = new HdfsConfiguration(conf);
         MiniDFSCluster dfs = new MiniDFSCluster.Builder(hdfsConf)
             .nameNodePort(9000)
+            .nameNodeHttpPort(9870)
             .nnTopology(nnTopology)
+            .numDataNodes(5)
             .build();
 
         hdfsConf.writeXml(new FileOutputStream("target/test/core-site.xml"));
         dfs.waitActive();
 
+        int activeNamenode = 0;
         if (flags.contains("ha")) {
+            activeNamenode = 2;
             // dfs.transitionToObserver(1);
-            dfs.transitionToActive(2);
+            dfs.transitionToActive(activeNamenode);
+        }
+
+        if (flags.contains("ec")) {
+            DistributedFileSystem fs = dfs.getFileSystem(activeNamenode);
+            fs.enableErasureCodingPolicy("RS-3-2-1024k");
+            fs.mkdirs(new Path("/ec"), new FsPermission("755"));
+            fs.setErasureCodingPolicy(new Path("/ec"), "RS-3-2-1024k");
         }
 
         if (flags.contains("token")) {
