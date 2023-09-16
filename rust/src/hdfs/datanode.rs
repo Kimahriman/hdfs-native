@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures::future::join_all;
 use log::{debug, error, info, warn};
-use reed_solomon_erasure::galois_8::ReedSolomon;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
@@ -20,35 +19,35 @@ const UNKNOWN_SEQNO: i64 = -1;
 const RS_CODEC_NAME: &str = "rs";
 const RS_LEGACY_CODEC_NAME: &str = "rs-legacy";
 const XOR_CODEC_NAME: &str = "xor";
-const DEFAULT_EC_CELL_SIZE: u32 = 1024 * 1024;
+const DEFAULT_EC_CELL_SIZE: usize = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub(crate) struct EcSchema {
     pub codec_name: String,
-    pub data_units: u32,
-    pub parity_units: u32,
-    pub cell_size: u32,
+    pub data_units: usize,
+    pub parity_units: usize,
+    pub cell_size: usize,
 }
 
 impl EcSchema {
     fn row_size(&self) -> usize {
-        self.cell_size as usize * self.data_units as usize
+        self.cell_size * self.data_units
     }
 
     /// Returns the cell number (0-based) containing the offset
     fn cell_for_offset(&self, offset: usize) -> usize {
-        offset / self.cell_size as usize
+        offset / self.cell_size
     }
 
     fn row_for_cell(&self, cell_id: usize) -> usize {
-        cell_id / self.data_units as usize
+        cell_id / self.data_units
     }
 
     fn offset_for_row(&self, row_id: usize) -> usize {
-        row_id * self.cell_size as usize
+        row_id * self.cell_size
     }
 
-    fn max_offset(&self, index: u32, block_size: usize) -> usize {
+    fn max_offset(&self, index: usize, block_size: usize) -> usize {
         // If it's a parity cell, the full cell should be populated
         if index >= self.data_units {
             return block_size;
@@ -64,15 +63,14 @@ impl EcSchema {
             "Getting max offset. full_row_bytes: {}, remaining_block_bytes: {}",
             full_row_bytes, remaining_block_bytes
         );
-        let bytes_in_last_row: usize =
-            if remaining_block_bytes < index as usize * self.cell_size as usize {
-                0
-            } else if remaining_block_bytes > (index + 1) as usize * self.cell_size as usize {
-                self.cell_size as usize
-            } else {
-                remaining_block_bytes - index as usize * self.cell_size as usize
-            };
-        full_rows * self.cell_size as usize + bytes_in_last_row
+        let bytes_in_last_row: usize = if remaining_block_bytes < index as usize * self.cell_size {
+            0
+        } else if remaining_block_bytes > (index + 1) as usize * self.cell_size {
+            self.cell_size
+        } else {
+            remaining_block_bytes - index as usize * self.cell_size
+        };
+        full_rows * self.cell_size + bytes_in_last_row
     }
 }
 
@@ -81,9 +79,9 @@ pub(crate) fn resolve_ec_policy(policy: &hdfs::ErasureCodingPolicyProto) -> Resu
     if let Some(schema) = policy.schema.as_ref() {
         return Ok(EcSchema {
             codec_name: schema.codec_name.clone(),
-            data_units: schema.data_units,
-            parity_units: schema.parity_units,
-            cell_size: policy.cell_size(),
+            data_units: schema.data_units as usize,
+            parity_units: schema.parity_units as usize,
+            cell_size: policy.cell_size() as usize,
         });
     }
 
@@ -235,11 +233,6 @@ impl BlockReader {
         let block_end = ec_schema.offset_for_row(ending_row);
         let block_read_len = block_end - block_start;
 
-        debug!(
-            "block_start {}, block_end {}, block_read_len {}",
-            block_start, block_end, block_read_len
-        );
-
         assert_eq!(self.block.block_indices().len(), self.block.locs.len());
         let block_map: HashMap<u8, &hdfs::DatanodeInfoProto> = self
             .block
@@ -250,7 +243,7 @@ impl BlockReader {
             .collect();
 
         let mut stripe_results: Vec<Option<BytesMut>> =
-            vec![None; (ec_schema.data_units + ec_schema.parity_units) as usize];
+            vec![None; ec_schema.data_units + ec_schema.parity_units];
 
         let mut futures = Vec::new();
 
@@ -265,7 +258,7 @@ impl BlockReader {
         }
 
         // Do the actual reads and count how many data blocks failed
-        let mut failed_data_blocks = 0u32;
+        let mut failed_data_blocks = 0usize;
         for (index, result) in join_all(futures).await.into_iter().enumerate() {
             if let Ok(bytes) = result {
                 stripe_results[index] = Some(bytes);
@@ -274,10 +267,8 @@ impl BlockReader {
             }
         }
 
-        debug!("Failed blocks: {}", failed_data_blocks);
-
         let mut blocks_needed = failed_data_blocks;
-        let mut parity_unit = 0u32;
+        let mut parity_unit = 0usize;
         while blocks_needed > 0 && parity_unit < ec_schema.parity_units {
             let block_index = (ec_schema.data_units + parity_unit) as u8;
             let datanode_info = block_map.get(&block_index).unwrap();
@@ -299,8 +290,8 @@ impl BlockReader {
         }
 
         let decoded_bufs = self.ec_decode(ec_schema, stripe_results)?;
-        let mut bytes_to_skip = self.offset
-            - starting_row * ec_schema.data_units as usize * ec_schema.cell_size as usize;
+        let mut bytes_to_skip =
+            self.offset - starting_row * ec_schema.data_units * ec_schema.cell_size;
         let mut bytes_to_write = self.len;
         for mut cell in decoded_bufs.into_iter() {
             if bytes_to_skip > 0 {
@@ -334,18 +325,12 @@ impl BlockReader {
         if !vertical_stripes
             .iter()
             .enumerate()
-            .all(|(index, stripe)| stripe.is_some() || index >= ec_schema.data_units as usize)
+            .all(|(index, stripe)| stripe.is_some() || index >= ec_schema.data_units)
         {
-            if ec_schema.codec_name != "rs" {
-                return Err(HdfsError::UnsupportedErasureCodingPolicy(
-                    ec_schema.codec_name.clone(),
-                ));
-            }
-            let codec = ReedSolomon::new(
-                ec_schema.data_units as usize,
-                ec_schema.parity_units as usize,
-            )?;
-            codec.reconstruct_data(&mut vertical_stripes)?;
+            // Always fail until decoding is figured outw it the right matrix
+            return Err(HdfsError::UnsupportedErasureCodingPolicy(
+                ec_schema.codec_name.clone(),
+            ));
         }
 
         while vertical_stripes[0].as_ref().is_some_and(|b| !b.is_empty()) {
@@ -354,7 +339,7 @@ impl BlockReader {
                     vertical_stripes[index as usize]
                         .as_mut()
                         .unwrap()
-                        .split_to(ec_schema.cell_size as usize)
+                        .split_to(ec_schema.cell_size)
                         .freeze(),
                 )
             }
@@ -381,14 +366,9 @@ impl BlockReader {
         let mut buf = BytesMut::zeroed(len);
         if let Some(datanode_info) = datanode {
             let max_block_offset =
-                ec_schema.max_offset(index as u32, self.block.b.num_bytes() as usize);
+                ec_schema.max_offset(index as usize, self.block.b.num_bytes() as usize);
 
             let read_len = usize::min(len, max_block_offset - offset);
-
-            debug!(
-                "Reading from datanode {} of len {}, max offset {}",
-                index, len, max_block_offset
-            );
 
             // Each vertical stripe has a block ID of the original located block ID + block index
             // That was fun to figure out
@@ -448,8 +428,6 @@ impl BlockReader {
             return Err(HdfsError::DataTransferError(response.message().to_string()));
         }
 
-        debug!("Length of provided buf {:?}", buf.len());
-
         // First handle the offset into the first packet
         let mut packet = conn.read_packet().await?;
         let packet_offset = offset - packet.header.offset_in_block as usize;
@@ -458,9 +436,7 @@ impl BlockReader {
         let mut data_left = len - data_to_read;
 
         let packet_data = packet.get_data();
-        debug!("Got first packet: {}", packet_data.len());
         buf.put(packet_data.slice(packet_offset..(packet_offset + data_to_read)));
-        debug!("Put into buf");
 
         while data_left > 0 {
             packet = conn.read_packet().await?;
@@ -522,11 +498,11 @@ impl BlockWriter {
         message.storage_id = Some(block.storage_i_ds[0].clone());
         message.target_storage_ids = block.storage_i_ds[1..].to_vec();
 
-        debug!("sending write block message: {:?}", &message);
+        debug!("Block write request: {:?}", &message);
 
         connection.send(Op::WriteBlock, &message).await?;
         let response = connection.read_block_op_response().await?;
-        debug!("block write response: {:?}", response);
+        debug!("Block write response: {:?}", response);
 
         // Channel for receiving acks from the datanode
         let (ack_response_sender, ack_response_receiver) =
