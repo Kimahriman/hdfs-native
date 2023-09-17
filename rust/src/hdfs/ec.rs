@@ -188,12 +188,12 @@ fn gen_rs_matrix(data_units: usize, parity_units: usize) -> Result<Matrix<Field>
 
 #[cfg(test)]
 mod test {
-    use crate::hdfs::ec::gen_rs_matrix;
     use crate::Result;
 
     #[cfg(feature = "rs")]
     #[test]
     fn test_build_rs_matrix() -> Result<()> {
+        use super::gen_rs_matrix;
         use reed_solomon_erasure::matrix::Matrix;
 
         // These examples were taken directly from the matrices created by Hadoop via RSUtil.genCauchyMatrix
