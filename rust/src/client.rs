@@ -10,7 +10,7 @@ use url::Url;
 use crate::common::config::Configuration;
 use crate::error::{HdfsError, Result};
 use crate::file::{FileReader, FileWriter};
-use crate::hdfs::datanode::resolve_ec_policy;
+use crate::hdfs::ec::resolve_ec_policy;
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;

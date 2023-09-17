@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures::future::join_all;
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
@@ -11,122 +11,10 @@ use crate::{
     HdfsError, Result,
 };
 
-use super::connection::Packet;
+use super::{connection::Packet, ec::EcSchema};
 
 const HEART_BEAT_SEQNO: i64 = -1;
 const UNKNOWN_SEQNO: i64 = -1;
-
-const RS_CODEC_NAME: &str = "rs";
-const RS_LEGACY_CODEC_NAME: &str = "rs-legacy";
-const XOR_CODEC_NAME: &str = "xor";
-const DEFAULT_EC_CELL_SIZE: usize = 1024 * 1024;
-
-#[derive(Debug, Clone)]
-pub(crate) struct EcSchema {
-    pub codec_name: String,
-    pub data_units: usize,
-    pub parity_units: usize,
-    pub cell_size: usize,
-}
-
-impl EcSchema {
-    fn row_size(&self) -> usize {
-        self.cell_size * self.data_units
-    }
-
-    /// Returns the cell number (0-based) containing the offset
-    fn cell_for_offset(&self, offset: usize) -> usize {
-        offset / self.cell_size
-    }
-
-    fn row_for_cell(&self, cell_id: usize) -> usize {
-        cell_id / self.data_units
-    }
-
-    fn offset_for_row(&self, row_id: usize) -> usize {
-        row_id * self.cell_size
-    }
-
-    fn max_offset(&self, index: usize, block_size: usize) -> usize {
-        // If it's a parity cell, the full cell should be populated
-        if index >= self.data_units {
-            return block_size;
-        }
-
-        // Get the number of bytes in the vertical slice for full rows
-        let full_rows = block_size / self.row_size();
-        let full_row_bytes = full_rows * self.row_size();
-
-        let remaining_block_bytes = block_size - full_row_bytes;
-
-        info!(
-            "Getting max offset. full_row_bytes: {}, remaining_block_bytes: {}",
-            full_row_bytes, remaining_block_bytes
-        );
-        let bytes_in_last_row: usize = if remaining_block_bytes < index as usize * self.cell_size {
-            0
-        } else if remaining_block_bytes > (index + 1) as usize * self.cell_size {
-            self.cell_size
-        } else {
-            remaining_block_bytes - index as usize * self.cell_size
-        };
-        full_rows * self.cell_size + bytes_in_last_row
-    }
-}
-
-/// Hadoop hard codes a default list of EC policies by ID
-pub(crate) fn resolve_ec_policy(policy: &hdfs::ErasureCodingPolicyProto) -> Result<EcSchema> {
-    if let Some(schema) = policy.schema.as_ref() {
-        return Ok(EcSchema {
-            codec_name: schema.codec_name.clone(),
-            data_units: schema.data_units as usize,
-            parity_units: schema.parity_units as usize,
-            cell_size: policy.cell_size() as usize,
-        });
-    }
-
-    match policy.id {
-        // RS-6-3-1024k
-        1 => Ok(EcSchema {
-            codec_name: RS_CODEC_NAME.to_string(),
-            data_units: 6,
-            parity_units: 3,
-            cell_size: DEFAULT_EC_CELL_SIZE,
-        }),
-        // RS-3-2-1024k
-        2 => Ok(EcSchema {
-            codec_name: RS_CODEC_NAME.to_string(),
-            data_units: 3,
-            parity_units: 2,
-            cell_size: DEFAULT_EC_CELL_SIZE,
-        }),
-        // RS-6-3-1024k
-        3 => Ok(EcSchema {
-            codec_name: RS_LEGACY_CODEC_NAME.to_string(),
-            data_units: 6,
-            parity_units: 3,
-            cell_size: DEFAULT_EC_CELL_SIZE,
-        }),
-        // XOR-2-1-1024k
-        4 => Ok(EcSchema {
-            codec_name: XOR_CODEC_NAME.to_string(),
-            data_units: 2,
-            parity_units: 1,
-            cell_size: DEFAULT_EC_CELL_SIZE,
-        }),
-        // RS-10-4-1024k
-        5 => Ok(EcSchema {
-            codec_name: RS_CODEC_NAME.to_string(),
-            data_units: 10,
-            parity_units: 4,
-            cell_size: DEFAULT_EC_CELL_SIZE,
-        }),
-        _ => Err(HdfsError::UnsupportedErasureCodingPolicy(format!(
-            "ID: {}",
-            policy.id
-        ))),
-    }
-}
 
 #[derive(Debug)]
 pub(crate) struct BlockReader {
@@ -289,7 +177,7 @@ impl BlockReader {
             parity_unit += 1;
         }
 
-        let decoded_bufs = self.ec_decode(ec_schema, stripe_results)?;
+        let decoded_bufs = ec_schema.ec_decode(stripe_results)?;
         let mut bytes_to_skip =
             self.offset - starting_row * ec_schema.data_units * ec_schema.cell_size;
         let mut bytes_to_write = self.len;
@@ -316,38 +204,6 @@ impl BlockReader {
         Ok(())
     }
 
-    fn ec_decode(
-        &self,
-        ec_schema: &EcSchema,
-        mut vertical_stripes: Vec<Option<BytesMut>>,
-    ) -> Result<Vec<Bytes>> {
-        let mut cells: Vec<Bytes> = Vec::new();
-        if !vertical_stripes
-            .iter()
-            .enumerate()
-            .all(|(index, stripe)| stripe.is_some() || index >= ec_schema.data_units)
-        {
-            // Always fail until decoding is figured outw it the right matrix
-            return Err(HdfsError::UnsupportedErasureCodingPolicy(
-                ec_schema.codec_name.clone(),
-            ));
-        }
-
-        while vertical_stripes[0].as_ref().is_some_and(|b| !b.is_empty()) {
-            for index in 0..ec_schema.data_units {
-                cells.push(
-                    vertical_stripes[index as usize]
-                        .as_mut()
-                        .unwrap()
-                        .split_to(ec_schema.cell_size)
-                        .freeze(),
-                )
-            }
-        }
-
-        Ok(cells)
-    }
-
     async fn read_vertical_stripe(
         &self,
         ec_schema: &EcSchema,
@@ -359,6 +215,7 @@ impl BlockReader {
         #[cfg(feature = "integration-test")]
         if let Some(fault_injection) = crate::test::EC_FAULT_INJECTOR.lock().unwrap().as_ref() {
             if fault_injection.fail_blocks.contains(&(index as usize)) {
+                debug!("Failing block read for {}", index);
                 return Err(HdfsError::InternalError("Testing error".to_string()));
             }
         }
