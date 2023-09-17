@@ -3,6 +3,8 @@ use std::io;
 #[cfg(feature = "kerberos")]
 use libgssapi::error::Error as GssapiError;
 use prost::DecodeError;
+#[cfg(feature = "rs")]
+use reed_solomon_erasure::Error as RSError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -23,6 +25,9 @@ pub enum HdfsError {
     IsADirectoryError(String),
     #[error("unsupported erasure coding policy")]
     UnsupportedErasureCodingPolicy(String),
+    #[cfg(feature = "rs")]
+    #[error("erasure coding error")]
+    ErasureCodingError(#[from] RSError),
     #[error("operation not supported")]
     UnsupportedFeature(String),
     #[error("interal error, this shouldn't happen")]

@@ -1,12 +1,12 @@
 use bytes::{Buf, Bytes};
 use std::collections::HashSet;
 use std::io::{self, BufWriter, Write};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use tempfile::NamedTempFile;
 use which::which;
 
 use crate::common::minidfs::{DfsFeatures, MiniDfs};
-// use hdfs_native::test::{EcFaultInjection, EC_FAULT_INJECTOR};
+use hdfs_native::test::{EcFaultInjection, EC_FAULT_INJECTOR};
 use hdfs_native::{client::Client, Result};
 
 fn create_file(url: &str, path: &str, size: usize) -> io::Result<()> {
@@ -32,6 +32,8 @@ fn create_file(url: &str, path: &str, size: usize) -> io::Result<()> {
             file.path().to_str().unwrap(),
             &format!("{}{}", url, path),
         ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     assert!(cmd.wait().unwrap().success());
@@ -55,43 +57,47 @@ async fn test_erasure_coded_read() -> Result<()> {
     let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC, DfsFeatures::SECURITY]));
     let client = Client::new(&dfs.url)?;
 
-    // Try a variety of sizes to catch any possible edge cases
-    let sizes_to_test = [
-        16usize,             // Small
-        1024 * 1024,         // One cell
-        1024 * 1024 - 4,     // Just smaller than one cell
-        1024 * 1024 + 4,     // Just bigger than one cell
-        1024 * 1024 * 3 * 5, // Five "rows" of cells
-        1024 * 1024 * 3 * 5 - 4,
-        1024 * 1024 * 3 * 5 + 4,
-        128 * 1024 * 1024,
-        128 * 1024 * 1024 - 4,
-        120 * 1024 * 1024 + 4,
-    ];
+    // Test each of Hadoop's built-in RS policies
+    for (data, parity) in [(3usize, 2usize), (6, 3), (10, 4)] {
+        let file = format!("/ec-{}-{}/testfile", data, parity);
 
-    for file_size in sizes_to_test {
-        create_file(&dfs.url, "/ec/testfile", file_size)?;
+        // Try a variety of sizes to catch any possible edge cases
+        let sizes_to_test = [
+            16usize,                // Small
+            1024 * 1024,            // One cell
+            1024 * 1024 - 4,        // Just smaller than one cell
+            1024 * 1024 + 4,        // Just bigger than one cell
+            1024 * 1024 * data * 5, // Five "rows" of cells
+            1024 * 1024 * data * 5 - 4,
+            1024 * 1024 * data * 5 + 4,
+            128 * 1024 * 1024,
+            128 * 1024 * 1024 - 4,
+            128 * 1024 * 1024 + 4,
+        ];
 
-        let reader = client.read("/ec/testfile").await?;
-        assert_eq!(reader.file_length(), file_size);
+        for file_size in sizes_to_test {
+            create_file(&dfs.url, &file, file_size)?;
 
-        // Add this back once decoding is figurd out
-        // for faults in 0..3 {
-        //     let _ = EC_FAULT_INJECTOR.lock().unwrap().insert(EcFaultInjection {
-        //         fail_blocks: (0..faults).into_iter().collect(),
-        //     });
-        let data = reader.read_range(0, reader.file_length()).await?;
-        verify_read(data, file_size);
-        // }
+            let reader = client.read(&file).await?;
+            assert_eq!(reader.file_length(), file_size);
 
-        // let _ = EC_FAULT_INJECTOR.lock().unwrap().insert(EcFaultInjection {
-        //     fail_blocks: vec![0, 1, 2],
-        // });
+            for faults in 0..parity {
+                let _ = EC_FAULT_INJECTOR.lock().unwrap().insert(EcFaultInjection {
+                    fail_blocks: (0..faults).into_iter().collect(),
+                });
+                let data = reader.read_range(0, reader.file_length()).await?;
+                verify_read(data, file_size);
+            }
 
-        // assert!(reader.read_range(0, reader.file_length()).await.is_err());
+            // Fail more than the number of parity shards, read should fail
+            let _ = EC_FAULT_INJECTOR.lock().unwrap().insert(EcFaultInjection {
+                fail_blocks: (0..=parity).into_iter().collect(),
+            });
+
+            assert!(reader.read_range(0, reader.file_length()).await.is_err());
+        }
+
+        assert!(client.delete(&file, false).await?);
     }
-
-    assert!(client.delete("/ec/testfile", false).await?);
-
     Ok(())
 }

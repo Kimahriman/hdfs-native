@@ -67,7 +67,8 @@ public class Main {
 
         int numDataNodes = 1;
         if (flags.contains("ec")) {
-            numDataNodes = 5;
+            // Enough for the largest EC policy
+            numDataNodes = 14;
         }
 
         HdfsConfiguration hdfsConf = new HdfsConfiguration(conf);
@@ -75,7 +76,7 @@ public class Main {
             .nameNodePort(9000)
             .nameNodeHttpPort(9870)
             .nnTopology(nnTopology)
-            .numDataNodes(5)
+            .numDataNodes(numDataNodes)
             .build();
 
         hdfsConf.writeXml(new FileOutputStream("target/test/core-site.xml"));
@@ -91,8 +92,13 @@ public class Main {
         if (flags.contains("ec")) {
             DistributedFileSystem fs = dfs.getFileSystem(activeNamenode);
             fs.enableErasureCodingPolicy("RS-3-2-1024k");
-            fs.mkdirs(new Path("/ec"), new FsPermission("755"));
-            fs.setErasureCodingPolicy(new Path("/ec"), "RS-3-2-1024k");
+            fs.enableErasureCodingPolicy("RS-10-4-1024k");
+            fs.mkdirs(new Path("/ec-3-2"), new FsPermission("755"));
+            fs.mkdirs(new Path("/ec-6-3"), new FsPermission("755"));
+            fs.mkdirs(new Path("/ec-10-4"), new FsPermission("755"));
+            fs.setErasureCodingPolicy(new Path("/ec-3-2"), "RS-3-2-1024k");
+            fs.setErasureCodingPolicy(new Path("/ec-6-3"), "RS-6-3-1024k");
+            fs.setErasureCodingPolicy(new Path("/ec-10-4"), "RS-10-4-1024k");
         }
 
         if (flags.contains("token")) {

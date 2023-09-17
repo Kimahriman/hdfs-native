@@ -4,11 +4,11 @@ use bytes::{Bytes, BytesMut};
 use futures::future::join_all;
 use log::debug;
 
+use crate::hdfs::datanode::{BlockReader, BlockWriter};
+use crate::hdfs::ec::EcSchema;
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::proto::hdfs;
 use crate::Result;
-
-use crate::hdfs::datanode::{BlockReader, BlockWriter, EcSchema};
 
 pub struct FileReader {
     status: hdfs::HdfsFileStatusProto,

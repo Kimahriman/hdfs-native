@@ -6,7 +6,7 @@ use hdfs_native::client::WriteOptions;
 use hdfs_native::{client::Client, Result};
 use std::collections::HashSet;
 use std::io::{BufWriter, Write};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use tempfile::NamedTempFile;
 use which::which;
 #[cfg(feature = "object_store")]
@@ -41,6 +41,8 @@ fn setup(features: &HashSet<DfsFeatures>) -> MiniDfs {
             file.path().to_str().unwrap(),
             &format!("{}/testfile", dfs.url),
         ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     assert!(cmd.wait().unwrap().success());
