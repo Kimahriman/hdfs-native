@@ -1,7 +1,7 @@
 use bytes::{Buf, Bytes};
 use std::collections::HashSet;
 use std::io::{self, BufWriter, Write};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use tempfile::NamedTempFile;
 use which::which;
 
@@ -32,6 +32,8 @@ fn create_file(url: &str, path: &str, size: usize) -> io::Result<()> {
             file.path().to_str().unwrap(),
             &format!("{}{}", url, path),
         ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     assert!(cmd.wait().unwrap().success());
