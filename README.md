@@ -17,7 +17,10 @@ Here is a list of currently supported and unsupported but possible future featur
 - [x] Name Services
 - [ ] Observer reads (state ID tracking is supported, but needs improvements on tracking Observer/Active NameNode)
 - [ ] Federated router
-- [ ] Erasure coding
+- [x] Erasure coded reads 
+    - only supported in Python release, relies on a fork of https://github.com/rust-rse/reed-solomon-erasure
+    - RS schema only, no support for RS-Legacy or XOR
+- [ ] Erasure coded writes
 
 ### Security Features
 - [x] Kerberos authentication (GSSAPI SASL support)
