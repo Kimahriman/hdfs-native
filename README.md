@@ -36,7 +36,7 @@ Here is a list of currently supported and unsupported but possible future featur
 - [x] Async support
 
 ## Supported HDFS Settings
-The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xml` in the directories `$HADOOP_CONF_DIR` or if that doesn't exist, `$HADOOP_HOME/conf`. Currently the supported configs that are used are:
+The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xml` in the directories `$HADOOP_CONF_DIR` or if that doesn't exist, `$HADOOP_HOME/etc/hadoop`. Currently the supported configs that are used are:
 - `dfs.ha.namenodes` - name service support
 - `dfs.namenode.rpc-address.*` - name service support
 
