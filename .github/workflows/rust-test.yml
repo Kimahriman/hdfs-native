@@ -45,7 +45,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install native libs
-        run: sudo apt-get install -y protobuf-compiler libkrb5-dev libgsasl-dev
+        run: sudo apt-get install -y libkrb5-dev libgsasl-dev
 
       # - name: build and lint with clippy
       #   run: cargo clippy --tests
@@ -66,7 +66,7 @@ jobs:
         run: cargo check --features object_store
 
       - name: Check all features
-        run: cargo check --features kerberos,token,object_store,rs
+        run: cargo check --features kerberos,token,object_store,rs,integration-test
 
   test:
     strategy:
@@ -100,7 +100,7 @@ jobs:
           java-version: "17"
 
       - name: Install native libs
-        run: sudo apt-get install -y protobuf-compiler libkrb5-dev libgsasl-dev krb5-user
+        run: sudo apt-get install -y libkrb5-dev libgsasl-dev krb5-user
 
       - name: Download Hadoop
         run: |

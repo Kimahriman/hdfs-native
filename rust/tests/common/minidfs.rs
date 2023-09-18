@@ -11,9 +11,9 @@ use which::which;
 pub(crate) enum DfsFeatures {
     SECURITY,
     TOKEN,
-    #[cfg(feature = "kerberos")]
     PRIVACY,
     HA,
+    #[cfg(feature = "rs")]
     EC,
 }
 
@@ -31,7 +31,6 @@ impl MiniDfs {
             let s = match feature {
                 DfsFeatures::SECURITY => "security",
                 DfsFeatures::TOKEN => "token",
-                #[cfg(feature = "kerberos")]
                 DfsFeatures::PRIVACY => "privacy",
                 DfsFeatures::HA => "ha",
                 DfsFeatures::EC => "ec",

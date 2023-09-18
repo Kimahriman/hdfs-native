@@ -1,3 +1,4 @@
+#[cfg(feature = "integration-test")]
 pub(crate) mod ec;
 pub(crate) mod minidfs;
 
