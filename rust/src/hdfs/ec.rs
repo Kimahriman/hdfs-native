@@ -186,11 +186,11 @@ fn gen_rs_matrix(data_units: usize, parity_units: usize) -> Result<Matrix<Field>
     Ok(Matrix::new_with_data(data_rows))
 }
 
+#[cfg(feature = "rs")]
 #[cfg(test)]
 mod test {
     use crate::Result;
 
-    #[cfg(feature = "rs")]
     #[test]
     fn test_build_rs_matrix() -> Result<()> {
         use super::gen_rs_matrix;

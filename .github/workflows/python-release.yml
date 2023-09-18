@@ -2,8 +2,8 @@ name: python-release
 
 on:
   push:
-    branches:
-      - master
+    # branches:
+    #   - master
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
@@ -37,7 +37,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml --features protobuf-src
+          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
           container: quay.io/pypa/manylinux2014_${{ matrix.target }}:latest
           docker-options: -e LD_LIBRARY_PATH=/opt/rh/llvm-toolset-7.0/root/usr/lib64 -e LLVM_CONFIG_PATH=/opt/rh/llvm-toolset-7.0/root/usr/bin/llvm-config
@@ -81,7 +81,7 @@ jobs:
       - uses: actions/checkout@v3
       - name: Install native libs
         run:
-          brew install protobuf krb5 gsasl
+          brew install krb5 gsasl
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
