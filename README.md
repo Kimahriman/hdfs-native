@@ -18,8 +18,13 @@ Here is a list of currently supported and unsupported but possible future featur
 - [ ] Observer reads (state ID tracking is supported, but needs improvements on tracking Observer/Active NameNode)
 - [ ] Federated router
 - [x] Erasure coded reads 
-    - only supported in Python release, relies on a fork of https://github.com/rust-rse/reed-solomon-erasure
     - RS schema only, no support for RS-Legacy or XOR
+    - Relies on a fork of https://github.com/rust-rse/reed-solomon-erasure
+    - You can include a `patch` in your downstream `Cargo.toml` to use the required patch
+    ```toml
+    [patch.crates-io]
+    reed-solomon-erasure = { git = "https://github.com/Kimahriman/reed-solomon-erasure.git", branch = "SNB/23C24_external_matrix" }
+    ```
 - [ ] Erasure coded writes
 
 ### Security Features
@@ -63,5 +68,8 @@ cargo build --features token,kerberos
 - `token` - enables token based DIGEST-MD5 authentication support. This uses the `gsasl` native library and only supports authentication, not integrity or confidentiality
 - `kerberos` - enables kerberos GSSAPI authentication support. This uses the `libgssapi` crate and supports integrity as well as confidentiality
 - `object_store` - provides an `object_store` wrapper around the HDFS client
-- `rs` - support Reed-Solomon codecs for erasure coded reads, currently only supported for the Python build, as it relies on a fork of https://github.com/rust-rse/reed-solomon-erasure
-- `protobuf-src` - builds protobuf from source to avoid having to pre-install it
+- `rs` - support Reed-Solomon codecs for erasure coded reads. It relies on a fork of https://github.com/rust-rse/reed-solomon-erasure, so you must include a `patch` for it to compile:
+    ```toml
+    [patch.crates-io]
+    reed-solomon-erasure = { git = "https://github.com/Kimahriman/reed-solomon-erasure.git", branch = "SNB/23C24_external_matrix" }
+    ```
