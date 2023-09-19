@@ -27,7 +27,11 @@
 //! - `token` - include support for Token authentication. Uses the gsasl native library. Only
 //!   supports authentication, not integrity or privacy modes.
 //! - `object_store` - an `object_store` implementation for HDFS.
-//! - `protobuf-src` - compiles protobuf from source to avoid having to pre-install it
+//! - `rs` - support Reed-Solomon codecs for erasure coded reads. It relies on a fork of <https://github.com/rust-rse/reed-solomon-erasure> with the PR <https://github.com/rust-rse/reed-solomon-erasure/pull/108>, so you must include a `patch` for it to compile:
+//! ```toml
+//! [patch.crates-io]
+//! reed-solomon-erasure = { git = "https://github.com/Kimahriman/reed-solomon-erasure.git", branch = "SNB/23C24_external_matrix" }
+//! ```
 
 pub mod client;
 pub(crate) mod common;
