@@ -412,5 +412,13 @@ async fn test_object_store_write_multipart(store: &HdfsObjectStore) -> object_st
 
     store.delete(&Path::from("/newfile")).await?;
 
+    // Test aborting
+    let (multipart_id, _) = store.put_multipart(&"/newfile".into()).await?;
+    assert!(store.head(&"/.newfile.tmp".into()).await.is_ok());
+    store
+        .abort_multipart(&"/newfile".into(), &multipart_id)
+        .await?;
+    assert!(store.head(&"/.newfile.tmp".into()).await.is_err());
+
     Ok(())
 }
