@@ -13,7 +13,6 @@ pub(crate) enum DfsFeatures {
     TOKEN,
     PRIVACY,
     HA,
-    #[cfg(feature = "rs")]
     EC,
 }
 
