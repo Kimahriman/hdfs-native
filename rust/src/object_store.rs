@@ -233,7 +233,7 @@ impl ObjectStore for HdfsObjectStore {
                 future::ready(result)
             })
             .map(move |res| {
-                res.map(|s| create_object_meta(&s))
+                res.map(|s| s.into())
                     .map_err(|err| object_store::Error::from(err))
             });
 
@@ -267,7 +267,7 @@ impl ObjectStore for HdfsObjectStore {
         let files: Vec<ObjectMeta> = statuses
             .iter()
             .filter(|s| !s.isdir)
-            .map(|s| create_object_meta(s))
+            .map(|s| s.into())
             .collect();
 
         Ok(ListResult {
@@ -394,13 +394,21 @@ fn make_absolute_dir(path: &Path) -> String {
     format!("/{}/", path.as_ref())
 }
 
-fn create_object_meta(status: &FileStatus) -> ObjectMeta {
-    ObjectMeta {
-        location: Path::from(status.path.clone()),
-        last_modified: Utc.from_utc_datetime(
-            &NaiveDateTime::from_timestamp_opt(status.modification_time as i64, 0).unwrap(),
-        ),
-        size: status.length,
-        e_tag: None,
+impl From<&FileStatus> for ObjectMeta {
+    fn from(status: &FileStatus) -> Self {
+        ObjectMeta {
+            location: Path::from(status.path.clone()),
+            last_modified: Utc.from_utc_datetime(
+                &NaiveDateTime::from_timestamp_opt(status.modification_time as i64, 0).unwrap(),
+            ),
+            size: status.length,
+            e_tag: None,
+        }
+    }
+}
+
+impl From<FileStatus> for ObjectMeta {
+    fn from(status: FileStatus) -> Self {
+        (&status).into()
     }
 }
