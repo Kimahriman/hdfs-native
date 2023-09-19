@@ -1038,7 +1038,7 @@ dependencies = [
 [[package]]
 name = "reed-solomon-erasure"
 version = "6.0.0"
-source = "git+https://github.com/Kimahriman/reed-solomon-erasure?branch=SNB/23C24_external_matrix#4307577d92ffd4a75e3e4a619ef25b79d99d2c0b"
+source = "git+https://github.com/Kimahriman/reed-solomon-erasure.git?branch=SNB/23C24_external_matrix#4307577d92ffd4a75e3e4a619ef25b79d99d2c0b"
 dependencies = [
  "libm",
  "lru",

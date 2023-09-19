@@ -24,7 +24,7 @@ log = "0.4"
 object_store = { version = "0.6", optional = true }
 prost = "0.11"
 prost-types = "0.11"
-reed-solomon-erasure = { version = "6.0.0", optional = true, git = "https://github.com/Kimahriman/reed-solomon-erasure", branch = "SNB/23C24_external_matrix" }
+reed-solomon-erasure = { version = "6.0.0", optional = true }
 roxmltree = "0.18"
 socket2 = "0.5"
 thiserror = "1"
