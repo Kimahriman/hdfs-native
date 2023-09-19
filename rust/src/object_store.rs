@@ -2,33 +2,47 @@ use std::{
     fmt::{Display, Formatter},
     future,
     path::PathBuf,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 
-use crate::{client::FileStatus, Client, HdfsError, WriteOptions};
+use crate::{client::FileStatus, file::FileWriter, Client, HdfsError, WriteOptions};
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use futures::stream::{self, BoxStream, StreamExt};
 use object_store::{
-    path::Path, GetOptions, GetResult, GetResultPayload, ListResult, MultipartId, ObjectMeta,
-    ObjectStore, Result,
+    multipart::{PartId, PutPart, WriteMultiPart},
+    path::Path,
+    GetOptions, GetResult, GetResultPayload, ListResult, MultipartId, ObjectMeta, ObjectStore,
+    Result,
 };
 use tokio::io::AsyncWrite;
 
 #[derive(Debug)]
 pub struct HdfsObjectStore {
-    client: Client,
+    client: Arc<Client>,
 }
 
 impl HdfsObjectStore {
     pub fn new(client: Client) -> Self {
-        Self { client }
+        Self {
+            client: Arc::new(client),
+        }
     }
 }
 
 impl Display for HdfsObjectStore {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "HdfsObjectStore")
+    }
+}
+
+impl From<Client> for HdfsObjectStore {
+    fn from(value: Client) -> Self {
+        Self::new(value)
     }
 }
 
@@ -80,17 +94,58 @@ impl ObjectStore for HdfsObjectStore {
     /// using the PutPart trait in the multipart mod that was made public.
     async fn put_multipart(
         &self,
-        _location: &Path,
+        location: &Path,
     ) -> Result<(MultipartId, Box<dyn AsyncWrite + Unpin + Send>)> {
-        Err(object_store::Error::NotImplemented)
+        let final_file_path = make_absolute_file(location);
+        let path_buf = PathBuf::from(&final_file_path);
+
+        let file_name = path_buf
+            .file_name()
+            .ok_or(HdfsError::InvalidPath("path missing filename".to_string()))?
+            .to_str()
+            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))?
+            .to_string();
+
+        let tmp_filename = path_buf
+            .with_file_name(format!(".{}.tmp", file_name))
+            .to_str()
+            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))?
+            .to_string();
+
+        // First we need to check if the tmp file exists so we know whether to overwrite
+        let overwrite = match self.client.get_file_info(&tmp_filename).await {
+            Ok(_) => true,
+            Err(HdfsError::FileNotFound(_)) => false,
+            Err(e) => Err(e)?,
+        };
+
+        let mut write_options = WriteOptions::default();
+        write_options.overwrite = overwrite;
+
+        let writer = self.client.create(&tmp_filename, write_options).await?;
+
+        Ok((
+            tmp_filename.clone(),
+            Box::new(WriteMultiPart::new(
+                HdfsMultipartWriter::new(
+                    Arc::clone(&self.client),
+                    writer,
+                    &tmp_filename,
+                    &final_file_path,
+                ),
+                1,
+            )),
+        ))
     }
 
     /// Cleanup an aborted upload.
     ///
     /// See documentation for individual stores for exact behavior, as capabilities
     /// vary by object store.
-    async fn abort_multipart(&self, _location: &Path, _multipart_id: &MultipartId) -> Result<()> {
-        Err(object_store::Error::NotImplemented)
+    async fn abort_multipart(&self, _location: &Path, multipart_id: &MultipartId) -> Result<()> {
+        // The multipart_id is the resolved temporary file name, so we can just delete it
+        self.client.delete(multipart_id, false).await?;
+        Ok(())
     }
 
     async fn get_opts(&self, location: &Path, options: GetOptions) -> Result<GetResult> {
@@ -266,6 +321,67 @@ impl From<HdfsError> for object_store::Error {
                 source: Box::new(value),
             },
         }
+    }
+}
+
+// Create a fake multipart writer that assumes only one part will be
+// written at a time. It would be better if we figured out how to implement
+// AsyncWrite for the FileWriter
+struct HdfsMultipartWriter {
+    // FileWriter is stateful, but put_part doesn't allow a mutable borrow so we
+    // have to wrap in an async mutex
+    client: Arc<Client>,
+    inner: Arc<tokio::sync::Mutex<FileWriter>>,
+    tmp_filename: String,
+    final_filename: String,
+    next_part: AtomicUsize,
+}
+
+impl HdfsMultipartWriter {
+    fn new(
+        client: Arc<Client>,
+        inner: FileWriter,
+        tmp_filename: &str,
+        final_filename: &str,
+    ) -> Self {
+        Self {
+            client,
+            inner: Arc::new(tokio::sync::Mutex::new(inner)),
+            tmp_filename: tmp_filename.to_string(),
+            final_filename: final_filename.to_string(),
+            next_part: AtomicUsize::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl PutPart for HdfsMultipartWriter {
+    /// Upload a single part
+    async fn put_part(&self, buf: Vec<u8>, part_idx: usize) -> Result<PartId> {
+        if part_idx != self.next_part.load(Ordering::SeqCst) {
+            return Err(object_store::Error::NotSupported {
+                source: "Part received out of order".to_string().into(),
+            });
+        }
+
+        self.inner.lock().await.write(buf.into()).await?;
+
+        self.next_part.fetch_add(1, Ordering::SeqCst);
+
+        Ok(PartId {
+            content_id: part_idx.to_string(),
+        })
+    }
+
+    /// Complete the upload with the provided parts
+    ///
+    /// `completed_parts` is in order of part number
+    async fn complete(&self, _completed_parts: Vec<PartId>) -> Result<()> {
+        self.inner.lock().await.close().await?;
+        self.client
+            .rename(&self.tmp_filename, &self.final_filename, true)
+            .await?;
+        Ok(())
     }
 }
 

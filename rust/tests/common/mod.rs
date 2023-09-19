@@ -4,7 +4,7 @@ pub(crate) mod minidfs;
 
 use bytes::{BufMut, BytesMut};
 use hdfs_native::client::WriteOptions;
-use hdfs_native::{client::Client, Result};
+use hdfs_native::{client::Client, HdfsError, Result};
 use std::collections::HashSet;
 use std::io::{BufWriter, Write};
 use std::process::{Command, Stdio};
@@ -235,6 +235,7 @@ async fn test_object_store(client: Client) -> object_store::Result<()> {
     test_object_store_rename(&store).await?;
     test_object_store_read(&store).await?;
     test_object_store_write(&store).await?;
+    test_object_store_write_multipart(&store).await?;
 
     Ok(())
 }
@@ -345,6 +346,66 @@ async fn test_object_store_write(store: &HdfsObjectStore) -> object_store::Resul
                 buf[pos], read_data[pos],
                 "data is different as position {} for size {}",
                 pos, size_to_check
+            );
+        }
+    }
+
+    store.delete(&Path::from("/newfile")).await?;
+
+    Ok(())
+}
+
+#[cfg(feature = "object_store")]
+async fn test_object_store_write_multipart(store: &HdfsObjectStore) -> object_store::Result<()> {
+    use bytes::Buf;
+    use object_store::{path::Path, ObjectStore};
+    use tokio::io::AsyncWriteExt;
+
+    let (_, mut writer) = store.put_multipart(&"/newfile".into()).await?;
+    writer.shutdown().await.map_err(HdfsError::from)?;
+
+    store.put(&Path::from("/newfile"), Bytes::new()).await?;
+    store.head(&Path::from("/newfile")).await?;
+
+    // Check a small files, a file that is exactly one block, and a file slightly bigger than a block
+    for size_to_check in [16i32, 128 * 1024 * 1024, 130 * 1024 * 1024] {
+        let ints_to_write = size_to_check / 4;
+
+        let (_, mut writer) = store.put_multipart(&"/newfile".into()).await?;
+
+        let mut data = BytesMut::with_capacity(size_to_check as usize);
+        for i in 0..ints_to_write {
+            data.put_i32(i);
+        }
+
+        // Write in 10 MiB chunks
+        let mut buf = data.freeze();
+        while !buf.is_empty() {
+            let to_write = usize::min(buf.len(), 10 * 1024 * 1024);
+            writer
+                .write_all_buf(&mut buf.split_to(to_write))
+                .await
+                .map_err(HdfsError::from)?;
+        }
+
+        writer.shutdown().await.map_err(HdfsError::from)?;
+
+        assert_eq!(
+            store.head(&Path::from("/newfile")).await?.size,
+            size_to_check as usize
+        );
+
+        let mut read_data = store.get(&Path::from("/newfile")).await?.bytes().await?;
+
+        assert_eq!(size_to_check as usize, read_data.len());
+
+        for pos in 0..ints_to_write {
+            assert_eq!(
+                pos,
+                read_data.get_i32(),
+                "data is different at integer {} for size {}",
+                pos,
+                size_to_check
             );
         }
     }
