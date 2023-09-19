@@ -10,7 +10,8 @@ use bytes::Bytes;
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use futures::stream::{self, BoxStream, StreamExt};
 use object_store::{
-    path::Path, GetOptions, GetResult, ListResult, MultipartId, ObjectMeta, ObjectStore, Result,
+    path::Path, GetOptions, GetResult, GetResultPayload, ListResult, MultipartId, ObjectMeta,
+    ObjectStore, Result,
 };
 use tokio::io::AsyncWrite;
 
@@ -101,18 +102,22 @@ impl ObjectStore for HdfsObjectStore {
             return Err(object_store::Error::NotImplemented);
         }
 
-        let reader = self.client.read(&make_absolute_file(location)).await?;
-        let bytes = if let Some(range) = options.range {
-            reader
-                .read_range(range.start, range.end - range.start)
-                .await?
-        } else {
-            reader.read_range(0, reader.file_length()).await?
-        };
+        let meta = self.head(location).await?;
 
-        Ok(GetResult::Stream(
-            stream::once(async move { Ok(bytes) }).boxed(),
-        ))
+        let range = options.range.unwrap_or(0..meta.size);
+
+        let reader = self.client.read(&make_absolute_file(location)).await?;
+        let bytes = reader
+            .read_range(range.start, range.end - range.start)
+            .await?;
+
+        let payload = GetResultPayload::Stream(stream::once(async move { Ok(bytes) }).boxed());
+
+        Ok(GetResult {
+            payload,
+            meta,
+            range,
+        })
     }
 
     /// Return the metadata for the specified location
