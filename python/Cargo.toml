@@ -31,4 +31,4 @@ thiserror = "1.0.43"
 tokio = { version = "1.28", features = ["rt-multi-thread"] }
 
 [features]
-protobuf-src = ["hdfs-native/protobuf-src"]
+integration-test = ["hdfs-native/integration-test"]

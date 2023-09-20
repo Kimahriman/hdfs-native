@@ -38,6 +38,8 @@ pub(crate) mod common;
 pub(crate) mod error;
 pub mod file;
 pub(crate) mod hdfs;
+#[cfg(feature = "integration-test")]
+pub mod minidfs;
 pub(crate) mod proto;
 pub(crate) mod security;
 

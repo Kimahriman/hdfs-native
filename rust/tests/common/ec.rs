@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 use tempfile::NamedTempFile;
 use which::which;
 
-use crate::common::minidfs::{DfsFeatures, MiniDfs};
+use hdfs_native::minidfs::{DfsFeatures, MiniDfs};
 use hdfs_native::test::{EcFaultInjection, EC_FAULT_INJECTOR};
 use hdfs_native::{client::Client, Result};
 

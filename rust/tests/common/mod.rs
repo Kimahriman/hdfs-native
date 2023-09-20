@@ -1,6 +1,4 @@
-#[cfg(feature = "integration-test")]
 pub(crate) mod ec;
-pub(crate) mod minidfs;
 
 use bytes::{BufMut, BytesMut};
 use hdfs_native::client::WriteOptions;
@@ -13,9 +11,7 @@ use which::which;
 #[cfg(feature = "object_store")]
 use {bytes::Bytes, hdfs_native::object_store::HdfsObjectStore};
 
-use crate::common::minidfs::MiniDfs;
-
-use self::minidfs::DfsFeatures;
+use hdfs_native::minidfs::{DfsFeatures, MiniDfs};
 
 const TEST_FILE_INTS: usize = 64 * 1024 * 1024;
 
