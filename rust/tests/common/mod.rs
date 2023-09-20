@@ -30,7 +30,7 @@ fn setup(features: &HashSet<DfsFeatures>) -> MiniDfs {
         writer.flush().unwrap();
     }
 
-    let mut cmd = Command::new(hadoop_exc)
+    let status = Command::new(hadoop_exc)
         .args([
             "fs",
             "-copyFromLocal",
@@ -40,9 +40,9 @@ fn setup(features: &HashSet<DfsFeatures>) -> MiniDfs {
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
+        .status()
         .unwrap();
-    assert!(cmd.wait().unwrap().success());
+    assert!(status.success());
 
     dfs
 }

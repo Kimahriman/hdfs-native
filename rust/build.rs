@@ -30,25 +30,19 @@ fn main() -> Result<()> {
         let mvn_exc = which("mvn").expect("Failed to find mvn executable");
 
         Command::new(mvn_exc)
-            .args(["-f", "minidfs", "--quiet", "clean", "package"])
+            .args([
+                "-f",
+                "minidfs",
+                "--quiet",
+                "clean",
+                "package",
+                &format!("-DbuildDirectory={}", std::env::var("OUT_DIR").unwrap()),
+            ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .status()
             .unwrap();
-
-        let jar_name = "minidfs-1.0-SNAPSHOT.jar";
-
-        let build_path = format!("{}/{}", "minidfs/target", jar_name);
-
-        let out_path = format!("{}/{}", std::env::var("OUT_DIR").unwrap(), jar_name);
-
-        Command::new("mv")
-            .args([&build_path, &out_path])
-            .status()
-            .unwrap();
-
-        std::env::set_var("MINIDFS_JAR", out_path);
     }
 
     Ok(())
