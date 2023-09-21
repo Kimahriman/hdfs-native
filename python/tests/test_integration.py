@@ -31,7 +31,7 @@ def test_integration():
     data = io.BytesIO()
 
     for i in range(0, 32 * 1024 * 1024):
-        data.write(i.to_bytes(4))
+        data.write(i.to_bytes(4, 'big'))
 
     file.write(data.getbuffer())
     file.close()
@@ -40,6 +40,6 @@ def test_integration():
     data = io.BytesIO(file.read_range(0, file.file_length()))
 
     for i in range(0, 32 * 1024 * 1024):
-        assert data.read(4) == i.to_bytes(4)
+        assert data.read(4) == i.to_bytes(4, 'big')
 
     client.delete("/testfile", False)
