@@ -23,10 +23,13 @@ jobs:
           python-version: 3.7
       - name: Install dev dependencies
         run: |
-          pip3 install mypy
+          pip3 install -r requirements-dev.txt
       - name: Type checking
         run: |
           mypy python
+      - name: Run tests
+        run: |
+          pytest
 
   build:
     runs-on: ubuntu-latest

@@ -46,20 +46,25 @@ pub struct MiniDfs {
 
 impl MiniDfs {
     pub fn with_features(features: &HashSet<DfsFeatures>) -> Self {
-        let java_exc = which("java").expect("Failed to find java executable");
-        let mindfs_jar = concat!(env!("OUT_DIR"), "/minidfs-1.0-SNAPSHOT.jar");
+        let mvn_exec = which("mvn").expect("Failed to find java executable");
 
         let mut feature_args: Vec<&str> = Vec::new();
         for feature in features.iter() {
             feature_args.push(feature.as_str());
         }
-
-        let mut child = Command::new(java_exc)
-            .args(["-jar", &mindfs_jar])
-            .args(feature_args)
+        let mut child = Command::new(mvn_exec)
+            .args([
+                "-f",
+                "minidfs",
+                "--quiet",
+                &format!("-DbuildDirectory={}", std::env::var("OUT_DIR").unwrap()),
+                "compile",
+                "exec:java",
+                &format!("-Dexec.args={}", feature_args.join(" ")),
+            ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            // .stderr(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .unwrap();
 

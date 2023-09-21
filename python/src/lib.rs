@@ -13,8 +13,6 @@ use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use tokio::runtime::Runtime;
 
 mod error;
-#[cfg(feature = "integration-test")]
-mod minidfs;
 
 use crate::error::PythonHdfsError;
 
@@ -235,9 +233,5 @@ impl PyClient {
 fn hdfs_native(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyClient>()?;
     m.add_class::<PyWriteOptions>()?;
-
-    #[cfg(feature = "integration-test")]
-    m.add_class::<minidfs::PyMiniDfs>()?;
-
     Ok(())
 }

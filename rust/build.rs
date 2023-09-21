@@ -21,29 +21,5 @@ fn main() -> Result<()> {
         )?;
     }
 
-    #[cfg(feature = "integration-test")]
-    {
-        println!("cargo:rerun-if-changed=minidfs");
-
-        use std::process::{Command, Stdio};
-        use which::which;
-        let mvn_exc = which("mvn").expect("Failed to find mvn executable");
-
-        Command::new(mvn_exc)
-            .args([
-                "-f",
-                "minidfs",
-                "--quiet",
-                "clean",
-                "package",
-                &format!("-DbuildDirectory={}", std::env::var("OUT_DIR").unwrap()),
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .status()
-            .unwrap();
-    }
-
     Ok(())
 }

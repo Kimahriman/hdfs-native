@@ -2,7 +2,7 @@ pub(crate) mod ec;
 
 use bytes::{BufMut, BytesMut};
 use hdfs_native::client::WriteOptions;
-use hdfs_native::{client::Client, HdfsError, Result};
+use hdfs_native::{client::Client, Result};
 use std::collections::HashSet;
 use std::io::{BufWriter, Write};
 use std::process::{Command, Stdio};
@@ -354,6 +354,7 @@ async fn test_object_store_write(store: &HdfsObjectStore) -> object_store::Resul
 #[cfg(feature = "object_store")]
 async fn test_object_store_write_multipart(store: &HdfsObjectStore) -> object_store::Result<()> {
     use bytes::Buf;
+    use hdfs_native::HdfsError;
     use object_store::{path::Path, ObjectStore};
     use tokio::io::AsyncWriteExt;
 
