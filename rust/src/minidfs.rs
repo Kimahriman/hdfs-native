@@ -55,9 +55,8 @@ impl MiniDfs {
         let mut child = Command::new(mvn_exec)
             .args([
                 "-f",
-                "minidfs",
+                concat!(env!("OUT_DIR"), "/minidfs"),
                 "--quiet",
-                &format!("-DbuildDirectory={}", std::env::var("OUT_DIR").unwrap()),
                 "compile",
                 "exec:java",
                 &format!("-Dexec.args={}", feature_args.join(" ")),
