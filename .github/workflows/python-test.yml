@@ -55,7 +55,7 @@ jobs:
       - uses: PyO3/maturin-action@v1
         with:
           command: develop
-          args: --find-interpreter --manifest-path python/Cargo.toml
+          args: --manifest-path python/Cargo.toml
           sccache: 'true'
           container: 'off'
       
