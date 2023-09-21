@@ -63,12 +63,10 @@ jobs:
           container: 'off'
           working-directory: ./python
       
-      - name: Install dev dependencies
+      - name: Install dev dependencies and run tests
         run: |
+          source .venv/bin/activate
           pip3 install -r requirements-dev.txt
-
-      - name: Run tests
-        run: |
           pytest
 
   build:
