@@ -37,7 +37,6 @@ which = { version = "4", optional = true }
 [build-dependencies]
 prost-build = { version = "0.11", optional = true }
 protobuf-src = { version = "1.1", optional = true }
-which = { version = "4", optional = true }
 
 [dev-dependencies]
 env_logger = "0.10"

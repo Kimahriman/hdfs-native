@@ -19,9 +19,3 @@ repository = "https://github.com/Kimahriman/hdfs-native"
 [tool.maturin]
 features = ["pyo3/extension-module"]
 python-source = "python"
-
-[project.optional-dependencies]
-devel = [
-    "mypy",
-    "pytest"
-]
