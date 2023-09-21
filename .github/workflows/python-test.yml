@@ -27,6 +27,42 @@ jobs:
       - name: Type checking
         run: |
           mypy python
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-java@v3
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Install native libs
+        run: sudo apt-get install -y libkrb5-dev libgsasl-dev krb5-user
+
+      - name: Download Hadoop
+        run: |
+          wget -q https://dlcdn.apache.org/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz
+          tar -xf hadoop-3.3.6.tar.gz -C $GITHUB_WORKSPACE
+          echo "$GITHUB_WORKSPACE/hadoop-3.3.6/bin" >> $GITHUB_PATH
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.8
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: develop
+          args: --find-interpreter --manifest-path python/Cargo.toml
+          sccache: 'true'
+          container: 'off'
+      
+      - name: Install dev dependencies
+        run: |
+          pip3 install -r requirements-dev.txt
+
       - name: Run tests
         run: |
           pytest
