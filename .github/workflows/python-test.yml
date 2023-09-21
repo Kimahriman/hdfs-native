@@ -52,12 +52,16 @@ jobs:
         with:
           python-version: 3.8
 
+      - name: Create virtualenv
+        run: |
+          python3 -m venv .venv
+
       - uses: PyO3/maturin-action@v1
         with:
           command: develop
-          args: --manifest-path python/Cargo.toml
           sccache: 'true'
           container: 'off'
+          working-directory: ./python
       
       - name: Install dev dependencies
         run: |
