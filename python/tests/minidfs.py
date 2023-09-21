@@ -15,6 +15,7 @@ class MiniDfs:
                 "compile",
                 "exec:java",
             ],
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             # stderr=subprocess.DEVNULL,
             universal_newlines=True,
