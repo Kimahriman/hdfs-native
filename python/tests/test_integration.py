@@ -1,13 +1,9 @@
 import io
 from hdfs_native import Client, WriteOptions
-from .minidfs import MiniDfs
 
-def test_integration():
-    dfs = MiniDfs()
-
-    client = Client(dfs.get_url())
+def test_integration(minidfs: str):
+    client = Client(minidfs)
     client.create("/testfile", WriteOptions()).close()
-    # raise Exception("blashsdf")
     file_info = client.get_file_info("/testfile")
     
     assert file_info.path == "/testfile"
