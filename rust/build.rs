@@ -1,4 +1,4 @@
-use std::{io::Result, process::Command};
+use std::io::Result;
 
 fn main() -> Result<()> {
     println!("cargo:rustc-link-lib=gsasl");
@@ -24,7 +24,7 @@ fn main() -> Result<()> {
     #[cfg(feature = "integration-test")]
     {
         // Copy the minidfs src to the build directory so we can run it in downstream tests
-        let status = Command::new("cp")
+        let status = std::process::Command::new("cp")
             .args(["-R", "minidfs", &std::env::var("OUT_DIR").unwrap()])
             .status()
             .expect("Failed to copy minidfs src");
