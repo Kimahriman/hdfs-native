@@ -25,10 +25,3 @@ devel = [
     "mypy",
     "pytest"
 ]
-
-[tool.pytest.ini_options]
-# The default capture=fd causes weird issues with the tests, not sure why
-addopts = "--capture=sys"
-testpaths = [
-    "tests",
-]

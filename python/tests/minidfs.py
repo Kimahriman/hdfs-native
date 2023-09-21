@@ -17,7 +17,7 @@ class MiniDfs:
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            # stderr=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             universal_newlines=True,
             encoding="utf8",
             bufsize=0
