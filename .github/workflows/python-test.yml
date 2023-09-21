@@ -67,7 +67,7 @@ jobs:
         run: |
           source .venv/bin/activate
           pip3 install -r requirements-dev.txt
-          pytest
+          pytest -s
 
   build:
     runs-on: ubuntu-latest

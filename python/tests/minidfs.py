@@ -16,13 +16,12 @@ class MiniDfs:
                 "exec:java",
             ],
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            # stderr=subprocess.DEVNULL,
             universal_newlines=True,
             encoding="utf8",
             bufsize=0
         )
 
-        # print(self.child.stdout)
         output = self.child.stdout.readline().strip()
         assert output == "Ready!", output
 
