@@ -8,7 +8,7 @@ use std::{
 use which::which;
 
 #[derive(PartialEq, Eq, Hash, Debug)]
-pub(crate) enum DfsFeatures {
+pub enum DfsFeatures {
     SECURITY,
     TOKEN,
     PRIVACY,
@@ -16,36 +16,50 @@ pub(crate) enum DfsFeatures {
     EC,
 }
 
-pub(crate) struct MiniDfs {
+impl DfsFeatures {
+    pub fn as_str(&self) -> &str {
+        match self {
+            DfsFeatures::EC => "ec",
+            DfsFeatures::HA => "ha",
+            DfsFeatures::PRIVACY => "privacy",
+            DfsFeatures::SECURITY => "security",
+            DfsFeatures::TOKEN => "token",
+        }
+    }
+
+    pub fn from(value: &str) -> Option<Self> {
+        match value {
+            "ec" => Some(DfsFeatures::EC),
+            "ha" => Some(DfsFeatures::HA),
+            "privacy" => Some(DfsFeatures::PRIVACY),
+            "security" => Some(DfsFeatures::SECURITY),
+            "token" => Some(DfsFeatures::TOKEN),
+            _ => None,
+        }
+    }
+}
+
+pub struct MiniDfs {
     process: Child,
     pub url: String,
 }
 
 impl MiniDfs {
     pub fn with_features(features: &HashSet<DfsFeatures>) -> Self {
-        let mvn_exc = which("mvn").expect("Failed to find mvn executable");
+        let mvn_exec = which("mvn").expect("Failed to find java executable");
 
         let mut feature_args: Vec<&str> = Vec::new();
         for feature in features.iter() {
-            let s = match feature {
-                DfsFeatures::SECURITY => "security",
-                DfsFeatures::TOKEN => "token",
-                DfsFeatures::PRIVACY => "privacy",
-                DfsFeatures::HA => "ha",
-                DfsFeatures::EC => "ec",
-            };
-            feature_args.push(s);
+            feature_args.push(feature.as_str());
         }
-
-        let mut child = Command::new(mvn_exc)
+        let mut child = Command::new(mvn_exec)
             .args([
                 "-f",
-                "minidfs",
+                concat!(env!("OUT_DIR"), "/minidfs"),
                 "--quiet",
-                "clean",
                 "compile",
                 "exec:java",
-                format!("-Dexec.args={}", feature_args.join(" ")).as_str(),
+                &format!("-Dexec.args={}", feature_args.join(" ")),
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

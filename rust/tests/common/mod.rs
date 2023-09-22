@@ -1,10 +1,8 @@
-#[cfg(feature = "integration-test")]
 pub(crate) mod ec;
-pub(crate) mod minidfs;
 
 use bytes::{BufMut, BytesMut};
 use hdfs_native::client::WriteOptions;
-use hdfs_native::{client::Client, HdfsError, Result};
+use hdfs_native::{client::Client, Result};
 use std::collections::HashSet;
 use std::io::{BufWriter, Write};
 use std::process::{Command, Stdio};
@@ -13,9 +11,7 @@ use which::which;
 #[cfg(feature = "object_store")]
 use {bytes::Bytes, hdfs_native::object_store::HdfsObjectStore};
 
-use crate::common::minidfs::MiniDfs;
-
-use self::minidfs::DfsFeatures;
+use hdfs_native::minidfs::{DfsFeatures, MiniDfs};
 
 const TEST_FILE_INTS: usize = 64 * 1024 * 1024;
 
@@ -34,7 +30,7 @@ fn setup(features: &HashSet<DfsFeatures>) -> MiniDfs {
         writer.flush().unwrap();
     }
 
-    let mut cmd = Command::new(hadoop_exc)
+    let status = Command::new(hadoop_exc)
         .args([
             "fs",
             "-copyFromLocal",
@@ -44,9 +40,9 @@ fn setup(features: &HashSet<DfsFeatures>) -> MiniDfs {
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
+        .status()
         .unwrap();
-    assert!(cmd.wait().unwrap().success());
+    assert!(status.success());
 
     dfs
 }
@@ -358,6 +354,7 @@ async fn test_object_store_write(store: &HdfsObjectStore) -> object_store::Resul
 #[cfg(feature = "object_store")]
 async fn test_object_store_write_multipart(store: &HdfsObjectStore) -> object_store::Result<()> {
     use bytes::Buf;
+    use hdfs_native::HdfsError;
     use object_store::{path::Path, ObjectStore};
     use tokio::io::AsyncWriteExt;
 

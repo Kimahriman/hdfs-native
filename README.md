@@ -73,3 +73,13 @@ cargo build --features token,kerberos
     [patch.crates-io]
     reed-solomon-erasure = { git = "https://github.com/Kimahriman/reed-solomon-erasure.git", branch = "SNB/23C24_external_matrix" }
     ```
+
+## Running tests
+The tests are mostly integration tests that utilize a small Java application in `rust/mindifs/` that runs a custom `MiniDFSCluster`. To run the tests, you need to have Java, Maven, Hadoop binaries, and Kerberos tools available and on your path. Any Java version between 8 and 17 should work. Because they rely on this externally running process, only one test can run at a time. To run the tests:
+
+```bash
+cargo test -p hdfs-native --features token,kerberos,rs,intergation-test -- --test-threads=1
+```
+
+### Python tests
+See the [Python README](./python/README.md)
