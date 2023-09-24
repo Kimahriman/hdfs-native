@@ -35,6 +35,14 @@ impl FileReader {
         self.status.length as usize
     }
 
+    pub fn remaining(&self) -> usize {
+        if self.position > self.status.length as usize {
+            0
+        } else {
+            self.status.length as usize - self.position
+        }
+    }
+
     /// Read up to `len` bytes into a new [Bytes] object, advancing the internal position in the file.
     /// An empty [Bytes] object will be returned if the end of the file has been reached.
     pub async fn read(&mut self, len: usize) -> Result<Bytes> {
@@ -185,7 +193,8 @@ impl FileWriter {
         Ok(self.block_writer.as_mut().unwrap())
     }
 
-    pub async fn write(&mut self, mut buf: Bytes) -> Result<()> {
+    pub async fn write(&mut self, mut buf: Bytes) -> Result<usize> {
+        let bytes_to_write = buf.len();
         // Create a shallow copy of the bytes instance to mutate and track what's been read
         while !buf.is_empty() {
             let block_writer = self.get_block_writer().await?;
@@ -193,9 +202,9 @@ impl FileWriter {
             block_writer.write(&mut buf).await?;
         }
 
-        self.bytes_written += buf.len();
+        self.bytes_written += bytes_to_write;
 
-        Ok(())
+        Ok(bytes_to_write)
     }
 
     pub async fn close(&mut self) -> Result<()> {

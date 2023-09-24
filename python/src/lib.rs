@@ -68,20 +68,27 @@ impl PyFileStatusIter {
     }
 }
 
-#[pyclass(name = "FileReader")]
-struct PyFileReader {
+#[pyclass]
+struct RawFileReader {
     inner: FileReader,
     rt: Arc<Runtime>,
 }
 
 #[pymethods]
-impl PyFileReader {
+impl RawFileReader {
     pub fn file_length(&self) -> usize {
         self.inner.file_length()
     }
 
-    pub fn read(&mut self, len: usize) -> PyHdfsResult<Cow<[u8]>> {
-        Ok(Cow::from(self.rt.block_on(self.inner.read(len))?.to_vec()))
+    pub fn read(&mut self, len: i64) -> PyHdfsResult<Cow<[u8]>> {
+        let read_len = if len < 0 {
+            self.inner.remaining()
+        } else {
+            len as usize
+        };
+        Ok(Cow::from(
+            self.rt.block_on(self.inner.read(read_len))?.to_vec(),
+        ))
     }
 
     pub fn read_range(&self, offset: usize, len: usize) -> PyHdfsResult<Cow<[u8]>> {
@@ -136,15 +143,15 @@ impl PyWriteOptions {
     }
 }
 
-#[pyclass(name = "FileWriter")]
-struct PyFileWriter {
+#[pyclass]
+struct RawFileWriter {
     inner: FileWriter,
     rt: Arc<Runtime>,
 }
 
 #[pymethods]
-impl PyFileWriter {
-    pub fn write(&mut self, buf: Vec<u8>) -> PyHdfsResult<()> {
+impl RawFileWriter {
+    pub fn write(&mut self, buf: Vec<u8>) -> PyHdfsResult<usize> {
         Ok(self.rt.block_on(self.inner.write(Bytes::from(buf)))?)
     }
 
@@ -153,14 +160,14 @@ impl PyFileWriter {
     }
 }
 
-#[pyclass(name = "Client")]
-struct PyClient {
+#[pyclass(name = "RawClient", subclass)]
+struct RawClient {
     inner: Client,
     rt: Arc<Runtime>,
 }
 
 #[pymethods]
-impl PyClient {
+impl RawClient {
     #[new]
     #[pyo3(signature = (url))]
     pub fn new(url: &str) -> PyResult<Self> {
@@ -169,7 +176,7 @@ impl PyClient {
             .filter_level(LevelFilter::Off)
             .try_init();
 
-        Ok(PyClient {
+        Ok(RawClient {
             inner: Client::new(url).map_err(PythonHdfsError::from)?,
             rt: Arc::new(
                 tokio::runtime::Runtime::new()
@@ -193,21 +200,21 @@ impl PyClient {
         }
     }
 
-    pub fn read(&self, path: &str) -> PyHdfsResult<PyFileReader> {
+    pub fn read(&self, path: &str) -> PyHdfsResult<RawFileReader> {
         let file_reader = self.rt.block_on(self.inner.read(path))?;
 
-        Ok(PyFileReader {
+        Ok(RawFileReader {
             inner: file_reader,
             rt: Arc::clone(&self.rt),
         })
     }
 
-    pub fn create(&self, src: &str, write_options: PyWriteOptions) -> PyHdfsResult<PyFileWriter> {
+    pub fn create(&self, src: &str, write_options: PyWriteOptions) -> PyHdfsResult<RawFileWriter> {
         let file_writer = self
             .rt
             .block_on(self.inner.create(src, WriteOptions::from(write_options)))?;
 
-        Ok(PyFileWriter {
+        Ok(RawFileWriter {
             inner: file_writer,
             rt: Arc::clone(&self.rt),
         })
@@ -230,8 +237,8 @@ impl PyClient {
 
 /// A Python module implemented in Rust.
 #[pymodule]
-fn hdfs_native(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_class::<PyClient>()?;
+fn _internal(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<RawClient>()?;
     m.add_class::<PyWriteOptions>()?;
     Ok(())
 }
