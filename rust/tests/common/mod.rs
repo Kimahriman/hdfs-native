@@ -1,5 +1,3 @@
-pub(crate) mod ec;
-
 use bytes::{BufMut, BytesMut};
 use hdfs_native::client::WriteOptions;
 use hdfs_native::{client::Client, Result};

@@ -78,6 +78,10 @@ impl MiniDfs {
             }
             panic!();
         }
+
+        // Make sure this doesn't care over from a token test to a non-token test
+        env::remove_var("HADOOP_TOKEN_FILE_LOCATION");
+
         if features.contains(&DfsFeatures::SECURITY) {
             let krb_conf = output.next().unwrap().unwrap();
             let kdestroy_exec = which("kdestroy").expect("Failed to find kdestroy executable");
