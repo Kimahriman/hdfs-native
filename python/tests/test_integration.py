@@ -23,17 +23,16 @@ def test_integration(minidfs: str):
     file_list = list(client.list_status("/", False))
     assert len(file_list) == 0
 
-    file = client.create("/testfile", WriteOptions())
-    data = io.BytesIO()
+    with client.create("/testfile", WriteOptions()) as file:
+        data = io.BytesIO()
 
-    for i in range(0, 32 * 1024 * 1024):
-        data.write(i.to_bytes(4, 'big'))
+        for i in range(0, 32 * 1024 * 1024):
+            data.write(i.to_bytes(4, 'big'))
 
-    file.write(data.getbuffer())
-    file.close()
+        file.write(data.getbuffer())
 
-    file = client.read("/testfile")
-    data = io.BytesIO(file.read_range(0, file.file_length()))
+    with client.read("/testfile") as file:
+        data = io.BytesIO(file.read())
 
     for i in range(0, 32 * 1024 * 1024):
         assert data.read(4) == i.to_bytes(4, 'big')
