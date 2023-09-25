@@ -258,6 +258,23 @@ async fn test_object_store_list(store: &HdfsObjectStore) -> object_store::Result
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].as_ref().unwrap().location, Path::from("/testfile"));
 
+    // Listing of a prefix that doesn't exist should return an empty result, not an error
+    assert_eq!(
+        store
+            .list(Some(&Path::from("/doesnt/exist")))
+            .await?
+            .count()
+            .await,
+        0
+    );
+
+    let list = store
+        .list_with_delimiter(Some(&Path::from("/doesnt/exist")))
+        .await?;
+
+    assert_eq!(list.common_prefixes.len(), 0);
+    assert_eq!(list.objects.len(), 0);
+
     Ok(())
 }
 

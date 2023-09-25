@@ -8,7 +8,7 @@ use crate::hdfs::datanode::{BlockReader, BlockWriter};
 use crate::hdfs::ec::EcSchema;
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::proto::hdfs;
-use crate::Result;
+use crate::{HdfsError, Result};
 
 pub struct FileReader {
     status: hdfs::HdfsFileStatusProto,
@@ -74,7 +74,12 @@ impl FileReader {
     /// could be smaller than `len` if `offset + len` extends beyond the end of the file.
     pub async fn read_range(&self, offset: usize, len: usize) -> Result<Bytes> {
         let end = usize::min(self.file_length(), offset + len);
-        assert!(offset <= end);
+        if offset >= end {
+            return Err(HdfsError::InvalidArgument(
+                "Offset is past the end of the file".to_string(),
+            ));
+        }
+
         let buf_size = end - offset;
         let mut buf = BytesMut::zeroed(buf_size);
         self.read_range_buf(&mut buf, offset).await?;

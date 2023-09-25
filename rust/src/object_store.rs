@@ -32,6 +32,34 @@ impl HdfsObjectStore {
             client: Arc::new(client),
         }
     }
+
+    async fn internal_copy(&self, from: &Path, to: &Path, overwrite: bool) -> Result<()> {
+        // TODO: Batch this instead of loading the whole thing
+        let overwrite = match self.client.get_file_info(&make_absolute_file(to)).await {
+            Ok(_) if overwrite => true,
+            Ok(_) => Err(HdfsError::AlreadyExists(make_absolute_file(to)))?,
+            Err(HdfsError::FileNotFound(_)) => false,
+            Err(e) => Err(e)?,
+        };
+
+        let mut write_options = WriteOptions::default();
+        write_options.overwrite = overwrite;
+
+        let data = {
+            let mut file = self.client.read(&make_absolute_file(from)).await?;
+            file.read(file.remaining()).await?
+        };
+
+        let mut new_file = self
+            .client
+            .create(&make_absolute_file(to), write_options)
+            .await?;
+
+        new_file.write(data).await?;
+        new_file.close().await?;
+
+        Ok(())
+    }
 }
 
 impl Display for HdfsObjectStore {
@@ -225,16 +253,19 @@ impl ObjectStore for HdfsObjectStore {
             )
             .into_stream()
             .filter(|res| {
-                let result = if let Ok(status) = res {
-                    !status.isdir
-                } else {
-                    true
+                let result = match res {
+                    Ok(status) => !status.isdir,
+                    // Listing by prefix should just return an empty list if the prefix isn't found
+                    Err(HdfsError::FileNotFound(_)) => false,
+                    _ => true,
                 };
                 future::ready(result)
             })
-            .map(move |res| {
-                res.map(|s| s.into())
-                    .map_err(|err| object_store::Error::from(err))
+            .map(|res| {
+                res.map_or_else(
+                    |e| Err(object_store::Error::from(e)),
+                    |s| get_object_meta(&s),
+                )
             });
 
         Ok(Box::pin(status_stream))
@@ -247,40 +278,43 @@ impl ObjectStore for HdfsObjectStore {
     /// Prefixes are evaluated on a path segment basis, i.e. `foo/bar/` is a prefix of `foo/bar/x` but not of
     /// `foo/bar_baz/x`.
     async fn list_with_delimiter(&self, prefix: Option<&Path>) -> Result<ListResult> {
-        let mut status_stream = self.client.list_status_iter(
-            &prefix
-                .map(|p| make_absolute_dir(p))
-                .unwrap_or("".to_string()),
-            false,
-        );
+        let mut status_stream = self
+            .client
+            .list_status_iter(
+                &prefix
+                    .map(|p| make_absolute_dir(p))
+                    .unwrap_or("".to_string()),
+                false,
+            )
+            .into_stream()
+            .filter(|res| {
+                let result = match res {
+                    // Listing by prefix should just return an empty list if the prefix isn't found
+                    Err(HdfsError::FileNotFound(_)) => false,
+                    _ => true,
+                };
+                future::ready(result)
+            });
 
         let mut statuses = Vec::<FileStatus>::new();
         while let Some(status) = status_stream.next().await {
             statuses.push(status?);
         }
 
-        let dirs: Vec<Path> = statuses
-            .iter()
-            .filter(|s| s.isdir)
-            .map(|s| Path::from(s.path.as_ref()))
-            .collect();
-        let files: Vec<ObjectMeta> = statuses
-            .iter()
-            .filter(|s| !s.isdir)
-            .map(|s| s.into())
-            .collect();
+        let mut dirs: Vec<Path> = Vec::new();
+        for status in statuses.iter().filter(|s| s.isdir) {
+            dirs.push(Path::parse(&status.path)?)
+        }
+
+        let mut files: Vec<ObjectMeta> = Vec::new();
+        for status in statuses.iter().filter(|s| !s.isdir) {
+            files.push(get_object_meta(status)?)
+        }
 
         Ok(ListResult {
             common_prefixes: dirs,
             objects: files,
         })
-    }
-
-    /// Copy an object from one path to another in the same object store.
-    ///
-    /// If there exists an object at the destination, it will be overwritten.
-    async fn copy(&self, _from: &Path, _to: &Path) -> Result<()> {
-        Err(object_store::Error::NotImplemented)
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
@@ -297,6 +331,13 @@ impl ObjectStore for HdfsObjectStore {
             .await?)
     }
 
+    /// Copy an object from one path to another in the same object store.
+    ///
+    /// If there exists an object at the destination, it will be overwritten.
+    async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
+        self.internal_copy(from, to, true).await
+    }
+
     /// Copy an object from one path to another, only if destination is empty.
     ///
     /// Will return an error if the destination already has an object.
@@ -304,8 +345,8 @@ impl ObjectStore for HdfsObjectStore {
     /// Performs an atomic operation if the underlying object storage supports it.
     /// If atomic operations are not supported by the underlying object storage (like S3)
     /// it will return an error.
-    async fn copy_if_not_exists(&self, _from: &Path, _to: &Path) -> Result<()> {
-        Err(object_store::Error::NotImplemented)
+    async fn copy_if_not_exists(&self, from: &Path, to: &Path) -> Result<()> {
+        self.internal_copy(from, to, false).await
     }
 }
 
@@ -315,6 +356,10 @@ impl From<HdfsError> for object_store::Error {
             HdfsError::FileNotFound(path) => object_store::Error::NotFound {
                 path: path.clone(),
                 source: Box::new(HdfsError::FileNotFound(path)),
+            },
+            HdfsError::AlreadyExists(path) => object_store::Error::AlreadyExists {
+                path: path.clone(),
+                source: Box::new(HdfsError::AlreadyExists(path)),
             },
             _ => object_store::Error::Generic {
                 store: "HdfsObjectStore",
@@ -391,24 +436,20 @@ fn make_absolute_file(path: &Path) -> String {
 }
 
 fn make_absolute_dir(path: &Path) -> String {
-    format!("/{}/", path.as_ref())
-}
-
-impl From<&FileStatus> for ObjectMeta {
-    fn from(status: &FileStatus) -> Self {
-        ObjectMeta {
-            location: Path::from(status.path.clone()),
-            last_modified: Utc.from_utc_datetime(
-                &NaiveDateTime::from_timestamp_opt(status.modification_time as i64, 0).unwrap(),
-            ),
-            size: status.length,
-            e_tag: None,
-        }
+    if path.parts().count() > 0 {
+        format!("/{}/", path.as_ref())
+    } else {
+        "/".to_string()
     }
 }
 
-impl From<FileStatus> for ObjectMeta {
-    fn from(status: FileStatus) -> Self {
-        (&status).into()
-    }
+fn get_object_meta(status: &FileStatus) -> Result<ObjectMeta> {
+    Ok(ObjectMeta {
+        location: Path::parse(&status.path)?,
+        last_modified: Utc.from_utc_datetime(
+            &NaiveDateTime::from_timestamp_opt(status.modification_time as i64, 0).unwrap(),
+        ),
+        size: status.length,
+        e_tag: None,
+    })
 }

@@ -15,6 +15,10 @@ pub enum HdfsError {
     DataTransferError(String),
     #[error("invalid path")]
     InvalidPath(String),
+    #[error("invalid argument")]
+    InvalidArgument(String),
+    #[error("file already exists")]
+    AlreadyExists(String),
     #[error("operation failed")]
     OperationFailed(String),
     #[error("file not found")]

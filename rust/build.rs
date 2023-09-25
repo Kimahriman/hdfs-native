@@ -1,6 +1,7 @@
 use std::io::Result;
 
 fn main() -> Result<()> {
+    #[cfg(feature = "token")]
     println!("cargo:rustc-link-lib=gsasl");
 
     #[cfg(feature = "generate-protobuf")]
