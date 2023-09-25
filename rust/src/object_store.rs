@@ -436,7 +436,11 @@ fn make_absolute_file(path: &Path) -> String {
 }
 
 fn make_absolute_dir(path: &Path) -> String {
-    format!("/{}/", path.as_ref())
+    if path.parts().count() > 0 {
+        format!("/{}/", path.as_ref())
+    } else {
+        "/".to_string()
+    }
 }
 
 fn get_object_meta(status: &FileStatus) -> Result<ObjectMeta> {
