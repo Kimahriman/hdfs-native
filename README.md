@@ -75,10 +75,10 @@ cargo build --features token,kerberos
     ```
 
 ## Running tests
-The tests are mostly integration tests that utilize a small Java application in `rust/mindifs/` that runs a custom `MiniDFSCluster`. To run the tests, you need to have Java, Maven, Hadoop binaries, and Kerberos tools available and on your path. Any Java version between 8 and 17 should work. Because they rely on this externally running process, only one test can run at a time. To run the tests:
+The tests are mostly integration tests that utilize a small Java application in `rust/mindifs/` that runs a custom `MiniDFSCluster`. To run the tests, you need to have Java, Maven, Hadoop binaries, and Kerberos tools available and on your path. Any Java version between 8 and 17 should work.
 
 ```bash
-cargo test -p hdfs-native --features token,kerberos,rs,intergation-test -- --test-threads=1
+cargo test -p hdfs-native --features token,kerberos,rs,intergation-test
 ```
 
 ### Python tests

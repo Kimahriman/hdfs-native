@@ -1,4 +1,5 @@
 use bytes::{Buf, Bytes};
+use serial_test::serial;
 use std::collections::HashSet;
 use std::io::{self, BufWriter, Write};
 use std::process::{Command, Stdio};
@@ -51,6 +52,8 @@ fn verify_read(mut data: Bytes, size: usize) {
 }
 
 #[tokio::test]
+#[serial]
+#[cfg(all(feature = "kerberos", feature = "rs"))]
 async fn test_erasure_coded_read() -> Result<()> {
     let _ = env_logger::builder().is_test(true).try_init();
 
