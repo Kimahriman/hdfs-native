@@ -3,7 +3,7 @@ requires = ["maturin>=1.1,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "hdfs_native"
+name = "hdfs-native"
 description = "Python bindings for hdfs-native Rust library"
 readme = "README.md"
 requires-python = ">=3.7"
