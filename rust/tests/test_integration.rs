@@ -1,3 +1,4 @@
+#[cfg(feature = "integration-test")]
 mod common;
 
 #[cfg(feature = "integration-test")]

@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use bytes::{BufMut, Bytes, BytesMut};
-use crc::{Crc, CRC_32_ISCSI};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use crc::{Crc, CRC_32_CKSUM, CRC_32_ISCSI};
 use log::{debug, error, warn};
 use prost::Message;
 use socket2::SockRef;
@@ -31,7 +31,10 @@ use crate::{HdfsError, Result};
 const PROTOCOL: &'static str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
 const DATA_TRANSFER_VERSION: u16 = 28;
 
-const CASTAGNOLI: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
+const MAX_PACKET_HEADER_SIZE: usize = 33;
+
+const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
+const CRC32C: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
 
 // Connect to a remote host and return a TcpStream with standard options we want
 async fn connect(addr: &str) -> Result<TcpStream> {
@@ -385,17 +388,7 @@ impl Packet {
     }
 
     fn max_packet_chunks(bytes_per_checksum: u32, max_packet_size: u32) -> usize {
-        // Create a dummy header to get its size
-        let mut header = hdfs::PacketHeaderProto::default();
-        header.offset_in_block = 0;
-        header.seqno = 0;
-        header.data_len = 0;
-        header.last_packet_in_block = false;
-        header.sync_block = Some(false);
-
-        // Add 4 bytes for size of whole packet and 2 bytes for size of header
-        let max_header_length = header.encoded_len() + 4 + 2;
-        let data_size = max_packet_size as usize - max_header_length;
+        let data_size = max_packet_size as usize - MAX_PACKET_HEADER_SIZE;
         let chunk_size = bytes_per_checksum as usize + CHECKSUM_BYTES;
         let chunks = data_size / chunk_size;
         chunks
@@ -420,7 +413,7 @@ impl Packet {
         let mut chunk_start = 0;
         while chunk_start < data.len() {
             let chunk_end = usize::min(chunk_start + self.bytes_per_checksum, data.len());
-            let chunk_checksum = CASTAGNOLI.checksum(&data[chunk_start..chunk_end]);
+            let chunk_checksum = CRC32C.checksum(&data[chunk_start..chunk_end]);
             self.checksum.put_u32(chunk_checksum);
             chunk_start += self.bytes_per_checksum;
         }
@@ -432,8 +425,35 @@ impl Packet {
         (self.header.clone(), checksum, data)
     }
 
-    pub(crate) fn get_data(self) -> Bytes {
-        self.data.freeze()
+    pub(crate) fn get_data(
+        self,
+        checksum_info: &Option<hdfs::ReadOpChecksumInfoProto>,
+    ) -> Result<Bytes> {
+        // Verify the checksums if they were requested
+        let mut checksums = self.checksum.freeze();
+        let data = self.data.freeze();
+        if let Some(info) = checksum_info {
+            let algorithm = match info.checksum.r#type() {
+                hdfs::ChecksumTypeProto::ChecksumCrc32 => Some(&CRC32),
+                hdfs::ChecksumTypeProto::ChecksumCrc32c => Some(&CRC32C),
+                hdfs::ChecksumTypeProto::ChecksumNull => None,
+            };
+
+            if let Some(algorithm) = algorithm {
+                // Create a new Bytes view over the data that we can consume
+                let mut checksum_data = data.clone();
+                while !checksum_data.is_empty() {
+                    let chunk_checksum = algorithm.checksum(&checksum_data.split_to(usize::min(
+                        info.checksum.bytes_per_checksum as usize,
+                        checksum_data.len(),
+                    )));
+                    if chunk_checksum != checksums.get_u32() {
+                        return Err(HdfsError::ChecksumError);
+                    }
+                }
+            }
+        }
+        Ok(data)
     }
 }
 
@@ -588,5 +608,26 @@ impl DatanodeConnection {
 
         let response = hdfs::PipelineAckProto::decode_length_delimited(response_buf.freeze())?;
         Ok(Some(response))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use prost::Message;
+
+    use crate::{hdfs::connection::MAX_PACKET_HEADER_SIZE, proto::hdfs};
+
+    #[test]
+    fn test_max_packet_header_size() {
+        // Create a dummy header to get its size
+        let mut header = hdfs::PacketHeaderProto::default();
+        header.offset_in_block = 0;
+        header.seqno = 0;
+        header.data_len = 0;
+        header.last_packet_in_block = false;
+        header.sync_block = Some(false);
+
+        // Add 4 bytes for size of whole packet and 2 bytes for size of header
+        assert_eq!(MAX_PACKET_HEADER_SIZE, header.encoded_len() + 4 + 2);
     }
 }

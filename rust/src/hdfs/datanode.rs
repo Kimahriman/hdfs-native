@@ -273,7 +273,7 @@ impl BlockReader {
         message.header = conn.build_header(&block, Some(token.clone()));
         message.offset = offset as u64;
         message.len = len as u64;
-        message.send_checksums = Some(false);
+        message.send_checksums = Some(true);
 
         debug!("Block read op request {:?}", &message);
 
@@ -292,14 +292,18 @@ impl BlockReader {
         let data_to_read = usize::min(data_len, len);
         let mut data_left = len - data_to_read;
 
-        let packet_data = packet.get_data();
+        let packet_data = packet.get_data(&response.read_op_checksum_info)?;
         buf.put(packet_data.slice(packet_offset..(packet_offset + data_to_read)));
 
         while data_left > 0 {
             packet = conn.read_packet().await?;
             // TODO: Error checking
             let data_to_read = usize::min(data_left, packet.header.data_len as usize);
-            buf.put(packet.get_data().slice(0..data_to_read));
+            buf.put(
+                packet
+                    .get_data(&response.read_op_checksum_info)?
+                    .slice(0..data_to_read),
+            );
             data_left -= data_to_read;
         }
 
