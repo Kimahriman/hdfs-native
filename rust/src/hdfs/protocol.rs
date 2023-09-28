@@ -67,7 +67,7 @@ impl NamenodeProtocol {
         let mut message = hdfs::GetLocatedFileInfoRequestProto::default();
         message.src = Some(src.to_string());
         message.need_block_token = Some(true);
-        debug!("get_located_block_info response: {:?}", &message);
+        debug!("getLocatedFileInfo request: {:?}", &message);
 
         let response = self
             .proxy
@@ -78,7 +78,7 @@ impl NamenodeProtocol {
             .await?;
 
         let decoded = hdfs::GetLocatedFileInfoResponseProto::decode_length_delimited(response)?;
-        debug!("get_located_block_info response: {:?}", &decoded);
+        debug!("getLocatedFileInfo response: {:?}", &decoded);
         Ok(decoded)
     }
 

@@ -13,6 +13,8 @@ pub enum HdfsError {
     IOError(#[from] io::Error),
     #[error("data transfer error")]
     DataTransferError(String),
+    #[error("checksums didn't match")]
+    ChecksumError,
     #[error("invalid path")]
     InvalidPath(String),
     #[error("invalid argument")]
