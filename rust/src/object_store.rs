@@ -12,7 +12,7 @@ use crate::{client::FileStatus, file::FileWriter, Client, HdfsError, WriteOption
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{NaiveDateTime, TimeZone, Utc};
-use futures::stream::{self, BoxStream, StreamExt};
+use futures::stream::{BoxStream, StreamExt};
 use object_store::{
     multipart::{PartId, PutPart, WriteMultiPart},
     path::Path,
@@ -24,12 +24,15 @@ use tokio::io::AsyncWrite;
 #[derive(Debug)]
 pub struct HdfsObjectStore {
     client: Arc<Client>,
+    config_chunk_size: usize,
 }
 
 impl HdfsObjectStore {
     pub fn new(client: Client) -> Self {
         Self {
             client: Arc::new(client),
+            /// a size of chunks returned by get_opts in streaming mode
+            config_chunk_size: 1024 * 1024,
         }
     }
 
@@ -190,11 +193,24 @@ impl ObjectStore for HdfsObjectStore {
         let range = options.range.unwrap_or(0..meta.size);
 
         let reader = self.client.read(&make_absolute_file(location)).await?;
-        let bytes = reader
-            .read_range(range.start, range.end - range.start)
-            .await?;
+        let chunk_size = self.config_chunk_size;
+        let end_offset = range.end;
+        let mut current_offset = range.start;
+        let stream = async_stream::stream! {
 
-        let payload = GetResultPayload::Stream(stream::once(async move { Ok(bytes) }).boxed());
+            while current_offset < end_offset {
+                let chunk_end_offset = std::cmp::min(end_offset, current_offset + chunk_size);
+                let bytes = reader
+                .read_range(current_offset, chunk_end_offset)
+                .await?;
+
+                current_offset += bytes.len();
+
+                yield Ok::<_,object_store::Error> (bytes)
+            }
+        };
+
+        let payload = GetResultPayload::Stream(stream.boxed());
 
         Ok(GetResult {
             payload,
