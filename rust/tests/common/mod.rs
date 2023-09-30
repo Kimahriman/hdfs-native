@@ -86,21 +86,16 @@ async fn test_listing(client: &Client) -> Result<()> {
 async fn test_read(client: &Client) -> Result<()> {
     // Read the whole file
     let reader = client.read("/testfile").await?;
-    let buf = reader.read_range(0, TEST_FILE_INTS * 4).await?;
+    let mut buf = reader.read_range(0, TEST_FILE_INTS * 4).await?;
     for i in 0..TEST_FILE_INTS as i32 {
-        let mut dst = [0u8; 4];
-        let offset = (i * 4) as usize;
-        dst.copy_from_slice(&buf.slice(offset..offset + 4)[..]);
-        assert_eq!(i32::from_be_bytes(dst), i);
+        assert_eq!(buf.get_i32(), i);
     }
 
     // Read a single integer from the file
-    let buf = reader
+    let mut buf = reader
         .read_range(TEST_FILE_INTS as usize / 2 * 4, 4)
         .await?;
-    let mut dst = [0u8; 4];
-    dst.copy_from_slice(&buf[..]);
-    assert_eq!(i32::from_be_bytes(dst), TEST_FILE_INTS as i32 / 2);
+    assert_eq!(buf.get_i32(), TEST_FILE_INTS as i32 / 2);
 
     // Read the whole file in 1 MiB chunks
     let mut offset = 0;
@@ -318,20 +313,15 @@ async fn test_object_store_read(store: &HdfsObjectStore) -> object_store::Result
 
     let location = Path::from("/testfile");
 
-    let buf = store.get(&location).await?.bytes().await?;
+    let mut buf = store.get(&location).await?.bytes().await?;
     for i in 0..TEST_FILE_INTS as i32 {
-        let mut dst = [0u8; 4];
-        let offset = (i * 4) as usize;
-        dst.copy_from_slice(&buf.slice(offset..offset + 4)[..]);
-        assert_eq!(i32::from_be_bytes(dst), i);
+        assert_eq!(buf.get_i32(), i);
     }
 
     // Read a single integer from the file
     let offset = TEST_FILE_INTS as usize / 2 * 4;
-    let buf = store.get_range(&location, offset..(offset + 4)).await?;
-    let mut dst = [0u8; 4];
-    dst.copy_from_slice(&buf[..]);
-    assert_eq!(i32::from_be_bytes(dst), TEST_FILE_INTS as i32 / 2);
+    let mut buf = store.get_range(&location, offset..(offset + 4)).await?;
+    assert_eq!(buf.get_i32(), TEST_FILE_INTS as i32 / 2);
     Ok(())
 }
 
