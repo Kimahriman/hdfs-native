@@ -1,4 +1,4 @@
-use bytes::{BufMut, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use hdfs_native::client::WriteOptions;
 use hdfs_native::{client::Client, Result};
 use std::collections::HashSet;
@@ -101,6 +101,19 @@ async fn test_read(client: &Client) -> Result<()> {
     let mut dst = [0u8; 4];
     dst.copy_from_slice(&buf[..]);
     assert_eq!(i32::from_be_bytes(dst), TEST_FILE_INTS as i32 / 2);
+
+    // Read the whole file in 1 MiB chunks
+    let mut offset = 0;
+    let mut val = 0;
+    while offset < TEST_FILE_INTS * 4 {
+        let mut buf = reader.read_range(offset, 1024 * 1024).await?;
+        while !buf.is_empty() {
+            assert_eq!(buf.get_i32(), val);
+            val += 1;
+        }
+        offset += 1024 * 1024;
+    }
+
     Ok(())
 }
 
@@ -368,7 +381,6 @@ async fn test_object_store_write(store: &HdfsObjectStore) -> object_store::Resul
 
 #[cfg(feature = "object_store")]
 async fn test_object_store_write_multipart(store: &HdfsObjectStore) -> object_store::Result<()> {
-    use bytes::Buf;
     use hdfs_native::HdfsError;
     use object_store::{path::Path, ObjectStore};
     use tokio::io::AsyncWriteExt;
