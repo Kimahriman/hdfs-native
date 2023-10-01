@@ -12,7 +12,7 @@ use crate::{client::FileStatus, file::FileWriter, Client, HdfsError, WriteOption
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{NaiveDateTime, TimeZone, Utc};
-use futures::stream::{self, BoxStream, StreamExt};
+use futures::stream::{BoxStream, StreamExt};
 use object_store::{
     multipart::{PartId, PutPart, WriteMultiPart},
     path::Path,
@@ -190,11 +190,12 @@ impl ObjectStore for HdfsObjectStore {
         let range = options.range.unwrap_or(0..meta.size);
 
         let reader = self.client.read(&make_absolute_file(location)).await?;
-        let bytes = reader
-            .read_range(range.start, range.end - range.start)
-            .await?;
+        let stream = reader
+            .read_range_stream(range.start, range.end - range.start)
+            .map(|b| Ok::<_, object_store::Error>(b?))
+            .boxed();
 
-        let payload = GetResultPayload::Stream(stream::once(async move { Ok(bytes) }).boxed());
+        let payload = GetResultPayload::Stream(stream);
 
         Ok(GetResult {
             payload,

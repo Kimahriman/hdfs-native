@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use bytes::{Bytes, BytesMut};
-use futures::future::join_all;
-use log::debug;
+use bytes::{BufMut, Bytes, BytesMut};
+use futures::stream::BoxStream;
+use futures::{stream, Stream, StreamExt};
 
-use crate::hdfs::datanode::{BlockReader, BlockWriter};
+use crate::hdfs::datanode::{get_block_stream, BlockWriter};
 use crate::hdfs::ec::EcSchema;
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::proto::hdfs;
-use crate::{HdfsError, Result};
+use crate::Result;
 
 pub struct FileReader {
     status: hdfs::HdfsFileStatusProto,
@@ -72,66 +72,67 @@ impl FileReader {
 
     /// Read up to `len` bytes starting at `offset` into a new [Bytes] object. The returned buffer
     /// could be smaller than `len` if `offset + len` extends beyond the end of the file.
+    ///
+    /// Panics if the requested range is outside of the file
     pub async fn read_range(&self, offset: usize, len: usize) -> Result<Bytes> {
-        let end = usize::min(self.file_length(), offset + len);
-        if offset >= end {
-            return Err(HdfsError::InvalidArgument(
-                "Offset is past the end of the file".to_string(),
-            ));
+        let mut stream = self.read_range_stream(offset, len).boxed();
+        let mut buf = BytesMut::with_capacity(len);
+        while let Some(bytes) = stream.next().await.transpose()? {
+            buf.put(bytes);
         }
-
-        let buf_size = end - offset;
-        let mut buf = BytesMut::zeroed(buf_size);
-        self.read_range_buf(&mut buf, offset).await?;
         Ok(buf.freeze())
     }
 
-    /// Read file data into an existing buffer. Buffer will be extended by the length of the file.
-    pub async fn read_range_buf(&self, buf: &mut [u8], offset: usize) -> Result<()> {
-        let block_readers = self.create_block_readers(offset, buf.len());
-
-        let mut futures = Vec::new();
-
-        let mut remaining = buf;
-
-        for reader in block_readers.iter() {
-            debug!("Block reader: {:?}", reader);
-            let (left, right) = remaining.split_at_mut(reader.len);
-            futures.push(reader.read(left));
-            remaining = right;
-        }
-
-        for future in join_all(futures).await.into_iter() {
-            future?;
+    /// Read file data into an existing buffer
+    ///
+    /// Panics if the requested range is outside of the file
+    pub async fn read_range_buf(&self, mut buf: &mut [u8], offset: usize) -> Result<()> {
+        let mut stream = self.read_range_stream(offset, buf.len()).boxed();
+        while let Some(bytes) = stream.next().await.transpose()? {
+            buf.put(bytes);
         }
 
         Ok(())
     }
 
-    fn create_block_readers(&self, offset: usize, len: usize) -> Vec<BlockReader> {
-        self.located_blocks
+    /// Return a stream of `Bytes` objects containing the content of the file
+    ///
+    /// Panics if the requested range is outside of the file
+    pub fn read_range_stream(
+        &self,
+        offset: usize,
+        len: usize,
+    ) -> impl Stream<Item = Result<Bytes>> {
+        if offset + len > self.file_length() {
+            panic!("Cannot read past end of the file");
+        }
+
+        let block_streams: Vec<BoxStream<Result<Bytes>>> = self
+            .located_blocks
             .blocks
             .iter()
-            .flat_map(|block| {
+            .flat_map(move |block| {
                 let block_file_start = block.offset as usize;
                 let block_file_end = block_file_start + block.b.num_bytes.unwrap() as usize;
 
-                if block_file_start <= (offset + len) && block_file_end > offset {
+                if block_file_start < (offset + len) && block_file_end > offset {
                     // We need to read this block
                     let block_start = offset - usize::min(offset, block_file_start);
                     let block_end = usize::min(offset + len, block_file_end) - block_file_start;
-                    Some(BlockReader::new(
+                    Some(get_block_stream(
                         block.clone(),
-                        self.ec_schema.clone(),
                         block_start,
                         block_end - block_start,
+                        self.ec_schema.clone(),
                     ))
                 } else {
                     // No data is needed from this block
                     None
                 }
             })
-            .collect()
+            .collect();
+
+        stream::iter(block_streams).flatten()
     }
 }
 
