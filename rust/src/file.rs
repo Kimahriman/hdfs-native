@@ -113,7 +113,7 @@ impl FileReader {
             .iter()
             .flat_map(move |block| {
                 let block_file_start = block.offset as usize;
-                let block_file_end = block_file_start + block.b.num_bytes.unwrap() as usize;
+                let block_file_end = block_file_start + block.b.num_bytes() as usize;
 
                 if block_file_start < (offset + len) && block_file_end > offset {
                     // We need to read this block
