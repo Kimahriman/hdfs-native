@@ -148,14 +148,9 @@ impl StripedBlockStream {
     }
 
     /// Hacky "stream" of a single value to match replicated behavior
+    /// TODO: Stream the results based on rows of cells?
     fn into_stream(self) -> impl Stream<Item = Result<Bytes>> {
-        stream::unfold(Some(self), |state| async move {
-            if let Some(this) = state {
-                Some((this.read_striped().await, None))
-            } else {
-                None
-            }
-        })
+        stream::once(async move { self.read_striped().await })
     }
 
     /// Erasure coded data is stored in "cells" that are striped across Data Nodes.
