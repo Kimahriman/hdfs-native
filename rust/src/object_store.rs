@@ -34,7 +34,6 @@ impl HdfsObjectStore {
     }
 
     async fn internal_copy(&self, from: &Path, to: &Path, overwrite: bool) -> Result<()> {
-        // TODO: Batch this instead of loading the whole thing
         let overwrite = match self.client.get_file_info(&make_absolute_file(to)).await {
             Ok(_) if overwrite => true,
             Ok(_) => Err(HdfsError::AlreadyExists(make_absolute_file(to)))?,
@@ -45,17 +44,17 @@ impl HdfsObjectStore {
         let mut write_options = WriteOptions::default();
         write_options.overwrite = overwrite;
 
-        let data = {
-            let mut file = self.client.read(&make_absolute_file(from)).await?;
-            file.read(file.remaining()).await?
-        };
+        let file = self.client.read(&make_absolute_file(from)).await?;
+        let mut stream = file.read_range_stream(0, file.file_length()).boxed();
 
         let mut new_file = self
             .client
             .create(&make_absolute_file(to), write_options)
             .await?;
 
-        new_file.write(data).await?;
+        while let Some(bytes) = stream.next().await.transpose()? {
+            new_file.write(bytes).await?;
+        }
         new_file.close().await?;
 
         Ok(())

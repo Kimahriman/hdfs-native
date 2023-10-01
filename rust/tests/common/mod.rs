@@ -238,6 +238,7 @@ async fn test_object_store(client: Client) -> object_store::Result<()> {
     test_object_store_read(&store).await?;
     test_object_store_write(&store).await?;
     test_object_store_write_multipart(&store).await?;
+    test_object_store_copy(&store).await?;
 
     Ok(())
 }
@@ -433,6 +434,47 @@ async fn test_object_store_write_multipart(store: &HdfsObjectStore) -> object_st
         .abort_multipart(&"/newfile".into(), &multipart_id)
         .await?;
     assert!(store.head(&"/.newfile.tmp".into()).await.is_err());
+
+    Ok(())
+}
+
+#[cfg(feature = "object_store")]
+async fn test_object_store_copy(store: &HdfsObjectStore) -> object_store::Result<()> {
+    use object_store::{path::Path, ObjectStore};
+
+    store.put(&Path::from("/newfile"), Bytes::new()).await?;
+
+    let size_to_check = 128 * 1024 * 1024;
+    let ints_to_write = size_to_check / 4;
+    let mut data = BytesMut::with_capacity(size_to_check as usize);
+    for i in 0..ints_to_write {
+        data.put_i32(i);
+    }
+
+    let buf = data.freeze();
+    store.put(&Path::from("/newfile"), buf.clone()).await?;
+    store
+        .copy(&Path::from("/newfile"), &Path::from("/newfile2"))
+        .await?;
+
+    let read_data = store.get(&Path::from("/newfile2")).await?.bytes().await?;
+    assert_eq!(buf.len(), read_data.len());
+
+    for pos in 0..buf.len() {
+        assert_eq!(
+            buf[pos], read_data[pos],
+            "data is different as position {} for size {}",
+            pos, size_to_check
+        );
+    }
+
+    assert!(store
+        .copy_if_not_exists(&Path::from("/newfile"), &Path::from("/newfile2"))
+        .await
+        .is_err());
+
+    store.delete(&Path::from("/newfile")).await?;
+    store.delete(&Path::from("/newfile2")).await?;
 
     Ok(())
 }
