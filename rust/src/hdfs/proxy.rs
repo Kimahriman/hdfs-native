@@ -145,12 +145,12 @@ impl NameServiceProxy {
                 }
                 // RPCError indicates the call was successfully attempted but had an error, so should be returned immediately
                 Err(HdfsError::RPCError(exception, msg)) if !Self::is_retriable(&exception) => {
-                    warn!("{}", msg);
+                    warn!("{}: {}", exception, msg);
                     return Err(HdfsError::RPCError(exception, msg));
                 }
                 Err(_) if attempts >= self.proxy_connections.len() - 1 => return result,
                 Err(e) => {
-                    warn!("{}", e);
+                    warn!("{:?}", e);
                 }
             }
 
