@@ -12,7 +12,7 @@ use crate::{client::FileStatus, file::FileWriter, Client, HdfsError, WriteOption
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{NaiveDateTime, TimeZone, Utc};
-use futures::stream::{self, BoxStream, StreamExt};
+use futures::stream::{BoxStream, StreamExt};
 use object_store::{
     multipart::{PartId, PutPart, WriteMultiPart},
     path::Path,
@@ -34,7 +34,6 @@ impl HdfsObjectStore {
     }
 
     async fn internal_copy(&self, from: &Path, to: &Path, overwrite: bool) -> Result<()> {
-        // TODO: Batch this instead of loading the whole thing
         let overwrite = match self.client.get_file_info(&make_absolute_file(to)).await {
             Ok(_) if overwrite => true,
             Ok(_) => Err(HdfsError::AlreadyExists(make_absolute_file(to)))?,
@@ -45,17 +44,17 @@ impl HdfsObjectStore {
         let mut write_options = WriteOptions::default();
         write_options.overwrite = overwrite;
 
-        let data = {
-            let mut file = self.client.read(&make_absolute_file(from)).await?;
-            file.read(file.remaining()).await?
-        };
+        let file = self.client.read(&make_absolute_file(from)).await?;
+        let mut stream = file.read_range_stream(0, file.file_length()).boxed();
 
         let mut new_file = self
             .client
             .create(&make_absolute_file(to), write_options)
             .await?;
 
-        new_file.write(data).await?;
+        while let Some(bytes) = stream.next().await.transpose()? {
+            new_file.write(bytes).await?;
+        }
         new_file.close().await?;
 
         Ok(())
@@ -190,11 +189,12 @@ impl ObjectStore for HdfsObjectStore {
         let range = options.range.unwrap_or(0..meta.size);
 
         let reader = self.client.read(&make_absolute_file(location)).await?;
-        let bytes = reader
-            .read_range(range.start, range.end - range.start)
-            .await?;
+        let stream = reader
+            .read_range_stream(range.start, range.end - range.start)
+            .map(|b| Ok::<_, object_store::Error>(b?))
+            .boxed();
 
-        let payload = GetResultPayload::Stream(stream::once(async move { Ok(bytes) }).boxed());
+        let payload = GetResultPayload::Stream(stream);
 
         Ok(GetResult {
             payload,
