@@ -79,6 +79,12 @@ public class Main {
             .numDataNodes(numDataNodes)
             .build();
 
+        if (flags.contains("ha")) {
+            hdfsConf.set(FS_DEFAULT_NAME_KEY, "hdfs://minidfs-ns");
+        } else {
+            hdfsConf.set(FS_DEFAULT_NAME_KEY, "hdfs://127.0.0.1:9000");
+        }
+
         hdfsConf.writeXml(new FileOutputStream("target/test/core-site.xml"));
         dfs.waitActive();
 

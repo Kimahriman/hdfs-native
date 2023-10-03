@@ -7,7 +7,7 @@ use futures::{stream, StreamExt};
 use log::debug;
 use url::Url;
 
-use crate::common::config::Configuration;
+use crate::common::config::{self, Configuration};
 use crate::error::{HdfsError, Result};
 use crate::file::{FileReader, FileWriter};
 use crate::hdfs::ec::resolve_ec_policy;
@@ -55,20 +55,34 @@ impl Client {
     ///
     /// viewfs schemes are not currently supported.
     pub fn new(url: &str) -> Result<Self> {
-        let parsed_url = Url::parse(url).expect("Failed to parse provided URL");
+        let parsed_url = Url::parse(url)?;
+        Ok(Self::with_config(&parsed_url, Configuration::new()?))
+    }
 
+    /// Creates a new HDFS Client based on the fs.defaultFs setting.
+    pub fn default() -> Result<Self> {
+        let config = Configuration::new()?;
+        let url = config
+            .get(config::DEFAULT_FS)
+            .ok_or(HdfsError::InvalidArgument(format!(
+                "No {} setting found",
+                config::DEFAULT_FS
+            )))?;
+        Ok(Self::with_config(&Url::parse(&url)?, config))
+    }
+
+    fn with_config(url: &Url, config: Configuration) -> Self {
+        println!("Creating for {:?}", url);
         assert_eq!(
-            parsed_url.scheme(),
+            url.scheme(),
             "hdfs",
             "Only hdfs:// scheme is currently supported"
         );
-        assert!(parsed_url.host().is_some(), "Host must be specified");
+        assert!(url.host().is_some(), "Host must be specified");
 
-        let config = Configuration::new()?;
-
-        let proxy = NameServiceProxy::new(&parsed_url, &config);
+        let proxy = NameServiceProxy::new(url, &config);
         let protocol = Arc::new(NamenodeProtocol::new(proxy));
-        Ok(Client { protocol })
+        Self { protocol }
     }
 
     /// Retrieve the file status for the file at `path`.

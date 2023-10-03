@@ -19,6 +19,8 @@ pub enum HdfsError {
     InvalidPath(String),
     #[error("invalid argument")]
     InvalidArgument(String),
+    #[error("failed to parse URL")]
+    UrlParseError(#[from] url::ParseError),
     #[error("file already exists")]
     AlreadyExists(String),
     #[error("operation failed")]

@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 const HADOOP_CONF_DIR: &str = "HADOOP_CONF_DIR";
 const HADOOP_HOME: &str = "HADOOP_HOME";
 
+pub(crate) const DEFAULT_FS: &str = "fs.defaultFS";
+
 const HA_NAMENODES_PREFIX: &str = "dfs.ha.namenodes";
 const HA_NAMENODE_RPC_ADDRESS_PREFIX: &str = "dfs.namenode.rpc-address";
 
@@ -39,9 +41,9 @@ impl Configuration {
     }
 
     /// Get a value from the config, returning None if the key wasn't defined.
-    // pub fn get(&self, key: &str) -> Option<String> {
-    //     self.map.get(key).map(|v| v.clone())
-    // }
+    pub fn get(&self, key: &str) -> Option<String> {
+        self.map.get(key).map(|v| v.clone())
+    }
 
     pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Vec<String> {
         self.map
