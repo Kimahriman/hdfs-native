@@ -9,8 +9,12 @@ const HADOOP_HOME: &str = "HADOOP_HOME";
 
 pub(crate) const DEFAULT_FS: &str = "fs.defaultFS";
 
+// Name Service settings
 const HA_NAMENODES_PREFIX: &str = "dfs.ha.namenodes";
 const HA_NAMENODE_RPC_ADDRESS_PREFIX: &str = "dfs.namenode.rpc-address";
+
+// Viewfs settings
+const VIEWFS_MOUNTTABLE_PREFIX: &str = "fs.viewfs.mounttable";
 
 #[derive(Debug)]
 pub struct Configuration {
@@ -58,6 +62,23 @@ impl Configuration {
                         ))
                         .map(|s| s.to_string())
                 })
+            })
+            .collect()
+    }
+
+    pub(crate) fn get_mount_table(&self, cluster: &str) -> Vec<(Option<String>, String)> {
+        self.map
+            .iter()
+            .flat_map(|(key, value)| {
+                if let Some(path) =
+                    key.strip_prefix(&format!("{}.{}.link.", VIEWFS_MOUNTTABLE_PREFIX, cluster))
+                {
+                    Some((Some(path.to_string()), value.to_string()))
+                } else if key == &format!("{}.{}.linkFallback", VIEWFS_MOUNTTABLE_PREFIX, cluster) {
+                    Some((None, value.to_string()))
+                } else {
+                    None
+                }
             })
             .collect()
     }

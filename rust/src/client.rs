@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use futures::stream::BoxStream;
 use futures::{stream, StreamExt};
-use log::debug;
 use url::Url;
 
 use crate::common::config::{self, Configuration};
@@ -43,9 +42,52 @@ impl Default for WriteOptions {
     }
 }
 
+#[derive(Debug, Clone)]
+struct MountLink {
+    viewfs_path: String,
+    protocol: Arc<NamenodeProtocol>,
+    hdfs_path: String,
+}
+
+impl MountLink {
+    /// Convert a viewfs path into a name service path if it matches this link
+    fn resolve(&self, path: &str) -> Option<String> {
+        if path == self.viewfs_path {
+            // First check for an exact match in which case we should just return the directory match exactly
+            Some(self.hdfs_path.clone())
+        } else if let Some(relative_path) = path.strip_prefix(&format!("{}/", self.viewfs_path)) {
+            // Next check for a path inside
+            let mut resolved_path = PathBuf::from(&self.hdfs_path);
+            if !relative_path.is_empty() {
+                resolved_path.push(relative_path);
+            }
+            Some(resolved_path.to_string_lossy().into())
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug)]
+struct MountTable {
+    mounts: Vec<MountLink>,
+    fallback: MountLink,
+}
+
+impl MountTable {
+    fn resolve(&self, path: &str) -> (&MountLink, String) {
+        for link in self.mounts.iter() {
+            if let Some(resolved) = link.resolve(path) {
+                return (&link, resolved);
+            }
+        }
+        (&self.fallback, self.fallback.resolve(path).unwrap())
+    }
+}
+
 #[derive(Debug)]
 pub struct Client {
-    protocol: Arc<NamenodeProtocol>,
+    mount_table: Arc<MountTable>,
 }
 
 impl Client {
@@ -56,7 +98,7 @@ impl Client {
     /// viewfs schemes are not currently supported.
     pub fn new(url: &str) -> Result<Self> {
         let parsed_url = Url::parse(url)?;
-        Ok(Self::with_config(&parsed_url, Configuration::new()?))
+        Ok(Self::with_config(&parsed_url, Configuration::new()?)?)
     }
 
     /// Creates a new HDFS Client based on the fs.defaultFs setting.
@@ -68,27 +110,100 @@ impl Client {
                 "No {} setting found",
                 config::DEFAULT_FS
             )))?;
-        Ok(Self::with_config(&Url::parse(&url)?, config))
+        Ok(Self::with_config(&Url::parse(&url)?, config)?)
     }
 
-    fn with_config(url: &Url, config: Configuration) -> Self {
-        println!("Creating for {:?}", url);
-        assert_eq!(
-            url.scheme(),
-            "hdfs",
-            "Only hdfs:// scheme is currently supported"
-        );
-        assert!(url.host().is_some(), "Host must be specified");
+    fn with_config(url: &Url, config: Configuration) -> Result<Self> {
+        if !url.has_host() {
+            return Err(HdfsError::InvalidArgument(
+                "URL must contain a host".to_string(),
+            ));
+        }
 
-        let proxy = NameServiceProxy::new(url, &config);
-        let protocol = Arc::new(NamenodeProtocol::new(proxy));
-        Self { protocol }
+        match url.scheme() {
+            "hdfs" => {
+                let proxy = NameServiceProxy::new(url, &config);
+                let protocol = Arc::new(NamenodeProtocol::new(proxy));
+
+                let mount_table = Arc::new(MountTable {
+                    mounts: Vec::new(),
+                    fallback: MountLink {
+                        viewfs_path: String::new(),
+                        protocol,
+                        hdfs_path: String::new(),
+                    },
+                });
+                Ok(Self { mount_table })
+            }
+            "viewfs" => Ok(Self {
+                mount_table: Arc::new(Self::build_mount_table(url.host_str().unwrap(), &config)?),
+            }),
+            _ => Err(HdfsError::InvalidArgument(
+                "Only `hdfs` and `viewfs` schemes are supported".to_string(),
+            )),
+        }
+    }
+
+    fn build_mount_table(host: &str, config: &Configuration) -> Result<MountTable> {
+        let mut mounts: Vec<MountLink> = Vec::new();
+        let mut fallback: Option<MountLink> = None;
+
+        for (viewfs_path, hdfs_url) in config.get_mount_table(host).iter() {
+            let url = Url::parse(hdfs_url)?;
+            if !url.has_host() {
+                return Err(HdfsError::InvalidArgument(
+                    "URL must contain a host".to_string(),
+                ));
+            }
+            if url.scheme() != "hdfs" {
+                return Err(HdfsError::InvalidArgument(
+                    "Only hdfs mounts are supported for viewfs".to_string(),
+                ));
+            }
+            let proxy = NameServiceProxy::new(&url, &config);
+            let protocol = Arc::new(NamenodeProtocol::new(proxy));
+
+            if let Some(prefix) = viewfs_path {
+                mounts.push(MountLink {
+                    viewfs_path: prefix.to_string(),
+                    protocol,
+                    hdfs_path: url.path().to_string(),
+                })
+            } else {
+                if fallback.is_some() {
+                    return Err(HdfsError::InvalidArgument(
+                        "Multiple viewfs fallback links found".to_string(),
+                    ));
+                }
+                fallback = Some(MountLink {
+                    viewfs_path: String::new(),
+                    protocol,
+                    hdfs_path: url.path().to_string(),
+                })
+            }
+        }
+
+        if fallback.is_none() {
+            return Err(HdfsError::InvalidArgument(
+                "No viewfs fallback mount found".to_string(),
+            ));
+        }
+
+        // Sort the mount table from longest viewfs path to shortest. This makes sure more specific paths are considered first.
+        mounts.sort_by_key(|m| m.viewfs_path.len());
+        mounts.reverse();
+
+        Ok(MountTable {
+            mounts,
+            fallback: fallback.unwrap(),
+        })
     }
 
     /// Retrieve the file status for the file at `path`.
     pub async fn get_file_info(&self, path: &str) -> Result<FileStatus> {
-        match self.protocol.get_file_info(path).await?.fs {
-            Some(status) => Ok(FileStatus::from(status, path)),
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        match link.protocol.get_file_info(&resolved_path).await?.fs {
+            Some(status) => Ok(FileStatus::from(status, &path)),
             None => Err(HdfsError::FileNotFound(path.to_string())),
         }
     }
@@ -112,12 +227,13 @@ impl Client {
 
     /// Retrives an iterator of all files in directories located at `path`.
     pub fn list_status_iter(&self, path: &str, recursive: bool) -> ListStatusIterator {
-        ListStatusIterator::new(path.to_string(), self.protocol.clone(), recursive)
+        ListStatusIterator::new(path.to_string(), Arc::clone(&self.mount_table), recursive)
     }
 
     /// Opens a file reader for the file at `path`. Path should not include a scheme.
     pub async fn read(&self, path: &str) -> Result<FileReader> {
-        let located_info = self.protocol.get_located_file_info(path).await?;
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        let located_info = link.protocol.get_located_file_info(&resolved_path).await?;
         match located_info.fs {
             Some(mut status) => {
                 let ec_schema = if let Some(ec_policy) = status.ec_policy.as_ref() {
@@ -144,7 +260,8 @@ impl Client {
     }
 
     pub async fn create(&self, src: &str, write_options: WriteOptions) -> Result<FileWriter> {
-        let server_defaults = self.protocol.get_server_defaults().await?.server_defaults;
+        let (link, resolved_path) = self.mount_table.resolve(src);
+        let server_defaults = link.protocol.get_server_defaults().await?.server_defaults;
 
         let block_size = write_options
             .block_size
@@ -153,10 +270,10 @@ impl Client {
             .replication
             .unwrap_or(server_defaults.replication);
 
-        let create_response = self
+        let create_response = link
             .protocol
             .create(
-                src,
+                &resolved_path,
                 write_options.permission,
                 write_options.overwrite,
                 write_options.create_parent,
@@ -175,8 +292,8 @@ impl Client {
                 }
 
                 Ok(FileWriter::new(
-                    Arc::clone(&self.protocol),
-                    src.to_string(),
+                    Arc::clone(&link.protocol),
+                    resolved_path,
                     status,
                     server_defaults,
                 ))
@@ -189,23 +306,36 @@ impl Client {
     /// any missing parent directories will be created as well, otherwise an error will be returned
     /// if the parent directory doesn't already exist.
     pub async fn mkdirs(&self, path: &str, permission: u32, create_parent: bool) -> Result<()> {
-        self.protocol
-            .mkdirs(path, permission, create_parent)
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .mkdirs(&resolved_path, permission, create_parent)
             .await
             .map(|_| ())
     }
 
     /// Renames `src` to `dst`. Returns Ok(()) on success, and Err otherwise.
     pub async fn rename(&self, src: &str, dst: &str, overwrite: bool) -> Result<()> {
-        debug!("Renaming {} to {}", src, dst);
-        self.protocol.rename(src, dst, overwrite).await.map(|_| ())
+        let (src_link, src_resolved_path) = self.mount_table.resolve(src);
+        let (dst_link, dst_resolved_path) = self.mount_table.resolve(dst);
+        if src_link.viewfs_path == dst_link.viewfs_path {
+            src_link
+                .protocol
+                .rename(&src_resolved_path, &dst_resolved_path, overwrite)
+                .await
+                .map(|_| ())
+        } else {
+            Err(HdfsError::InvalidArgument(
+                "Cannot rename across different name services".to_string(),
+            ))
+        }
     }
 
     /// Deletes the file or directory at `path`. If `recursive` is false and `path` is a non-empty
     /// directory, this will fail. Returns `Ok(true)` if it was successfully deleted.
     pub async fn delete(&self, path: &str, recursive: bool) -> Result<bool> {
-        self.protocol
-            .delete(path, recursive)
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .delete(&resolved_path, recursive)
             .await
             .map(|r| r.result)
     }
@@ -213,7 +343,8 @@ impl Client {
 
 pub(crate) struct DirListingIterator {
     path: String,
-    protocol: Arc<NamenodeProtocol>,
+    resolved_path: String,
+    link: MountLink,
     files_only: bool,
     partial_listing: VecDeque<HdfsFileStatusProto>,
     remaining: u32,
@@ -221,10 +352,13 @@ pub(crate) struct DirListingIterator {
 }
 
 impl DirListingIterator {
-    fn new(path: String, protocol: Arc<NamenodeProtocol>, files_only: bool) -> Self {
+    fn new(path: String, mount_table: &Arc<MountTable>, files_only: bool) -> Self {
+        let (link, resolved_path) = mount_table.resolve(&path);
+
         DirListingIterator {
             path,
-            protocol,
+            resolved_path,
+            link: link.clone(),
             files_only,
             partial_listing: VecDeque::new(),
             remaining: 1,
@@ -234,8 +368,9 @@ impl DirListingIterator {
 
     async fn get_next_batch(&mut self) -> Result<bool> {
         let listing = self
+            .link
             .protocol
-            .get_listing(&self.path, self.last_seen.clone(), false)
+            .get_listing(&self.resolved_path, self.last_seen.clone(), false)
             .await?;
 
         if let Some(dir_list) = listing.dir_list {
@@ -274,17 +409,17 @@ impl DirListingIterator {
 }
 
 pub struct ListStatusIterator {
-    protocol: Arc<NamenodeProtocol>,
+    mount_table: Arc<MountTable>,
     recursive: bool,
     iters: Vec<DirListingIterator>,
 }
 
 impl ListStatusIterator {
-    fn new(path: String, protocol: Arc<NamenodeProtocol>, recursive: bool) -> Self {
-        let initial = DirListingIterator::new(path.clone(), Arc::clone(&protocol), false);
+    fn new(path: String, mount_table: Arc<MountTable>, recursive: bool) -> Self {
+        let initial = DirListingIterator::new(path.clone(), &mount_table, false);
 
         ListStatusIterator {
-            protocol,
+            mount_table,
             recursive,
             iters: vec![initial],
         }
@@ -301,7 +436,7 @@ impl ListStatusIterator {
                         if file.isdir && self.recursive {
                             self.iters.push(DirListingIterator::new(
                                 file.path.clone(),
-                                Arc::clone(&self.protocol),
+                                &self.mount_table,
                                 false,
                             ))
                         }
@@ -366,5 +501,39 @@ impl FileStatus {
             modification_time: value.modification_time,
             access_time: value.access_time,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+
+    use url::Url;
+
+    use crate::{
+        common::config::Configuration,
+        hdfs::{protocol::NamenodeProtocol, proxy::NameServiceProxy},
+    };
+
+    use super::MountLink;
+
+    fn create_protocol(url: &str) -> Arc<NamenodeProtocol> {
+        let proxy =
+            NameServiceProxy::new(&Url::parse(url).unwrap(), &Configuration::new().unwrap());
+        Arc::new(NamenodeProtocol::new(proxy))
+    }
+
+    #[test]
+    fn test_mount_link_resolve() {
+        let protocol = create_protocol("hdfs://127.0.0.1:9000");
+        let link = MountLink {
+            viewfs_path: "/view".to_string(),
+            protocol,
+            hdfs_path: "/hdfs".to_string(),
+        };
+
+        assert_eq!(link.resolve("/view/dir/file").unwrap(), "/hdfs/dir/file");
+        assert_eq!(link.resolve("/view").unwrap(), "/hdfs");
+        assert!(link.resolve("/hdfs/path").is_none())
     }
 }
