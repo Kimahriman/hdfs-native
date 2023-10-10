@@ -78,7 +78,7 @@ impl MountTable {
     fn resolve(&self, path: &str) -> (&MountLink, String) {
         for link in self.mounts.iter() {
             if let Some(resolved) = link.resolve(path) {
-                return (&link, resolved);
+                return (link, resolved);
             }
         }
         (&self.fallback, self.fallback.resolve(path).unwrap())
@@ -98,7 +98,7 @@ impl Client {
     /// viewfs schemes are not currently supported.
     pub fn new(url: &str) -> Result<Self> {
         let parsed_url = Url::parse(url)?;
-        Ok(Self::with_config(&parsed_url, Configuration::new()?)?)
+        Self::with_config(&parsed_url, Configuration::new()?)
     }
 
     /// Creates a new HDFS Client based on the fs.defaultFs setting.
@@ -110,7 +110,7 @@ impl Client {
                 "No {} setting found",
                 config::DEFAULT_FS
             )))?;
-        Ok(Self::with_config(&Url::parse(&url)?, config)?)
+        Self::with_config(&Url::parse(&url)?, config)
     }
 
     fn with_config(url: &Url, config: Configuration) -> Result<Self> {
@@ -160,7 +160,7 @@ impl Client {
                     "Only hdfs mounts are supported for viewfs".to_string(),
                 ));
             }
-            let proxy = NameServiceProxy::new(&url, &config);
+            let proxy = NameServiceProxy::new(&url, config);
             let protocol = Arc::new(NamenodeProtocol::new(proxy));
 
             if let Some(prefix) = viewfs_path {
@@ -203,7 +203,7 @@ impl Client {
     pub async fn get_file_info(&self, path: &str) -> Result<FileStatus> {
         let (link, resolved_path) = self.mount_table.resolve(path);
         match link.protocol.get_file_info(&resolved_path).await?.fs {
-            Some(status) => Ok(FileStatus::from(status, &path)),
+            Some(status) => Ok(FileStatus::from(status, path)),
             None => Err(HdfsError::FileNotFound(path.to_string())),
         }
     }
@@ -387,14 +387,14 @@ impl DirListingIterator {
                 .into_iter()
                 .filter(|s| !self.files_only || s.file_type() != FileType::IsDir)
                 .collect();
-            Ok(self.partial_listing.len() > 0)
+            Ok(!self.partial_listing.is_empty())
         } else {
             Err(HdfsError::FileNotFound(self.path.clone()))
         }
     }
 
     pub async fn next(&mut self) -> Option<Result<FileStatus>> {
-        if self.partial_listing.len() == 0 && self.remaining > 0 {
+        if self.partial_listing.is_empty() && self.remaining > 0 {
             if let Err(error) = self.get_next_batch().await {
                 self.remaining = 0;
                 return Some(Err(error));
@@ -483,7 +483,7 @@ impl FileStatus {
     fn from(value: HdfsFileStatusProto, base_path: &str) -> Self {
         let mut path = PathBuf::from(base_path);
         if let Ok(relative_path) = std::str::from_utf8(&value.path) {
-            if relative_path.len() > 0 {
+            if !relative_path.is_empty() {
                 path.push(relative_path)
             }
         }

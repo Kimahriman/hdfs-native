@@ -28,7 +28,7 @@ use crate::security::sasl::{SaslReader, SaslRpcClient, SaslWriter};
 use crate::security::user::UserInfo;
 use crate::{HdfsError, Result};
 
-const PROTOCOL: &'static str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
+const PROTOCOL: &str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
 const DATA_TRANSFER_VERSION: u16 = 28;
 
 const MAX_PACKET_HEADER_SIZE: usize = 33;
@@ -394,8 +394,8 @@ impl Packet {
     fn max_packet_chunks(bytes_per_checksum: u32, max_packet_size: u32) -> usize {
         let data_size = max_packet_size as usize - MAX_PACKET_HEADER_SIZE;
         let chunk_size = bytes_per_checksum as usize + CHECKSUM_BYTES;
-        let chunks = data_size / chunk_size;
-        chunks
+        
+        data_size / chunk_size
     }
 
     pub(crate) fn write(&mut self, buf: &mut Bytes) {
@@ -470,7 +470,7 @@ pub(crate) struct DatanodeConnection {
 
 impl DatanodeConnection {
     pub(crate) async fn connect(url: &str) -> Result<Self> {
-        let stream = connect(&url).await?;
+        let stream = connect(url).await?;
 
         let (reader, writer) = stream.into_split();
 

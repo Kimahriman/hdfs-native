@@ -50,7 +50,7 @@ impl ProxyConnection {
                 RpcConnection::connect(
                     &self.url,
                     self.alignment_context.clone(),
-                    self.nameservice.as_ref().map(|ns| ns.as_str()),
+                    self.nameservice.as_deref(),
                 )
                 .await?,
             );
@@ -135,7 +135,7 @@ impl NameServiceProxy {
             let result = self.proxy_connections[proxy_index]
                 .lock()
                 .await
-                .call(&method_name, &message)
+                .call(method_name, &message)
                 .await;
 
             match result {

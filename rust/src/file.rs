@@ -51,7 +51,7 @@ impl FileReader {
         } else {
             let offset = self.position;
             self.position = usize::min(self.position + len, self.file_length());
-            self.read_range(offset, self.position - offset as usize)
+            self.read_range(offset, self.position - offset)
                 .await
         }
     }
@@ -174,12 +174,12 @@ impl FileWriter {
             )
             .await?;
 
-        Ok(BlockWriter::new(
+        BlockWriter::new(
             new_block.block,
             self.status.blocksize() as usize,
             self.server_defaults.clone(),
         )
-        .await?)
+        .await
     }
 
     async fn get_block_writer(&mut self) -> Result<&mut BlockWriter> {

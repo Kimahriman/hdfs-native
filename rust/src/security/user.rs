@@ -36,7 +36,7 @@ pub struct Token {
 impl Token {
     fn load_tokens() -> Vec<Self> {
         match env::var(HADOOP_TOKEN_FILE_LOCATION).map(PathBuf::from) {
-            Ok(path) if path.exists() => Self::read_token_file(path).ok().unwrap_or_else(Vec::new),
+            Ok(path) if path.exists() => Self::read_token_file(path).ok().unwrap_or_default(),
             _ => Vec::new(),
         }
     }
@@ -152,11 +152,11 @@ fn parse_vlong(reader: &mut impl Buf) -> i64 {
     let mut i = 0i64;
     for _ in 0..length - 1 {
         let b = reader.get_u8();
-        i = i << 8;
-        i = i | (b & 0xFF) as i64;
+        i <<= 8;
+        i |= b as i64;
     }
 
-    let is_negative = first_byte < -120 || (first_byte >= -112 && first_byte < 0);
+    let is_negative = first_byte < -120 || (-112..0).contains(&first_byte);
 
     if is_negative {
         i ^ -1

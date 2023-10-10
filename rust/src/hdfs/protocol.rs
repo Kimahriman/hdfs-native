@@ -17,7 +17,7 @@ impl NamenodeProtocol {
     pub(crate) fn new(proxy: NameServiceProxy) -> Self {
         let client_name = format!(
             "hdfs_native_client-{}",
-            Uuid::new_v4().as_hyphenated().to_string()
+            Uuid::new_v4().as_hyphenated()
         );
         NamenodeProtocol { proxy, client_name }
     }

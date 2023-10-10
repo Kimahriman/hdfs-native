@@ -202,8 +202,7 @@ impl StripedBlockStream {
         let block_map: HashMap<u8, &hdfs::DatanodeInfoProto> = self
             .block
             .block_indices()
-            .iter()
-            .map(|i| *i)
+            .iter().copied()
             .zip(self.block.locs.iter())
             .collect();
 
@@ -241,7 +240,7 @@ impl StripedBlockStream {
                 .read_vertical_stripe(
                     &self.ec_schema,
                     block_index,
-                    Some(&&datanode_info),
+                    Some(datanode_info),
                     block_start,
                     block_read_len,
                 )
@@ -315,12 +314,12 @@ impl StripedBlockStream {
                 .block_indices()
                 .iter()
                 .position(|x| *x == index)
-                .unwrap() as usize];
+                .unwrap()];
 
             self.read_from_datanode(
                 &datanode_info.id,
                 &block,
-                &token,
+                token,
                 offset,
                 read_len,
                 &mut buf,
@@ -347,7 +346,7 @@ impl StripedBlockStream {
                 .await?;
 
         let mut message = hdfs::OpReadBlockProto::default();
-        message.header = conn.build_header(&block, Some(token.clone()));
+        message.header = conn.build_header(block, Some(token.clone()));
         message.offset = offset as u64;
         message.len = len as u64;
         message.send_checksums = Some(true);
@@ -431,7 +430,7 @@ impl BlockWriter {
         checksum.bytes_per_checksum = server_defaults.bytes_per_checksum;
         message.requested_checksum = checksum;
 
-        message.storage_type = Some(block.storage_types[0].clone());
+        message.storage_type = Some(block.storage_types[0]);
         message.target_storage_types = block.storage_types[1..].to_vec();
         message.storage_id = Some(block.storage_i_ds[0].clone());
         message.target_storage_ids = block.storage_i_ds[1..].to_vec();
@@ -571,7 +570,7 @@ impl BlockWriter {
                     "Status channel closed while waiting for final ack".to_string(),
                 )
             })?;
-            let _ = result?;
+            result?;
         } else {
             return Err(HdfsError::DataTransferError(
                 "Block already closed".to_string(),

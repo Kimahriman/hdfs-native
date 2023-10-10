@@ -46,7 +46,7 @@ impl Configuration {
 
     /// Get a value from the config, returning None if the key wasn't defined.
     pub fn get(&self, key: &str) -> Option<String> {
-        self.map.get(key).map(|v| v.clone())
+        self.map.get(key).cloned()
     }
 
     pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Vec<String> {
@@ -54,7 +54,7 @@ impl Configuration {
             .get(&format!("{}.{}", HA_NAMENODES_PREFIX, nameservice))
             .into_iter()
             .flat_map(|namenodes| {
-                namenodes.split(",").flat_map(|namenode_id| {
+                namenodes.split(',').flat_map(|namenode_id| {
                     self.map
                         .get(&format!(
                             "{}.{}.{}",
