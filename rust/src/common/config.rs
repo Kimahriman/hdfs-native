@@ -123,3 +123,29 @@ impl Configuration {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::{Configuration, VIEWFS_MOUNTTABLE_PREFIX};
+
+    #[test]
+    fn test_mount_table_config() {
+        let config = Configuration {
+            map: [(
+                format!("{}.clusterX.link./view", VIEWFS_MOUNTTABLE_PREFIX),
+                "hdfs://127.0.0.1:9000/hdfs".to_string(),
+            )]
+            .into(),
+        };
+
+        assert_eq!(
+            config.get_mount_table("clusterX"),
+            vec![(
+                Some("/view".to_string()),
+                "hdfs://127.0.0.1:9000/hdfs".to_string()
+            )]
+        );
+
+        assert_eq!(config.get_mount_table("clusterY"), Vec::new());
+    }
+}
