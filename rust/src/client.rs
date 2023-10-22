@@ -110,8 +110,6 @@ impl Client {
     /// Creates a new HDFS Client. The URL must include the protocol and host, and optionally a port.
     /// If a port is included, the host is treated as a single NameNode. If no port is included, the
     /// host is treated as a name service that will be resolved using the HDFS config.
-    ///
-    /// viewfs schemes are not currently supported.
     pub fn new(url: &str) -> Result<Self> {
         let parsed_url = Url::parse(url)?;
         Ok(Self::with_config(&parsed_url, Configuration::new()?)?)
