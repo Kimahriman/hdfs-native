@@ -22,6 +22,7 @@ import org.apache.hadoop.security.Credentials.SerializedFormat;
 import org.apache.hadoop.security.token.Token;
 
 import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.*;
+import static org.apache.hadoop.fs.viewfs.Constants.*;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import static org.apache.hadoop.hdfs.client.HdfsClientConfigKeys.*;
 
@@ -57,13 +58,7 @@ public class Main {
             conf.set(DFSConfigKeys.IGNORE_SECURE_PORTS_FOR_TESTING_KEY, "true");
         }
 
-        MiniDFSNNTopology nnTopology = null;
-        if (flags.contains("ha")) {
-            nnTopology = MiniDFSNNTopology.simpleHATopology(3);
-            conf.set(HdfsClientConfigKeys.Failover.PROXY_PROVIDER_KEY_PREFIX + ".minidfs-ns", "org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider");
-            conf.set(DFSConfigKeys.DFS_NAMENODE_STATE_CONTEXT_ENABLED_KEY, "true");
-            conf.set(DFSConfigKeys.DFS_HA_TAILEDITS_INPROGRESS_KEY, "true");
-        }
+        MiniDFSNNTopology nnTopology = generateTopology(flags, conf);
 
         int numDataNodes = 1;
         if (flags.contains("ec")) {
@@ -79,17 +74,15 @@ public class Main {
             .numDataNodes(numDataNodes)
             .build();
 
-        if (flags.contains("ha")) {
-            hdfsConf.set(FS_DEFAULT_NAME_KEY, "hdfs://minidfs-ns");
-        } else {
-            hdfsConf.set(FS_DEFAULT_NAME_KEY, "hdfs://127.0.0.1:9000");
-        }
-
         hdfsConf.writeXml(new FileOutputStream("target/test/core-site.xml"));
         dfs.waitActive();
 
         int activeNamenode = 0;
-        if (flags.contains("ha")) {
+        if (flags.contains("viewfs")) {
+            // Each name services has two namenodes
+            dfs.transitionToActive(0);
+            dfs.transitionToActive(2);
+        } else if (flags.contains("ha")) {
             activeNamenode = 2;
             // dfs.transitionToObserver(1);
             dfs.transitionToActive(activeNamenode);
@@ -138,5 +131,28 @@ public class Main {
         if (flags.contains("security")) {
             kdc.stop();
         }
+    }
+
+    public static MiniDFSNNTopology generateTopology(Set<String> flags, Configuration conf) {
+        MiniDFSNNTopology nnTopology = null;
+        if (flags.contains("viewfs")) {
+            nnTopology = MiniDFSNNTopology.simpleHAFederatedTopology(2);
+            conf.set(HdfsClientConfigKeys.Failover.PROXY_PROVIDER_KEY_PREFIX + ".ns0", "org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider");
+            conf.set(HdfsClientConfigKeys.Failover.PROXY_PROVIDER_KEY_PREFIX + ".ns1", "org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider");
+            conf.set(DFSConfigKeys.DFS_NAMENODE_STATE_CONTEXT_ENABLED_KEY, "true");
+            conf.set(DFSConfigKeys.DFS_HA_TAILEDITS_INPROGRESS_KEY, "true");
+            conf.set(CONFIG_VIEWFS_PREFIX + ".minidfs-viewfs.link./mount1", "hdfs://ns0/nested");
+            conf.set(CONFIG_VIEWFS_PREFIX + ".minidfs-viewfs.linkFallback", "hdfs://ns1/nested");
+            conf.set(FS_DEFAULT_NAME_KEY, "viewfs://minidfs-viewfs");
+        } else if (flags.contains("ha")) {
+            nnTopology = MiniDFSNNTopology.simpleHATopology(3);
+            conf.set(HdfsClientConfigKeys.Failover.PROXY_PROVIDER_KEY_PREFIX + ".minidfs-ns", "org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider");
+            conf.set(DFSConfigKeys.DFS_NAMENODE_STATE_CONTEXT_ENABLED_KEY, "true");
+            conf.set(DFSConfigKeys.DFS_HA_TAILEDITS_INPROGRESS_KEY, "true");
+            conf.set(FS_DEFAULT_NAME_KEY, "hdfs://minidfs-ns");
+        } else {
+            conf.set(FS_DEFAULT_NAME_KEY, "hdfs://127.0.0.1:9000");
+        }
+        return nnTopology;
     }
 }

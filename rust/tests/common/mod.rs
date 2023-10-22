@@ -31,8 +31,6 @@ pub fn setup(features: &HashSet<DfsFeatures>) -> MiniDfs {
             file.path().to_str().unwrap(),
             &format!("{}/testfile", dfs.url),
         ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .status()
         .unwrap();
     assert!(status.success());
