@@ -11,7 +11,7 @@ use super::user::User;
 
 #[repr(u8)]
 enum SecurityLayer {
-    NoSecurityLayer = 1,
+    None = 1,
     Integrity = 2,
     Confidentiality = 4,
 }
@@ -103,11 +103,8 @@ impl SaslSession for GssapiSession {
                         [SecurityLayer::Integrity as u8, 0xFF, 0xFF, 0xFF],
                         Some(false),
                     )
-                } else if supported_sec & SecurityLayer::NoSecurityLayer as u8 > 0 {
-                    (
-                        [SecurityLayer::NoSecurityLayer as u8, 0x00, 0x00, 0x00],
-                        None,
-                    )
+                } else if supported_sec & SecurityLayer::None as u8 > 0 {
+                    ([SecurityLayer::None as u8, 0x00, 0x00, 0x00], None)
                 } else {
                     return Err(HdfsError::SASLError(
                         "No supported security layer found".to_string(),

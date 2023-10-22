@@ -16,14 +16,6 @@ const HADOOP_PROXY_USER: &str = "HADOOP_PROXY_USER";
 const HADOOP_TOKEN_FILE_LOCATION: &str = "HADOOP_TOKEN_FILE_LOCATION";
 const TOKEN_STORAGE_MAGIC: &[u8] = "HDTS".as_bytes();
 
-#[derive(Clone)]
-#[allow(dead_code)]
-pub(crate) enum LoginMethod {
-    SIMPLE,
-    KERBEROS,
-    TOKEN,
-}
-
 #[derive(Debug)]
 pub struct Token {
     pub alias: String,
@@ -216,9 +208,9 @@ impl User {
     #[cfg(feature = "kerberos")]
     pub(crate) fn get_user_from_principal(principal: &str) -> String {
         // If there's a /, take the part before it.
-        if let Some(index) = principal.find("/") {
+        if let Some(index) = principal.find('/') {
             principal[0..index].to_string()
-        } else if let Some(index) = principal.find("@") {
+        } else if let Some(index) = principal.find('@') {
             principal[0..index].to_string()
         } else {
             principal.to_string()
@@ -240,7 +232,7 @@ mod tests {
         let b64_token = "SERUUwABDjEyNy4wLjAuMTo5MDAwLgAaaGRmcy9sb2NhbGhvc3RARVhBTVBMRS5DT00AAIoBiX/hghSKAYmj7gYUAQIUadF4ni3ObKqU8niv40WBFsGhFm4VSERGU19ERUxFR0FUSU9OX1RPS0VODjEyNy4wLjAuMTo5MDAwAA==";
         let mut token_file = NamedTempFile::new().unwrap();
         token_file
-            .write(
+            .write_all(
                 general_purpose::STANDARD
                     .decode(b64_token)
                     .unwrap()
@@ -268,7 +260,7 @@ mod tests {
         let b64_token = "SERUUwGBAQp/Cg5sb2NhbGhvc3Q6OTAwMBJtCi4AGmhkZnMvbG9jYWxob3N0QEVYQU1QTEUuQ09NAACKAYiiTtt9igGIxltffQECEhQoROcYNFMxMuoK9UHlAna6ZmhQSBoVSERGU19ERUxFR0FUSU9OX1RPS0VOIg4xMjcuMC4wLjE6OTAwMA==";
         let mut token_file = NamedTempFile::new().unwrap();
         token_file
-            .write(
+            .write_all(
                 general_purpose::STANDARD
                     .decode(b64_token)
                     .unwrap()

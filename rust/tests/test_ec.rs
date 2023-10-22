@@ -63,7 +63,7 @@ mod test {
         let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC, DfsFeatures::SECURITY]));
         #[cfg(not(feature = "kerberos"))]
         let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC]));
-        let client = Client::default()?;
+        let client = Client::default();
 
         // Test each of Hadoop's built-in RS policies
         for (data, parity) in [(3usize, 2usize), (6, 3), (10, 4)] {

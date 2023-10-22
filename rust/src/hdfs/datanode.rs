@@ -73,12 +73,13 @@ impl ReplicatedBlockStream {
             DatanodeConnection::connect(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
                 .await?;
 
-        let mut message = hdfs::OpReadBlockProto::default();
-        message.header =
-            connection.build_header(&self.block.b, Some(self.block.block_token.clone()));
-        message.offset = self.offset as u64;
-        message.len = self.len as u64;
-        message.send_checksums = Some(true);
+        let message = hdfs::OpReadBlockProto {
+            header: connection.build_header(&self.block.b, Some(self.block.block_token.clone())),
+            offset: self.offset as u64,
+            len: self.len as u64,
+            send_checksums: Some(true),
+            ..Default::default()
+        };
 
         debug!("Block read op request {:?}", &message);
 
@@ -202,7 +203,8 @@ impl StripedBlockStream {
         let block_map: HashMap<u8, &hdfs::DatanodeInfoProto> = self
             .block
             .block_indices()
-            .iter().copied()
+            .iter()
+            .copied()
             .zip(self.block.locs.iter())
             .collect();
 
@@ -316,15 +318,8 @@ impl StripedBlockStream {
                 .position(|x| *x == index)
                 .unwrap()];
 
-            self.read_from_datanode(
-                &datanode_info.id,
-                &block,
-                token,
-                offset,
-                read_len,
-                &mut buf,
-            )
-            .await?;
+            self.read_from_datanode(&datanode_info.id, &block, token, offset, read_len, &mut buf)
+                .await?;
         }
 
         Ok(buf)
@@ -345,12 +340,13 @@ impl StripedBlockStream {
             DatanodeConnection::connect(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
                 .await?;
 
-        let mut message = hdfs::OpReadBlockProto::default();
-        message.header = conn.build_header(block, Some(token.clone()));
-        message.offset = offset as u64;
-        message.len = len as u64;
-        message.send_checksums = Some(true);
-
+        let message = hdfs::OpReadBlockProto {
+            header: conn.build_header(block, Some(token.clone())),
+            offset: offset as u64,
+            len: len as u64,
+            send_checksums: Some(true),
+            ..Default::default()
+        };
         debug!("Block read op request {:?}", &message);
 
         conn.send(Op::ReadBlock, &message).await?;
@@ -417,23 +413,24 @@ impl BlockWriter {
             DatanodeConnection::connect(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
                 .await?;
 
-        let mut message = hdfs::OpWriteBlockProto::default();
-        message.header = connection.build_header(&block.b, Some(block.block_token.clone()));
-        message.stage =
-            hdfs::op_write_block_proto::BlockConstructionStage::PipelineSetupCreate as i32;
-        message.targets = block.locs[1..].to_vec();
-        message.pipeline_size = block.locs.len() as u32;
-        message.latest_generation_stamp = 0; //block.b.generation_stamp;
+        let checksum = hdfs::ChecksumProto {
+            r#type: hdfs::ChecksumTypeProto::ChecksumCrc32c as i32,
+            bytes_per_checksum: server_defaults.bytes_per_checksum,
+        };
 
-        let mut checksum = hdfs::ChecksumProto::default();
-        checksum.r#type = hdfs::ChecksumTypeProto::ChecksumCrc32c as i32;
-        checksum.bytes_per_checksum = server_defaults.bytes_per_checksum;
-        message.requested_checksum = checksum;
-
-        message.storage_type = Some(block.storage_types[0]);
-        message.target_storage_types = block.storage_types[1..].to_vec();
-        message.storage_id = Some(block.storage_i_ds[0].clone());
-        message.target_storage_ids = block.storage_i_ds[1..].to_vec();
+        let message = hdfs::OpWriteBlockProto {
+            header: connection.build_header(&block.b, Some(block.block_token.clone())),
+            stage: hdfs::op_write_block_proto::BlockConstructionStage::PipelineSetupCreate as i32,
+            targets: block.locs[1..].to_vec(),
+            pipeline_size: block.locs.len() as u32,
+            latest_generation_stamp: 0,
+            requested_checksum: checksum,
+            storage_type: Some(block.storage_types[0]),
+            target_storage_types: block.storage_types[1..].to_vec(),
+            storage_id: Some(block.storage_i_ds[0].clone()),
+            target_storage_ids: block.storage_i_ds[1..].to_vec(),
+            ..Default::default()
+        };
 
         debug!("Block write request: {:?}", &message);
 

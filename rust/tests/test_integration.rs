@@ -97,7 +97,7 @@ mod test {
         let _ = env_logger::builder().is_test(true).try_init();
 
         let _dfs = setup(features);
-        let client = Client::default()?;
+        let client = Client::default();
 
         test_file_info(&client).await?;
         test_listing(&client).await?;

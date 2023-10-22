@@ -87,7 +87,7 @@ impl MountTable {
         let path = Path::new(src);
         for link in self.mounts.iter() {
             if let Some(resolved) = link.resolve(path) {
-                return (&link, resolved.to_string_lossy().into());
+                return (link, resolved.to_string_lossy().into());
             }
         }
         (
@@ -113,18 +113,6 @@ impl Client {
     pub fn new(url: &str) -> Result<Self> {
         let parsed_url = Url::parse(url)?;
         Self::with_config(&parsed_url, Configuration::new()?)
-    }
-
-    /// Creates a new HDFS Client based on the fs.defaultFs setting.
-    pub fn default() -> Result<Self> {
-        let config = Configuration::new()?;
-        let url = config
-            .get(config::DEFAULT_FS)
-            .ok_or(HdfsError::InvalidArgument(format!(
-                "No {} setting found",
-                config::DEFAULT_FS
-            )))?;
-        Self::with_config(&Url::parse(&url)?, config)
     }
 
     fn with_config(url: &Url, config: Configuration) -> Result<Self> {
@@ -337,6 +325,26 @@ impl Client {
             .delete(&resolved_path, recursive)
             .await
             .map(|r| r.result)
+    }
+}
+
+impl Default for Client {
+    /// Creates a new HDFS Client based on the fs.defaultFS setting. Panics if the config files fail to load,
+    /// no defaultFS is defined, or the defaultFS is invalid.
+    fn default() -> Self {
+        let config = Configuration::new().expect("Failed to load configuration");
+        let url = config
+            .get(config::DEFAULT_FS)
+            .ok_or(HdfsError::InvalidArgument(format!(
+                "No {} setting found",
+                config::DEFAULT_FS
+            )))
+            .expect("No fs.defaultFS config defined");
+        Self::with_config(
+            &Url::parse(&url).expect("Failed to parse fs.defaultFS"),
+            config,
+        )
+        .expect("Failed to create default client")
     }
 }
 

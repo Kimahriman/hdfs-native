@@ -88,14 +88,8 @@ impl EcSchema {
         }
 
         while vertical_stripes[0].as_ref().is_some_and(|b| !b.is_empty()) {
-            for index in 0..self.data_units {
-                cells.push(
-                    vertical_stripes[index]
-                        .as_mut()
-                        .unwrap()
-                        .split_to(self.cell_size)
-                        .freeze(),
-                )
+            for stripe in vertical_stripes.iter_mut().take(self.data_units) {
+                cells.push(stripe.as_mut().unwrap().split_to(self.cell_size).freeze())
             }
         }
 

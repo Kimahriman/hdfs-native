@@ -25,20 +25,17 @@ impl Configuration {
     pub fn new() -> io::Result<Self> {
         let mut map: HashMap<String, String> = HashMap::new();
 
-        match Self::get_conf_dir() {
-            Some(conf_dir) => {
-                for file in ["core-site.xml", "hdfs-site.xml"] {
-                    let config_path = conf_dir.join(file);
-                    if config_path.as_path().exists() {
-                        Self::read_from_file(config_path.as_path())?
-                            .into_iter()
-                            .for_each(|(key, value)| {
-                                map.insert(key, value);
-                            })
-                    }
+        if let Some(conf_dir) = Self::get_conf_dir() {
+            for file in ["core-site.xml", "hdfs-site.xml"] {
+                let config_path = conf_dir.join(file);
+                if config_path.as_path().exists() {
+                    Self::read_from_file(config_path.as_path())?
+                        .into_iter()
+                        .for_each(|(key, value)| {
+                            map.insert(key, value);
+                        })
                 }
             }
-            None => (),
         }
 
         Ok(Configuration { map })
