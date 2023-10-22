@@ -123,3 +123,70 @@ impl Configuration {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::{Configuration, VIEWFS_MOUNTTABLE_PREFIX};
+
+    #[test]
+    fn test_mount_table_config() {
+        let mounts = [
+            ("clusterX", "/view1", "/hdfs1"),
+            ("clusterX", "/view2", "/hdfs2"),
+            ("clusterY", "/view3", "/hdfs3"),
+        ];
+
+        let fallbacks = [("clusterX", "/hdfs4"), ("clusterY", "/hdfs5")];
+
+        let config = Configuration {
+            map: mounts
+                .iter()
+                .map(|(cluster, viewfs_path, hdfs_path)| {
+                    (
+                        format!(
+                            "{}.{}.link.{}",
+                            VIEWFS_MOUNTTABLE_PREFIX, cluster, viewfs_path
+                        ),
+                        format!("hdfs://127.0.0.1:9000{}", hdfs_path),
+                    )
+                })
+                .chain(fallbacks.iter().map(|(cluster, hdfs_path)| {
+                    (
+                        format!("{}.{}.linkFallback", VIEWFS_MOUNTTABLE_PREFIX, cluster),
+                        format!("hdfs://127.0.0.1:9000{}", hdfs_path),
+                    )
+                }))
+                .collect(),
+        };
+
+        let mut mount_table = config.get_mount_table("clusterX");
+        mount_table.sort();
+        assert_eq!(
+            vec![
+                (None, "hdfs://127.0.0.1:9000/hdfs4".to_string()),
+                (
+                    Some("/view1".to_string()),
+                    "hdfs://127.0.0.1:9000/hdfs1".to_string()
+                ),
+                (
+                    Some("/view2".to_string()),
+                    "hdfs://127.0.0.1:9000/hdfs2".to_string()
+                )
+            ],
+            mount_table
+        );
+
+        let mut mount_table = config.get_mount_table("clusterY");
+        mount_table.sort();
+        assert_eq!(
+            mount_table,
+            vec![
+                (None, "hdfs://127.0.0.1:9000/hdfs5".to_string()),
+                (
+                    Some("/view3".to_string()),
+                    "hdfs://127.0.0.1:9000/hdfs3".to_string()
+                )
+            ]
+        );
+    }
+}
