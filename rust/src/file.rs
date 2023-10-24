@@ -51,8 +51,7 @@ impl FileReader {
         } else {
             let offset = self.position;
             self.position = usize::min(self.position + len, self.file_length());
-            self.read_range(offset, self.position - offset)
-                .await
+            self.read_range(offset, self.position - offset).await
         }
     }
 
