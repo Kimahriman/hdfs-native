@@ -137,9 +137,7 @@ mod test {
         }
 
         // Read a single integer from the file
-        let mut buf = reader
-            .read_range(TEST_FILE_INTS as usize / 2 * 4, 4)
-            .await?;
+        let mut buf = reader.read_range(TEST_FILE_INTS / 2 * 4, 4).await?;
         assert_eq!(buf.get_i32(), TEST_FILE_INTS as i32 / 2);
 
         // Read the whole file in 1 MiB chunks
@@ -175,7 +173,7 @@ mod test {
         assert!(client
             .list_status("/testdir", false)
             .await
-            .is_ok_and(|s| s.len() == 0));
+            .is_ok_and(|s| s.is_empty()));
 
         client.delete("/testdir", false).await?;
         assert!(client.list_status("/testdir", false).await.is_err());

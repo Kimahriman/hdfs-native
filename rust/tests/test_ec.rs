@@ -23,7 +23,7 @@ mod test {
             let mut writer = BufWriter::new(file.as_file_mut());
             for i in 0..num_ints as u32 {
                 let bytes = i.to_be_bytes();
-                writer.write(&bytes)?;
+                writer.write_all(&bytes)?;
             }
             writer.flush()?;
         }
@@ -91,7 +91,7 @@ mod test {
 
                 for faults in 0..parity {
                     let _ = EC_FAULT_INJECTOR.lock().unwrap().insert(EcFaultInjection {
-                        fail_blocks: (0..faults).into_iter().collect(),
+                        fail_blocks: (0..faults).collect(),
                     });
                     let data = reader.read_range(0, reader.file_length()).await?;
                     verify_read(data, file_size);
@@ -99,7 +99,7 @@ mod test {
 
                 // Fail more than the number of parity shards, read should fail
                 let _ = EC_FAULT_INJECTOR.lock().unwrap().insert(EcFaultInjection {
-                    fail_blocks: (0..=parity).into_iter().collect(),
+                    fail_blocks: (0..=parity).collect(),
                 });
 
                 assert!(reader.read_range(0, reader.file_length()).await.is_err());
