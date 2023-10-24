@@ -13,6 +13,7 @@ pub enum DfsFeatures {
     TOKEN,
     PRIVACY,
     HA,
+    VIEWFS,
     EC,
 }
 
@@ -21,6 +22,7 @@ impl DfsFeatures {
         match self {
             DfsFeatures::EC => "ec",
             DfsFeatures::HA => "ha",
+            DfsFeatures::VIEWFS => "viewfs",
             DfsFeatures::PRIVACY => "privacy",
             DfsFeatures::SECURITY => "security",
             DfsFeatures::TOKEN => "token",
@@ -116,7 +118,9 @@ impl MiniDfs {
             }
         }
 
-        let url = if features.contains(&DfsFeatures::HA) {
+        let url = if features.contains(&DfsFeatures::VIEWFS) {
+            "viewfs://minidfs-viewfs"
+        } else if features.contains(&DfsFeatures::HA) {
             "hdfs://minidfs-ns"
         } else {
             "hdfs://127.0.0.1:9000"

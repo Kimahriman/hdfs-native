@@ -16,6 +16,7 @@ Here is a list of currently supported and unsupported but possible future featur
 ### HDFS Features
 - [x] Name Services
 - [ ] Observer reads (state ID tracking is supported, but needs improvements on tracking Observer/Active NameNode)
+- [x] ViewFS
 - [ ] Federated router
 - [x] Erasure coded reads 
     - RS schema only, no support for RS-Legacy or XOR
@@ -42,8 +43,11 @@ Here is a list of currently supported and unsupported but possible future featur
 
 ## Supported HDFS Settings
 The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xml` in the directories `$HADOOP_CONF_DIR` or if that doesn't exist, `$HADOOP_HOME/etc/hadoop`. Currently the supported configs that are used are:
+- `fs.defaultFS` - Client::default() support
 - `dfs.ha.namenodes` - name service support
 - `dfs.namenode.rpc-address.*` - name service support
+- `fs.viewfs.mounttable.*.link.*` - ViewFS links
+- `fs.viewfs.mounttable.*.linkFallback` - ViewFS link fallback
 
 All other settings are generally assumed to be the defaults currently. For instance, security is assumed to be enabled and SASL negotiation is always done, but on insecure clusters this will just do SIMPLE authentication. Any setups that require other customized Hadoop client configs may not work correctly. 
 

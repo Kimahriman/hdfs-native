@@ -7,8 +7,14 @@ use std::path::{Path, PathBuf};
 const HADOOP_CONF_DIR: &str = "HADOOP_CONF_DIR";
 const HADOOP_HOME: &str = "HADOOP_HOME";
 
+pub(crate) const DEFAULT_FS: &str = "fs.defaultFS";
+
+// Name Service settings
 const HA_NAMENODES_PREFIX: &str = "dfs.ha.namenodes";
 const HA_NAMENODE_RPC_ADDRESS_PREFIX: &str = "dfs.namenode.rpc-address";
+
+// Viewfs settings
+const VIEWFS_MOUNTTABLE_PREFIX: &str = "fs.viewfs.mounttable";
 
 #[derive(Debug)]
 pub struct Configuration {
@@ -39,9 +45,9 @@ impl Configuration {
     }
 
     /// Get a value from the config, returning None if the key wasn't defined.
-    // pub fn get(&self, key: &str) -> Option<String> {
-    //     self.map.get(key).map(|v| v.clone())
-    // }
+    pub fn get(&self, key: &str) -> Option<String> {
+        self.map.get(key).map(|v| v.clone())
+    }
 
     pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Vec<String> {
         self.map
@@ -56,6 +62,23 @@ impl Configuration {
                         ))
                         .map(|s| s.to_string())
                 })
+            })
+            .collect()
+    }
+
+    pub(crate) fn get_mount_table(&self, cluster: &str) -> Vec<(Option<String>, String)> {
+        self.map
+            .iter()
+            .flat_map(|(key, value)| {
+                if let Some(path) =
+                    key.strip_prefix(&format!("{}.{}.link.", VIEWFS_MOUNTTABLE_PREFIX, cluster))
+                {
+                    Some((Some(path.to_string()), value.to_string()))
+                } else if key == &format!("{}.{}.linkFallback", VIEWFS_MOUNTTABLE_PREFIX, cluster) {
+                    Some((None, value.to_string()))
+                } else {
+                    None
+                }
             })
             .collect()
     }
@@ -98,5 +121,72 @@ impl Configuration {
                 Err(_) => None,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{Configuration, VIEWFS_MOUNTTABLE_PREFIX};
+
+    #[test]
+    fn test_mount_table_config() {
+        let mounts = [
+            ("clusterX", "/view1", "/hdfs1"),
+            ("clusterX", "/view2", "/hdfs2"),
+            ("clusterY", "/view3", "/hdfs3"),
+        ];
+
+        let fallbacks = [("clusterX", "/hdfs4"), ("clusterY", "/hdfs5")];
+
+        let config = Configuration {
+            map: mounts
+                .iter()
+                .map(|(cluster, viewfs_path, hdfs_path)| {
+                    (
+                        format!(
+                            "{}.{}.link.{}",
+                            VIEWFS_MOUNTTABLE_PREFIX, cluster, viewfs_path
+                        ),
+                        format!("hdfs://127.0.0.1:9000{}", hdfs_path),
+                    )
+                })
+                .chain(fallbacks.iter().map(|(cluster, hdfs_path)| {
+                    (
+                        format!("{}.{}.linkFallback", VIEWFS_MOUNTTABLE_PREFIX, cluster),
+                        format!("hdfs://127.0.0.1:9000{}", hdfs_path),
+                    )
+                }))
+                .collect(),
+        };
+
+        let mut mount_table = config.get_mount_table("clusterX");
+        mount_table.sort();
+        assert_eq!(
+            vec![
+                (None, "hdfs://127.0.0.1:9000/hdfs4".to_string()),
+                (
+                    Some("/view1".to_string()),
+                    "hdfs://127.0.0.1:9000/hdfs1".to_string()
+                ),
+                (
+                    Some("/view2".to_string()),
+                    "hdfs://127.0.0.1:9000/hdfs2".to_string()
+                )
+            ],
+            mount_table
+        );
+
+        let mut mount_table = config.get_mount_table("clusterY");
+        mount_table.sort();
+        assert_eq!(
+            mount_table,
+            vec![
+                (None, "hdfs://127.0.0.1:9000/hdfs5".to_string()),
+                (
+                    Some("/view3".to_string()),
+                    "hdfs://127.0.0.1:9000/hdfs3".to_string()
+                )
+            ]
+        );
     }
 }
