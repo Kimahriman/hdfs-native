@@ -35,16 +35,16 @@ const SASL_CALL_ID: i32 = -33;
 const HDFS_DELEGATION_TOKEN: &str = "HDFS_DELEGATION_TOKEN";
 
 pub(crate) enum AuthMethod {
-    SIMPLE,
-    KERBEROS,
-    TOKEN,
+    Simple,
+    Kerberos,
+    Token,
 }
 impl AuthMethod {
     fn parse(method: &str) -> Option<Self> {
         match method {
-            "SIMPLE" => Some(Self::SIMPLE),
-            "KERBEROS" => Some(Self::KERBEROS),
-            "TOKEN" => Some(Self::TOKEN),
+            "SIMPLE" => Some(Self::Simple),
+            "KERBEROS" => Some(Self::Kerberos),
+            "TOKEN" => Some(Self::Token),
             _ => None,
         }
     }
@@ -81,8 +81,10 @@ impl SaslRpcClient {
     /// Service should be the connection host:port for a single NameNode connection, or the
     /// name service name when connecting to HA NameNodes.
     pub(crate) async fn negotiate(&mut self, service: &str) -> Result<UserInfo> {
-        let mut rpc_sasl = RpcSaslProto::default();
-        rpc_sasl.state = SaslState::Negotiate as i32;
+        let rpc_sasl = RpcSaslProto {
+            state: SaslState::Negotiate as i32,
+            ..Default::default()
+        };
 
         self.writer.send_sasl_message(&rpc_sasl).await?;
 
@@ -115,10 +117,12 @@ impl SaslRpcClient {
                     // Response shouldn't contain the challenge
                     selected_auth.challenge = None;
 
-                    let mut r = RpcSaslProto::default();
-                    r.state = SaslState::Initiate as i32;
-                    r.auths = Vec::from([selected_auth]);
-                    r.token = token.or(Some(Vec::new()));
+                    let r = RpcSaslProto {
+                        state: SaslState::Initiate as i32,
+                        auths: Vec::from([selected_auth]),
+                        token: token.or(Some(Vec::new())),
+                        ..Default::default()
+                    };
                     response = Some(r);
                 }
                 SaslState::Challenge => {
@@ -127,9 +131,11 @@ impl SaslRpcClient {
                         .unwrap()
                         .step(message.token.as_ref().map(|t| &t[..]))?;
 
-                    let mut r = RpcSaslProto::default();
-                    r.state = SaslState::Response as i32;
-                    r.token = Some(token);
+                    let r = RpcSaslProto {
+                        state: SaslState::Response as i32,
+                        token: Some(token),
+                        ..Default::default()
+                    };
                     response = Some(r);
                 }
                 SaslState::Success => {
@@ -169,7 +175,7 @@ impl SaslRpcClient {
 
     fn select_method(
         &mut self,
-        auths: &Vec<SaslAuth>,
+        auths: &[SaslAuth],
         service: &str,
     ) -> Result<(SaslAuth, Option<Box<dyn SaslSession>>)> {
         let user = User::get();
@@ -178,16 +184,16 @@ impl SaslRpcClient {
                 AuthMethod::parse(&auth.method),
                 user.get_token(HDFS_DELEGATION_TOKEN, service),
             ) {
-                (Some(AuthMethod::SIMPLE), _) => {
+                (Some(AuthMethod::Simple), _) => {
                     return Ok((auth.clone(), None));
                 }
                 #[cfg(feature = "kerberos")]
-                (Some(AuthMethod::KERBEROS), _) => {
+                (Some(AuthMethod::Kerberos), _) => {
                     let session = GssapiSession::new(auth.protocol(), auth.server_id())?;
                     return Ok((auth.clone(), Some(Box::new(session))));
                 }
                 #[cfg(feature = "token")]
-                (Some(AuthMethod::TOKEN), Some(token)) => {
+                (Some(AuthMethod::Token), Some(token)) => {
                     debug!("Using token {:?}", token);
                     let session = GSASLSession::new(auth.protocol(), auth.server_id(), token)?;
 
@@ -332,14 +338,15 @@ impl SaslWriter {
     }
 
     fn create_request_header() -> RpcRequestHeaderProto {
-        let mut request_header = RpcRequestHeaderProto::default();
-        request_header.rpc_kind = Some(RpcKindProto::RpcProtocolBuffer as i32);
-        // RPC_FINAL_PACKET
-        request_header.rpc_op = Some(0);
-        request_header.call_id = SASL_CALL_ID;
-        request_header.client_id = Vec::new();
-        request_header.retry_count = Some(-1);
-        request_header
+        RpcRequestHeaderProto {
+            rpc_kind: Some(RpcKindProto::RpcProtocolBuffer as i32),
+            // RPC_FINAL_PACKET
+            rpc_op: Some(0),
+            call_id: SASL_CALL_ID,
+            client_id: Vec::new(),
+            retry_count: Some(-1),
+            ..Default::default()
+        }
     }
 
     async fn send_sasl_message(&mut self, message: &RpcSaslProto) -> io::Result<()> {
@@ -357,8 +364,10 @@ impl SaslWriter {
 
     pub(crate) async fn write(&mut self, buf: &[u8]) -> io::Result<()> {
         if self.session.is_some() {
-            let mut rpc_sasl = RpcSaslProto::default();
-            rpc_sasl.state = SaslState::Wrap as i32;
+            let mut rpc_sasl = RpcSaslProto {
+                state: SaslState::Wrap as i32,
+                ..Default::default()
+            };
 
             // let mut writer = Vec::with_capacity(buf.len()).writer();
             let encoded = self

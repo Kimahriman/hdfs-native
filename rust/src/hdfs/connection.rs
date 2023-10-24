@@ -28,7 +28,7 @@ use crate::security::sasl::{SaslReader, SaslRpcClient, SaslWriter};
 use crate::security::user::UserInfo;
 use crate::{HdfsError, Result};
 
-const PROTOCOL: &'static str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
+const PROTOCOL: &str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
 const DATA_TRANSFER_VERSION: u16 = 28;
 
 const MAX_PACKET_HEADER_SIZE: usize = 33;
@@ -160,30 +160,34 @@ impl RpcConnection {
         call_id: i32,
         retry_count: i32,
     ) -> common::RpcRequestHeaderProto {
-        let mut request_header = common::RpcRequestHeaderProto::default();
-        request_header.rpc_kind = Some(common::RpcKindProto::RpcProtocolBuffer as i32);
-        // RPC_FINAL_PACKET
-        request_header.rpc_op = Some(0);
-        request_header.call_id = call_id;
-        request_header.client_id = self.client_id.clone();
-        request_header.retry_count = Some(retry_count);
-        request_header.state_id = Some(self.alignment_context.state_id.load(Ordering::SeqCst));
-        request_header.router_federated_state = self
-            .alignment_context
-            .router_federated_state
-            .as_ref()
-            .map(|state| state.lock().unwrap().clone());
-        request_header
+        common::RpcRequestHeaderProto {
+            rpc_kind: Some(common::RpcKindProto::RpcProtocolBuffer as i32),
+            // RPC_FINAL_PACKET
+            rpc_op: Some(0),
+            call_id,
+            client_id: self.client_id.clone(),
+            retry_count: Some(retry_count),
+            state_id: Some(self.alignment_context.state_id.load(Ordering::SeqCst)),
+            router_federated_state: self
+                .alignment_context
+                .router_federated_state
+                .as_ref()
+                .map(|state| state.lock().unwrap().clone()),
+            ..Default::default()
+        }
     }
 
     fn get_connection_context(&self) -> common::IpcConnectionContextProto {
-        let mut context = common::IpcConnectionContextProto::default();
-        context.protocol = Some(PROTOCOL.to_string());
+        let user_info = common::UserInformationProto {
+            effective_user: self.user_info.effective_user.clone(),
+            real_user: self.user_info.real_user.clone(),
+        };
 
-        let mut user_info = common::UserInformationProto::default();
-        user_info.effective_user = self.user_info.effective_user.clone();
-        user_info.real_user = self.user_info.real_user.clone();
-        context.user_info = Some(user_info);
+        let context = common::IpcConnectionContextProto {
+            protocol: Some(PROTOCOL.to_string()),
+            user_info: Some(user_info),
+        };
+
         debug!("Connection context: {:?}", context);
         context
     }
@@ -220,11 +224,11 @@ impl RpcConnection {
 
         let conn_header_buf = conn_header.encode_length_delimited_to_vec();
 
-        let mut msg_header = common::RequestHeaderProto::default();
-        msg_header.method_name = method_name.to_string();
-        msg_header.declaring_class_protocol_name = PROTOCOL.to_string();
-        msg_header.client_protocol_version = 1;
-
+        let msg_header = common::RequestHeaderProto {
+            method_name: method_name.to_string(),
+            declaring_class_protocol_name: PROTOCOL.to_string(),
+            client_protocol_version: 1,
+        };
         debug!("RPC request header: {:?}", msg_header);
 
         let header_buf = msg_header.encode_length_delimited_to_vec();
@@ -370,9 +374,11 @@ impl Packet {
         bytes_per_checksum: u32,
         max_packet_size: u32,
     ) -> Self {
-        let mut header = hdfs::PacketHeaderProto::default();
-        header.offset_in_block = offset;
-        header.seqno = seqno;
+        let header = hdfs::PacketHeaderProto {
+            offset_in_block: offset,
+            seqno,
+            ..Default::default()
+        };
 
         let num_chunks = Self::max_packet_chunks(bytes_per_checksum, max_packet_size);
 
@@ -394,8 +400,8 @@ impl Packet {
     fn max_packet_chunks(bytes_per_checksum: u32, max_packet_size: u32) -> usize {
         let data_size = max_packet_size as usize - MAX_PACKET_HEADER_SIZE;
         let chunk_size = bytes_per_checksum as usize + CHECKSUM_BYTES;
-        let chunks = data_size / chunk_size;
-        chunks
+
+        data_size / chunk_size
     }
 
     pub(crate) fn write(&mut self, buf: &mut Bytes) {
@@ -470,7 +476,7 @@ pub(crate) struct DatanodeConnection {
 
 impl DatanodeConnection {
     pub(crate) async fn connect(url: &str) -> Result<Self> {
-        let stream = connect(&url).await?;
+        let stream = connect(url).await?;
 
         let (reader, writer) = stream.into_split();
 
@@ -499,14 +505,16 @@ impl DatanodeConnection {
         block: &hdfs::ExtendedBlockProto,
         token: Option<common::TokenProto>,
     ) -> hdfs::ClientOperationHeaderProto {
-        let mut base_header = hdfs::BaseHeaderProto::default();
-        base_header.block = block.clone();
-        base_header.token = token;
+        let base_header = hdfs::BaseHeaderProto {
+            block: block.clone(),
+            token,
+            ..Default::default()
+        };
 
-        let mut header = hdfs::ClientOperationHeaderProto::default();
-        header.base_header = base_header;
-        header.client_name = self.client_name.clone();
-        header
+        hdfs::ClientOperationHeaderProto {
+            base_header,
+            client_name: self.client_name.clone(),
+        }
     }
 
     pub(crate) async fn read_block_op_response(&mut self) -> Result<hdfs::BlockOpResponseProto> {
@@ -624,13 +632,10 @@ mod test {
     #[test]
     fn test_max_packet_header_size() {
         // Create a dummy header to get its size
-        let mut header = hdfs::PacketHeaderProto::default();
-        header.offset_in_block = 0;
-        header.seqno = 0;
-        header.data_len = 0;
-        header.last_packet_in_block = false;
-        header.sync_block = Some(false);
-
+        let header = hdfs::PacketHeaderProto {
+            sync_block: Some(false),
+            ..Default::default()
+        };
         // Add 4 bytes for size of whole packet and 2 bytes for size of header
         assert_eq!(MAX_PACKET_HEADER_SIZE, header.encoded_len() + 4 + 2);
     }

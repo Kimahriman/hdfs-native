@@ -25,20 +25,17 @@ impl Configuration {
     pub fn new() -> io::Result<Self> {
         let mut map: HashMap<String, String> = HashMap::new();
 
-        match Self::get_conf_dir() {
-            Some(conf_dir) => {
-                for file in ["core-site.xml", "hdfs-site.xml"] {
-                    let config_path = conf_dir.join(file);
-                    if config_path.as_path().exists() {
-                        Self::read_from_file(config_path.as_path())?
-                            .into_iter()
-                            .for_each(|(key, value)| {
-                                map.insert(key, value);
-                            })
-                    }
+        if let Some(conf_dir) = Self::get_conf_dir() {
+            for file in ["core-site.xml", "hdfs-site.xml"] {
+                let config_path = conf_dir.join(file);
+                if config_path.as_path().exists() {
+                    Self::read_from_file(config_path.as_path())?
+                        .into_iter()
+                        .for_each(|(key, value)| {
+                            map.insert(key, value);
+                        })
                 }
             }
-            None => (),
         }
 
         Ok(Configuration { map })
@@ -46,7 +43,7 @@ impl Configuration {
 
     /// Get a value from the config, returning None if the key wasn't defined.
     pub fn get(&self, key: &str) -> Option<String> {
-        self.map.get(key).map(|v| v.clone())
+        self.map.get(key).cloned()
     }
 
     pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Vec<String> {
@@ -54,7 +51,7 @@ impl Configuration {
             .get(&format!("{}.{}", HA_NAMENODES_PREFIX, nameservice))
             .into_iter()
             .flat_map(|namenodes| {
-                namenodes.split(",").flat_map(|namenode_id| {
+                namenodes.split(',').flat_map(|namenode_id| {
                     self.map
                         .get(&format!(
                             "{}.{}.{}",

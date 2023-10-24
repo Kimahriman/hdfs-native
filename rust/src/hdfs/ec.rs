@@ -50,12 +50,12 @@ impl EcSchema {
 
         let remaining_block_bytes = block_size - full_row_bytes;
 
-        let bytes_in_last_row: usize = if remaining_block_bytes < index as usize * self.cell_size {
+        let bytes_in_last_row: usize = if remaining_block_bytes < index * self.cell_size {
             0
-        } else if remaining_block_bytes > (index + 1) as usize * self.cell_size {
+        } else if remaining_block_bytes > (index + 1) * self.cell_size {
             self.cell_size
         } else {
-            remaining_block_bytes - index as usize * self.cell_size
+            remaining_block_bytes - index * self.cell_size
         };
         full_rows * self.cell_size + bytes_in_last_row
     }
@@ -88,14 +88,8 @@ impl EcSchema {
         }
 
         while vertical_stripes[0].as_ref().is_some_and(|b| !b.is_empty()) {
-            for index in 0..self.data_units {
-                cells.push(
-                    vertical_stripes[index as usize]
-                        .as_mut()
-                        .unwrap()
-                        .split_to(self.cell_size)
-                        .freeze(),
-                )
+            for stripe in vertical_stripes.iter_mut().take(self.data_units) {
+                cells.push(stripe.as_mut().unwrap().split_to(self.cell_size).freeze())
             }
         }
 

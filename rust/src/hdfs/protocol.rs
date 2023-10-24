@@ -15,16 +15,14 @@ pub(crate) struct NamenodeProtocol {
 
 impl NamenodeProtocol {
     pub(crate) fn new(proxy: NameServiceProxy) -> Self {
-        let client_name = format!(
-            "hdfs_native_client-{}",
-            Uuid::new_v4().as_hyphenated().to_string()
-        );
+        let client_name = format!("hdfs_native_client-{}", Uuid::new_v4().as_hyphenated());
         NamenodeProtocol { proxy, client_name }
     }
 
     pub(crate) async fn get_file_info(&self, src: &str) -> Result<hdfs::GetFileInfoResponseProto> {
-        let mut message = hdfs::GetFileInfoRequestProto::default();
-        message.src = src.to_string();
+        let message = hdfs::GetFileInfoRequestProto {
+            src: src.to_string(),
+        };
         debug!("get_file_info request: {:?}", &message);
 
         let response = self
@@ -44,10 +42,11 @@ impl NamenodeProtocol {
         start_after: Vec<u8>,
         need_location: bool,
     ) -> Result<hdfs::GetListingResponseProto> {
-        let mut message = hdfs::GetListingRequestProto::default();
-        message.src = src.to_string();
-        message.start_after = start_after;
-        message.need_location = need_location;
+        let message = hdfs::GetListingRequestProto {
+            src: src.to_string(),
+            start_after,
+            need_location,
+        };
         debug!("get_listing request: {:?}", &message);
 
         let response = self
@@ -64,9 +63,10 @@ impl NamenodeProtocol {
         &self,
         src: &str,
     ) -> Result<hdfs::GetLocatedFileInfoResponseProto> {
-        let mut message = hdfs::GetLocatedFileInfoRequestProto::default();
-        message.src = Some(src.to_string());
-        message.need_block_token = Some(true);
+        let message = hdfs::GetLocatedFileInfoRequestProto {
+            src: Some(src.to_string()),
+            need_block_token: Some(true),
+        };
         debug!("getLocatedFileInfo request: {:?}", &message);
 
         let response = self
@@ -107,21 +107,22 @@ impl NamenodeProtocol {
         replication: u32,
         block_size: u64,
     ) -> Result<hdfs::CreateResponseProto> {
-        let mut masked = hdfs::FsPermissionProto::default();
-        masked.perm = permission;
+        let masked = hdfs::FsPermissionProto { perm: permission };
 
-        let mut message = hdfs::CreateRequestProto::default();
-        message.src = src.to_string();
-        message.masked = masked;
-        message.client_name = self.client_name.clone();
-        if overwrite {
-            message.create_flag = hdfs::CreateFlagProto::Overwrite as u32;
-        } else {
-            message.create_flag = hdfs::CreateFlagProto::Create as u32;
-        }
-        message.create_parent = create_parent;
-        message.replication = replication;
-        message.block_size = block_size;
+        let message = hdfs::CreateRequestProto {
+            src: src.to_string(),
+            masked,
+            client_name: self.client_name.clone(),
+            create_parent,
+            replication,
+            block_size,
+            create_flag: if overwrite {
+                hdfs::CreateFlagProto::Overwrite
+            } else {
+                hdfs::CreateFlagProto::Create
+            } as u32,
+            ..Default::default()
+        };
 
         debug!("create request: {:?}", &message);
 
@@ -141,11 +142,13 @@ impl NamenodeProtocol {
         previous: Option<hdfs::ExtendedBlockProto>,
         file_id: Option<u64>,
     ) -> Result<hdfs::AddBlockResponseProto> {
-        let mut message = hdfs::AddBlockRequestProto::default();
-        message.src = src.to_string();
-        message.client_name = self.client_name.clone();
-        message.previous = previous;
-        message.file_id = file_id;
+        let message = hdfs::AddBlockRequestProto {
+            src: src.to_string(),
+            client_name: self.client_name.clone(),
+            previous,
+            file_id,
+            ..Default::default()
+        };
 
         debug!("add_block request: {:?}", &message);
 
@@ -165,12 +168,12 @@ impl NamenodeProtocol {
         last: Option<hdfs::ExtendedBlockProto>,
         file_id: Option<u64>,
     ) -> Result<hdfs::CompleteResponseProto> {
-        let mut message = hdfs::CompleteRequestProto::default();
-        message.src = src.to_string();
-        message.client_name = self.client_name.clone();
-        message.last = last;
-        message.file_id = file_id;
-
+        let message = hdfs::CompleteRequestProto {
+            src: src.to_string(),
+            client_name: self.client_name.clone(),
+            last,
+            file_id,
+        };
         debug!("complete request: {:?}", &message);
 
         let response = self
@@ -189,14 +192,14 @@ impl NamenodeProtocol {
         permission: u32,
         create_parent: bool,
     ) -> Result<hdfs::MkdirsResponseProto> {
-        let mut masked = hdfs::FsPermissionProto::default();
-        masked.perm = permission;
+        let masked = hdfs::FsPermissionProto { perm: permission };
 
-        let mut message = hdfs::MkdirsRequestProto::default();
-        message.src = src.to_string();
-        message.masked = masked;
-        message.create_parent = create_parent;
-
+        let message = hdfs::MkdirsRequestProto {
+            src: src.to_string(),
+            masked,
+            create_parent,
+            ..Default::default()
+        };
         debug!("mkdirs request: {:?}", &message);
 
         let response = self
@@ -215,11 +218,12 @@ impl NamenodeProtocol {
         dst: &str,
         overwrite: bool,
     ) -> Result<hdfs::Rename2ResponseProto> {
-        let mut message = hdfs::Rename2RequestProto::default();
-        message.src = src.to_string();
-        message.dst = dst.to_string();
-        message.overwrite_dest = overwrite;
-
+        let message = hdfs::Rename2RequestProto {
+            src: src.to_string(),
+            dst: dst.to_string(),
+            overwrite_dest: overwrite,
+            ..Default::default()
+        };
         debug!("rename request: {:?}", &message);
 
         let response = self
@@ -237,9 +241,10 @@ impl NamenodeProtocol {
         src: &str,
         recursive: bool,
     ) -> Result<hdfs::DeleteResponseProto> {
-        let mut message = hdfs::DeleteRequestProto::default();
-        message.src = src.to_string();
-        message.recursive = recursive;
+        let message = hdfs::DeleteRequestProto {
+            src: src.to_string(),
+            recursive,
+        };
         debug!("delete request: {:?}", &message);
 
         let response = self

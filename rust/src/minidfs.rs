@@ -75,7 +75,7 @@ impl MiniDfs {
         if ready != "Ready!" {
             println!("Failed to start minidfs");
             println!("{}", ready);
-            while let Some(line) = output.next() {
+            for line in output.by_ref() {
                 println!("{}", line.unwrap());
             }
             panic!();
@@ -100,7 +100,7 @@ impl MiniDfs {
             env::set_var("KRB5_CONFIG", &krb_conf);
             env::set_var(
                 "HADOOP_OPTS",
-                &format!("-Djava.security.krb5.conf={}", &krb_conf),
+                format!("-Djava.security.krb5.conf={}", &krb_conf),
             );
 
             // If we testing token auth, set the path to the file and make sure we don't have an old kinit, otherwise kinit

@@ -30,7 +30,7 @@ mod test {
         // /mount1 resolves to hdfs://ns0/nested
         // fallback resolves to hdfs://ns1/nested
         let _dfs = MiniDfs::with_features(&features);
-        let viewfs = Client::default().unwrap();
+        let viewfs = Client::default();
         let hdfs1 = Client::new("hdfs://ns0").unwrap();
         let hdfs2 = Client::new("hdfs://ns1").unwrap();
 

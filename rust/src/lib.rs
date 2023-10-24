@@ -1,3 +1,4 @@
+// #![warn(missing_docs)]
 //! Native HDFS client implementation in Rust
 //!
 //! # Usage
