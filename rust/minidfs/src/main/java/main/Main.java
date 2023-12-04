@@ -89,7 +89,7 @@ public class Main {
             hdfsConf.addResource(routerDfs.getRouterClientConf());
             hdfsConf.set(FS_DEFAULT_NAME_KEY, "hdfs://fed");
         } else {
-            MiniDFSNNTopology nnTopology = generateTopology(flags, conf);
+            MiniDFSNNTopology nnTopology = generateTopology(flags, hdfsConf);
 
             int numDataNodes = 1;
             if (flags.contains("ec")) {
