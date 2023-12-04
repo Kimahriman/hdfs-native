@@ -93,6 +93,14 @@ mod test {
         .unwrap();
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn test_rbf() {
+        test_with_features(&HashSet::from([DfsFeatures::RBF]))
+            .await
+            .unwrap();
+    }
+
     pub async fn test_with_features(features: &HashSet<DfsFeatures>) -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
