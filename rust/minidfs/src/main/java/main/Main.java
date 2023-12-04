@@ -79,11 +79,12 @@ public class Main {
             routerDfs.addRouterOverrides(routerOverrides);
             routerDfs.startCluster(hdfsConf);
             routerDfs.startRouters();
-            routerDfs.waitClusterUp();
 
             RouterContext routerContext = routerDfs.getRandomRouter();
             StateStoreService stateStore = routerContext.getRouter().getStateStore();
             routerDfs.createTestMountTable(stateStore);
+
+            routerDfs.waitClusterUp();
 
             hdfsConf.addResource(routerDfs.generateClientConfiguration());
             hdfsConf.addResource(routerDfs.getRouterClientConf());
