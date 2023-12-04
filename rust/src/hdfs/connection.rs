@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::default::Default;
 use std::io::ErrorKind;
-use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -49,14 +49,56 @@ async fn connect(addr: &str) -> Result<TcpStream> {
 
 #[derive(Debug)]
 pub(crate) struct AlignmentContext {
-    state_id: AtomicI64,
-    router_federated_state: Option<Arc<Mutex<Vec<u8>>>>,
+    state_id: i64,
+    router_federated_state: Option<HashMap<String, i64>>,
+}
+
+impl AlignmentContext {
+    fn update(
+        &mut self,
+        state_id: Option<i64>,
+        router_federated_state: Option<Vec<u8>>,
+    ) -> Result<()> {
+        if let Some(new_state_id) = state_id {
+            self.state_id = new_state_id
+        }
+
+        if let Some(new_router_state) = router_federated_state {
+            let new_map = hdfs::RouterFederatedStateProto::decode(Bytes::from(new_router_state))?
+                .namespace_state_ids;
+
+            let current_map = if let Some(cur) = self.router_federated_state.as_mut() {
+                cur
+            } else {
+                self.router_federated_state = Some(HashMap::new());
+                self.router_federated_state.as_mut().unwrap()
+            };
+
+            for (key, value) in new_map.into_iter() {
+                current_map.insert(
+                    key.clone(),
+                    i64::max(value, *current_map.get(&key).unwrap_or(&i64::MIN)),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn encode_router_state(&self) -> Option<Vec<u8>> {
+        self.router_federated_state.as_ref().map(|state| {
+            hdfs::RouterFederatedStateProto {
+                namespace_state_ids: state.clone(),
+            }
+            .encode_to_vec()
+        })
+    }
 }
 
 impl Default for AlignmentContext {
     fn default() -> Self {
         Self {
-            state_id: AtomicI64::new(i64::MIN),
+            state_id: i64::MIN,
             router_federated_state: None,
         }
     }
@@ -69,7 +111,7 @@ pub(crate) struct RpcConnection {
     client_id: Vec<u8>,
     user_info: UserInfo,
     next_call_id: AtomicI32,
-    alignment_context: Arc<AlignmentContext>,
+    alignment_context: Arc<Mutex<AlignmentContext>>,
     call_map: Arc<Mutex<HashMap<i32, CallResult>>>,
     sender: mpsc::Sender<Vec<u8>>,
     listener: Option<JoinHandle<()>>,
@@ -78,7 +120,7 @@ pub(crate) struct RpcConnection {
 impl RpcConnection {
     pub(crate) async fn connect(
         url: &str,
-        alignment_context: Arc<AlignmentContext>,
+        alignment_context: Arc<Mutex<AlignmentContext>>,
         nameservice: Option<&str>,
     ) -> Result<Self> {
         let client_id = Uuid::new_v4().to_bytes_le().to_vec();
@@ -160,6 +202,8 @@ impl RpcConnection {
         call_id: i32,
         retry_count: i32,
     ) -> common::RpcRequestHeaderProto {
+        let context = self.alignment_context.lock().unwrap();
+
         common::RpcRequestHeaderProto {
             rpc_kind: Some(common::RpcKindProto::RpcProtocolBuffer as i32),
             // RPC_FINAL_PACKET
@@ -167,12 +211,8 @@ impl RpcConnection {
             call_id,
             client_id: self.client_id.clone(),
             retry_count: Some(retry_count),
-            state_id: Some(self.alignment_context.state_id.load(Ordering::SeqCst)),
-            router_federated_state: self
-                .alignment_context
-                .router_federated_state
-                .as_ref()
-                .map(|state| state.lock().unwrap().clone()),
+            state_id: Some(context.state_id),
+            router_federated_state: context.encode_router_state(),
             ..Default::default()
         }
     }
@@ -248,14 +288,14 @@ struct RpcListener {
     call_map: Arc<Mutex<HashMap<i32, CallResult>>>,
     reader: SaslReader,
     alive: bool,
-    alignment_context: Arc<AlignmentContext>,
+    alignment_context: Arc<Mutex<AlignmentContext>>,
 }
 
 impl RpcListener {
     fn new(
         call_map: Arc<Mutex<HashMap<i32, CallResult>>>,
         reader: SaslReader,
-        alignment_context: Arc<AlignmentContext>,
+        alignment_context: Arc<Mutex<AlignmentContext>>,
     ) -> Self {
         RpcListener {
             call_map,
@@ -299,14 +339,10 @@ impl RpcListener {
         if let Some(call) = call {
             match rpc_response.status() {
                 RpcStatusProto::Success => {
-                    if let Some(state_id) = rpc_response.state_id {
-                        self.alignment_context
-                            .state_id
-                            .fetch_max(state_id, Ordering::SeqCst);
-                    }
-                    if let Some(_router_federation_state) = rpc_response.router_federated_state {
-                        todo!();
-                    }
+                    self.alignment_context
+                        .lock()
+                        .unwrap()
+                        .update(rpc_response.state_id, rpc_response.router_federated_state)?;
                     let _ = call.send(Ok(bytes));
                 }
                 RpcStatusProto::Error => {
@@ -625,9 +661,13 @@ impl DatanodeConnection {
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashMap;
+
     use prost::Message;
 
     use crate::{hdfs::connection::MAX_PACKET_HEADER_SIZE, proto::hdfs};
+
+    use super::AlignmentContext;
 
     #[test]
     fn test_max_packet_header_size() {
@@ -638,5 +678,46 @@ mod test {
         };
         // Add 4 bytes for size of whole packet and 2 bytes for size of header
         assert_eq!(MAX_PACKET_HEADER_SIZE, header.encoded_len() + 4 + 2);
+    }
+
+    fn encode_router_state(map: &HashMap<String, i64>) -> Vec<u8> {
+        hdfs::RouterFederatedStateProto {
+            namespace_state_ids: map.clone(),
+        }
+        .encode_to_vec()
+    }
+
+    #[test]
+    fn test_router_federated_state() {
+        let mut alignment_context = AlignmentContext::default();
+
+        assert!(alignment_context.router_federated_state.is_none());
+
+        let mut state_map = HashMap::<String, i64>::new();
+        state_map.insert("ns-1".to_string(), 3);
+
+        alignment_context
+            .update(None, Some(encode_router_state(&state_map)))
+            .unwrap();
+
+        assert!(alignment_context.router_federated_state.is_some());
+
+        let router_state = alignment_context.router_federated_state.as_ref().unwrap();
+
+        assert_eq!(router_state.len(), 1);
+        assert_eq!(*router_state.get("ns-1").unwrap(), 3);
+
+        state_map.insert("ns-1".to_string(), 5);
+        state_map.insert("ns-2".to_string(), 7);
+
+        alignment_context
+            .update(None, Some(encode_router_state(&state_map)))
+            .unwrap();
+
+        let router_state = alignment_context.router_federated_state.as_ref().unwrap();
+
+        assert_eq!(router_state.len(), 2);
+        assert_eq!(*router_state.get("ns-1").unwrap(), 5);
+        assert_eq!(*router_state.get("ns-2").unwrap(), 7);
     }
 }

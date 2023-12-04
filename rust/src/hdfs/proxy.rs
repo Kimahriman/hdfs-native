@@ -1,12 +1,11 @@
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 use bytes::Bytes;
 use log::warn;
 use prost::Message;
-use tokio::sync::Mutex;
 use url::Url;
 
 use crate::{
@@ -26,14 +25,14 @@ const OBSERVER_RETRY_EXCEPTION: &str = "org.apache.hadoop.ipc.ObserverRetryOnAct
 struct ProxyConnection {
     url: String,
     inner: Option<RpcConnection>,
-    alignment_context: Arc<AlignmentContext>,
+    alignment_context: Arc<Mutex<AlignmentContext>>,
     nameservice: Option<String>,
 }
 
 impl ProxyConnection {
     fn new(
         url: String,
-        alignment_context: Arc<AlignmentContext>,
+        alignment_context: Arc<Mutex<AlignmentContext>>,
         nameservice: Option<String>,
     ) -> Self {
         ProxyConnection {
@@ -68,7 +67,7 @@ impl ProxyConnection {
 
 #[derive(Debug)]
 pub(crate) struct NameServiceProxy {
-    proxy_connections: Vec<Arc<Mutex<ProxyConnection>>>,
+    proxy_connections: Vec<Arc<tokio::sync::Mutex<ProxyConnection>>>,
     current_index: AtomicUsize,
     msycned: AtomicBool,
 }
@@ -77,11 +76,11 @@ impl NameServiceProxy {
     /// Creates a new proxy for a name service. If the URL contains a port,
     /// it is assumed to be for a single NameNode.
     pub(crate) fn new(nameservice: &Url, config: &Configuration) -> Self {
-        let alignment_context = Arc::new(AlignmentContext::default());
+        let alignment_context = Arc::new(Mutex::new(AlignmentContext::default()));
 
         let proxy_connections = if let Some(port) = nameservice.port() {
             let url = format!("{}:{}", nameservice.host_str().unwrap(), port);
-            vec![Arc::new(Mutex::new(ProxyConnection::new(
+            vec![Arc::new(tokio::sync::Mutex::new(ProxyConnection::new(
                 url,
                 alignment_context.clone(),
                 None,
@@ -92,7 +91,7 @@ impl NameServiceProxy {
                 .get_urls_for_nameservice(host)
                 .into_iter()
                 .map(|url| {
-                    Arc::new(Mutex::new(ProxyConnection::new(
+                    Arc::new(tokio::sync::Mutex::new(ProxyConnection::new(
                         url,
                         alignment_context.clone(),
                         Some(host.to_string()),
@@ -114,7 +113,16 @@ impl NameServiceProxy {
         if !self.msycned.fetch_or(true, Ordering::SeqCst) {
             let msync_msg = hdfs::MsyncRequestProto::default();
             self.call_inner("msync", msync_msg.encode_length_delimited_to_vec())
-                .await?;
+                .await
+                .map(|_| ())
+                .or_else(|err| match err {
+                    HdfsError::RPCError(class, _)
+                        if class == "java.lang.UnsupportedOperationException" =>
+                    {
+                        Ok(())
+                    }
+                    _ => Err(err),
+                })?;
         }
         Ok(())
     }

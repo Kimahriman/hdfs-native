@@ -15,6 +15,7 @@ pub enum DfsFeatures {
     HA,
     VIEWFS,
     EC,
+    RBF,
 }
 
 impl DfsFeatures {
@@ -26,6 +27,7 @@ impl DfsFeatures {
             DfsFeatures::PRIVACY => "privacy",
             DfsFeatures::SECURITY => "security",
             DfsFeatures::TOKEN => "token",
+            DfsFeatures::RBF => "rbf",
         }
     }
 
@@ -120,6 +122,8 @@ impl MiniDfs {
 
         let url = if features.contains(&DfsFeatures::VIEWFS) {
             "viewfs://minidfs-viewfs"
+        } else if features.contains(&DfsFeatures::RBF) {
+            "hdfs://fed"
         } else if features.contains(&DfsFeatures::HA) {
             "hdfs://minidfs-ns"
         } else {

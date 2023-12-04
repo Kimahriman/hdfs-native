@@ -11,12 +11,23 @@
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-minicluster</artifactId>
-      <version>3.3.5</version>
+      <version>3.3.6</version>
     </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-minikdc</artifactId>
-      <version>3.3.5</version>
+      <version>3.3.6</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-hdfs-rbf</artifactId>
+      <version>3.3.6</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-hdfs-rbf</artifactId>
+      <version>3.3.6</version>
+      <type>test-jar</type>
     </dependency>
     <dependency>
       <groupId>junit</groupId>
@@ -40,7 +51,7 @@
         <artifactId>exec-maven-plugin</artifactId>
         <version>3.0.0</version>
         <configuration>
-          <mainClass>Main</mainClass>
+          <mainClass>main.Main</mainClass>
         </configuration>
       </plugin>
     </plugins>

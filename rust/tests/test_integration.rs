@@ -5,7 +5,7 @@ mod common;
 mod test {
     use crate::common::{setup, TEST_FILE_INTS};
     use bytes::{Buf, BufMut, BytesMut};
-    use hdfs_native::{minidfs::DfsFeatures, Client, Result, WriteOptions};
+    use hdfs_native::{client::FileStatus, minidfs::DfsFeatures, Client, Result, WriteOptions};
     use serial_test::serial;
     use std::collections::HashSet;
 
@@ -93,6 +93,14 @@ mod test {
         .unwrap();
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn test_rbf() {
+        test_with_features(&HashSet::from([DfsFeatures::RBF]))
+            .await
+            .unwrap();
+    }
+
     pub async fn test_with_features(features: &HashSet<DfsFeatures>) -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
@@ -120,7 +128,13 @@ mod test {
     }
 
     async fn test_listing(client: &Client) -> Result<()> {
-        let statuses = client.list_status("/", false).await?;
+        let statuses: Vec<FileStatus> = client
+            .list_status("/", false)
+            .await?
+            .into_iter()
+            // Only include files, since federation things could result in folders being created
+            .filter(|s| !s.isdir)
+            .collect();
         assert_eq!(statuses.len(), 1);
         let status = &statuses[0];
         assert_eq!(status.path, "/testfile");
