@@ -17,7 +17,7 @@ Here is a list of currently supported and unsupported but possible future featur
 - [x] Name Services
 - [ ] Observer reads (state ID tracking is supported, but needs improvements on tracking Observer/Active NameNode)
 - [x] ViewFS
-- [ ] Federated router
+- [x] Router based federation
 - [x] Erasure coded reads 
     - RS schema only, no support for RS-Legacy or XOR
     - Relies on a fork of https://github.com/rust-rse/reed-solomon-erasure
@@ -35,11 +35,6 @@ Here is a list of currently supported and unsupported but possible future featur
 - [ ] DataNode SASL connection
 - [ ] DataNode data transfer encryption
 - [ ] Encryption at rest (KMS support)
-
-### Other improvements
-- [ ] Better error handling
-- [ ] RPC retries
-- [x] Async support
 
 ## Supported HDFS Settings
 The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xml` in the directories `$HADOOP_CONF_DIR` or if that doesn't exist, `$HADOOP_HOME/etc/hadoop`. Currently the supported configs that are used are:
