@@ -1,11 +1,10 @@
-use bytes::{Bytes, BytesMut};
-#[cfg(feature = "rs")]
-use reed_solomon_erasure::{
-    galois_8::{add, div, Field, ReedSolomon},
-    matrix::Matrix,
-};
+pub(crate) mod gf256;
+mod matrix;
 
 use crate::{proto::hdfs, HdfsError, Result};
+use bytes::Bytes;
+
+use self::gf256::Coder;
 
 const RS_CODEC_NAME: &str = "rs";
 const RS_LEGACY_CODEC_NAME: &str = "rs-legacy";
@@ -60,10 +59,7 @@ impl EcSchema {
         full_rows * self.cell_size + bytes_in_last_row
     }
 
-    pub(crate) fn ec_decode(
-        &self,
-        mut vertical_stripes: Vec<Option<BytesMut>>,
-    ) -> Result<Vec<Bytes>> {
+    pub(crate) fn ec_decode(&self, mut vertical_stripes: Vec<Option<Bytes>>) -> Result<Vec<Bytes>> {
         let mut cells: Vec<Bytes> = Vec::new();
         if !vertical_stripes
             .iter()
@@ -71,12 +67,9 @@ impl EcSchema {
             .all(|(index, stripe)| stripe.is_some() || index >= self.data_units)
         {
             match self.codec_name.as_str() {
-                #[cfg(feature = "rs")]
                 "rs" => {
-                    let matrix = gen_rs_matrix(self.data_units, self.parity_units)?;
-                    let decoder =
-                        ReedSolomon::new_with_matrix(self.data_units, self.parity_units, matrix)?;
-                    decoder.reconstruct_data(&mut vertical_stripes)?;
+                    let coder = Coder::new(self.data_units, self.parity_units);
+                    coder.decode(&mut vertical_stripes)?;
                 }
                 codec => {
                     return Err(HdfsError::UnsupportedErasureCodingPolicy(format!(
@@ -89,7 +82,7 @@ impl EcSchema {
 
         while vertical_stripes[0].as_ref().is_some_and(|b| !b.is_empty()) {
             for stripe in vertical_stripes.iter_mut().take(self.data_units) {
-                cells.push(stripe.as_mut().unwrap().split_to(self.cell_size).freeze())
+                cells.push(stripe.as_mut().unwrap().split_to(self.cell_size))
             }
         }
 
@@ -151,91 +144,19 @@ pub(crate) fn resolve_ec_policy(policy: &hdfs::ErasureCodingPolicyProto) -> Resu
     }
 }
 
-#[cfg(feature = "rs")]
-fn gen_rs_matrix(data_units: usize, parity_units: usize) -> Result<Matrix<Field>> {
-    // Identity matrix for the first `data_rows` rows
-    let mut data_rows: Vec<Vec<u8>> = (0..data_units)
-        .map(|i| {
-            let mut row = vec![0u8; data_units];
-            row[i] = 1;
-            row
-        })
-        .collect();
-
-    // For parity rows, inverse of i ^ j, or 0 (described as 1 / (i + j) | i != j)
-    let mut parity_rows: Vec<Vec<u8>> = (data_units..(data_units + parity_units))
-        .map(|i| {
-            let row: Vec<u8> = (0..data_units)
-                .map(|j| match add(i as u8, j as u8) {
-                    0 => 0,
-                    mult => div(1, mult),
-                })
-                .collect();
-            row
-        })
-        .collect();
-
-    data_rows.append(&mut parity_rows);
-
-    Ok(Matrix::new_with_data(data_rows))
-}
-
-#[cfg(feature = "rs")]
 #[cfg(test)]
 mod test {
-    use crate::Result;
+    use crate::ec::matrix::Matrix;
+
+    use super::gf256::GF256;
 
     #[test]
-    fn test_build_rs_matrix() -> Result<()> {
-        use super::gen_rs_matrix;
-        use reed_solomon_erasure::matrix::Matrix;
+    fn test_invert_matrix() {
+        let mut matrix: Matrix<GF256> =
+            Matrix::new(vec![vec![0, 0, 1], vec![244, 142, 1], vec![71, 167, 122]]);
+        let original_matrix = matrix.clone();
+        matrix.invert();
 
-        // These examples were taken directly from the matrices created by Hadoop via RSUtil.genCauchyMatrix
-        assert_eq!(
-            gen_rs_matrix(3, 2)?,
-            Matrix::new_with_data(vec![
-                vec![1, 0, 0,],
-                vec![0, 1, 0,],
-                vec![0, 0, 1,],
-                vec![244, 142, 1,],
-                vec![71, 167, 122,],
-            ]),
-        );
-
-        assert_eq!(
-            gen_rs_matrix(6, 3)?,
-            Matrix::new_with_data(vec![
-                vec![1, 0, 0, 0, 0, 0,],
-                vec![0, 1, 0, 0, 0, 0,],
-                vec![0, 0, 1, 0, 0, 0,],
-                vec![0, 0, 0, 1, 0, 0,],
-                vec![0, 0, 0, 0, 1, 0,],
-                vec![0, 0, 0, 0, 0, 1,],
-                vec![122, 186, 71, 167, 142, 244,],
-                vec![186, 122, 167, 71, 244, 142,],
-                vec![173, 157, 221, 152, 61, 170,],
-            ]),
-        );
-
-        assert_eq!(
-            gen_rs_matrix(10, 4)?,
-            Matrix::new_with_data(vec![
-                vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0,],
-                vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0,],
-                vec![0, 0, 1, 0, 0, 0, 0, 0, 0, 0,],
-                vec![0, 0, 0, 1, 0, 0, 0, 0, 0, 0,],
-                vec![0, 0, 0, 0, 1, 0, 0, 0, 0, 0,],
-                vec![0, 0, 0, 0, 0, 1, 0, 0, 0, 0,],
-                vec![0, 0, 0, 0, 0, 0, 1, 0, 0, 0,],
-                vec![0, 0, 0, 0, 0, 0, 0, 1, 0, 0,],
-                vec![0, 0, 0, 0, 0, 0, 0, 0, 1, 0,],
-                vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 1,],
-                vec![221, 152, 173, 157, 93, 150, 61, 170, 142, 244,],
-                vec![152, 221, 157, 173, 150, 93, 170, 61, 244, 142,],
-                vec![61, 170, 93, 150, 173, 157, 221, 152, 71, 167,],
-                vec![170, 61, 150, 93, 157, 173, 152, 221, 167, 71,],
-            ]),
-        );
-        Ok(())
+        assert_eq!(matrix * original_matrix, Matrix::identity(3));
     }
 }

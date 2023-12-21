@@ -1,4 +1,4 @@
-#[cfg(all(feature = "integration-test", feature = "rs"))]
+#[cfg(feature = "integration-test")]
 mod test {
 
     use bytes::{Buf, Bytes};
