@@ -32,6 +32,9 @@
 
 pub mod client;
 pub(crate) mod common;
+#[cfg(feature = "benchmark")]
+pub mod ec;
+#[cfg(not(feature = "benchmark"))]
 pub(crate) mod ec;
 pub(crate) mod error;
 pub mod file;

@@ -40,6 +40,7 @@ prost-build = { version = "0.11", optional = true }
 protobuf-src = { version = "1.1", optional = true }
 
 [dev-dependencies]
+criterion = "0.5"
 env_logger = "0.10"
 serial_test = "2.0.0"
 tempfile = "3"
@@ -52,3 +53,8 @@ token = ["gsasl-sys"]
 
 generate-protobuf = ["prost-build", "protobuf-src"]
 integration-test = ["which"]
+benchmark = []
+
+[[bench]]
+name = "ec"
+harness = false

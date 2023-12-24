@@ -6,12 +6,11 @@ use std::{
 use num_traits::{One, Zero};
 
 #[derive(PartialEq, Debug, Clone)]
-pub(crate) struct Matrix<T> {
+pub struct Matrix<T> {
     data: Vec<Vec<T>>,
 }
 
 impl<T> Matrix<T> {
-    #[cfg(test)]
     pub(crate) fn new<U, V>(data: impl AsRef<[V]>) -> Self
     where
         U: Into<T> + Copy,
@@ -38,12 +37,12 @@ impl<T> Matrix<T> {
     }
 
     #[inline]
-    fn rows(&self) -> usize {
+    pub fn rows(&self) -> usize {
         self.data.len()
     }
 
     #[inline]
-    fn cols(&self) -> usize {
+    pub fn cols(&self) -> usize {
         self.data[0].len()
     }
 
@@ -68,7 +67,7 @@ impl<T> Matrix<T> {
     }
 
     /// Filter this matrix down to only selected rows
-    pub(crate) fn select_rows(&mut self, rows: impl Iterator<Item = usize>) {
+    pub fn select_rows(&mut self, rows: impl Iterator<Item = usize>) {
         let rows: HashSet<usize> = rows.collect();
 
         let data = std::mem::take(&mut self.data);
@@ -84,6 +83,13 @@ impl<T> Matrix<T> {
         self.data
     }
 
+    pub fn convert<U>(self) -> Matrix<U>
+    where
+        T: Into<U> + Copy,
+    {
+        Matrix::new(self.into_inner())
+    }
+
     /// Extend this matrix by inserting another matrix on the right hand side
     fn extend_cols(&mut self, other: Matrix<T>)
     where
@@ -95,7 +101,7 @@ impl<T> Matrix<T> {
         }
     }
 
-    pub(crate) fn invert(&mut self)
+    pub fn invert(&mut self)
     where
         T: Zero + One + MulAssign + SubAssign + Div<Output = T> + PartialEq + Clone + Copy,
     {
@@ -195,9 +201,10 @@ impl<T: Zero + One + Add + AddAssign + Mul + Clone + Copy> Mul for Matrix<T> {
     }
 }
 
-impl<T: Zero + One + Add + AddAssign + Mul + Clone + Copy, U> Mul<&[&[U]]> for Matrix<T>
+impl<T, U> Mul<&[&[U]]> for Matrix<T>
 where
-    U: Into<T> + Copy,
+    T: Zero + One + Add + AddAssign + Mul + Clone + Copy + std::fmt::Debug,
+    U: Into<T> + Copy + std::fmt::Debug,
 {
     type Output = Matrix<T>;
 
@@ -210,11 +217,11 @@ where
 
         let mut result: Matrix<T> = Matrix::zeroes(self.rows(), rhs_cols);
 
-        for j in 0..rhs_cols {
-            for rhs_row in 0..rhs.len() {
-                let rhs_val = rhs[rhs_row][j].into();
-                for (i, row) in self.data.iter().enumerate() {
-                    result[(i, j)] += row[rhs_row] * rhs_val;
+        for (i, rhs_row) in rhs.iter().enumerate() {
+            for (lhs_row, result_row) in self.data.iter().zip(result.data.iter_mut()) {
+                let lhs_value = lhs_row[i];
+                for (rhs_cell, result_cell) in rhs_row.iter().zip(result_row.iter_mut()) {
+                    *result_cell += lhs_value * (*rhs_cell).into();
                 }
             }
         }

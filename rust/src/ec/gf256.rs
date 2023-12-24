@@ -22,20 +22,20 @@ impl One for GF256 {
     }
 }
 
-pub(crate) struct Coder {
+pub struct Coder {
     data_units: usize,
     parity_units: usize,
 }
 
 impl Coder {
-    pub(crate) fn new(data_units: usize, parity_units: usize) -> Self {
+    pub fn new(data_units: usize, parity_units: usize) -> Self {
         Self {
             data_units,
             parity_units,
         }
     }
 
-    fn gen_rs_matrix(data_units: usize, parity_units: usize) -> Matrix<GF256> {
+    pub fn gen_rs_matrix(data_units: usize, parity_units: usize) -> Matrix<GF256> {
         let mut matrix = Matrix::zeroes(data_units + parity_units, data_units);
         for r in 0..data_units {
             matrix[(r, r)] = GF256::one();
@@ -54,7 +54,29 @@ impl Coder {
         matrix
     }
 
-    pub(crate) fn decode(&self, data: &mut [Option<Bytes>]) -> Result<()> {
+    /// Takes a slice of data slices and returns a vector of parity slices
+    #[allow(dead_code)]
+    pub fn encode(&self, data: &[Bytes]) -> Vec<Bytes> {
+        assert_eq!(data.len(), self.data_units);
+        let shard_bytes = data[0].len();
+
+        assert!(data.iter().skip(1).all(|s| s.len() == shard_bytes));
+
+        let mut encode_matrix = Self::gen_rs_matrix(self.data_units, self.parity_units);
+        // We only care about generating the parity rows
+        encode_matrix.select_rows(self.data_units..self.data_units + self.parity_units);
+
+        let parity_shards =
+            encode_matrix * &data.iter().map(|r| &r[..]).collect::<Vec<&[u8]>>()[..];
+
+        parity_shards
+            .into_inner()
+            .into_iter()
+            .map(|shard| Bytes::from(shard.into_iter().map(Into::into).collect::<Vec<u8>>()))
+            .collect()
+    }
+
+    pub fn decode(&self, data: &mut [Option<Bytes>]) -> Result<()> {
         let mut valid_indices: Vec<usize> = Vec::new();
         let mut invalid_indices: Vec<usize> = Vec::new();
 
@@ -62,7 +84,9 @@ impl Coder {
 
         for (i, slice) in data.iter().enumerate() {
             if let Some(slice) = slice.as_ref() {
-                data_matrix.push(slice);
+                if data_matrix.len() < self.data_units {
+                    data_matrix.push(slice);
+                }
                 valid_indices.push(i);
             } else if i < self.data_units {
                 // We don't care about missing parity data for decoding

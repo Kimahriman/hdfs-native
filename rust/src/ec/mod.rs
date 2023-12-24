@@ -1,4 +1,4 @@
-pub(crate) mod gf256;
+pub mod gf256;
 mod matrix;
 
 use crate::{proto::hdfs, HdfsError, Result};
