@@ -11,7 +11,8 @@ pub struct Matrix<T> {
 }
 
 impl<T> Matrix<T> {
-    pub(crate) fn new<U, V>(data: impl AsRef<[V]>) -> Self
+    #[cfg(test)]
+    pub fn new<U, V>(data: impl AsRef<[V]>) -> Self
     where
         U: Into<T> + Copy,
         V: AsRef<[U]>,
@@ -81,13 +82,6 @@ impl<T> Matrix<T> {
 
     pub(crate) fn into_inner(self) -> Vec<Vec<T>> {
         self.data
-    }
-
-    pub fn convert<U>(self) -> Matrix<U>
-    where
-        T: Into<U> + Copy,
-    {
-        Matrix::new(self.into_inner())
     }
 
     /// Extend this matrix by inserting another matrix on the right hand side
