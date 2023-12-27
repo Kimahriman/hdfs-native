@@ -17,14 +17,15 @@ bytes = "1"
 chrono = { version = "0.4", optional = true }
 crc = "3"
 futures = "0.3"
+g2p = "1"
 gsasl-sys = { version = "0.2", default-features = false, optional = true }
 libc = "0.2"
 libgssapi = { version = "0.6", default-features = false, optional = true }
 log = "0.4"
+num-traits = "0.2"
 object_store = { version = "0.7", optional = true, features = ["cloud"] }
 prost = "0.11"
 prost-types = "0.11"
-reed-solomon-erasure = { version = "6.0.0", optional = true }
 roxmltree = "0.18"
 socket2 = "0.5"
 thiserror = "1"
@@ -39,6 +40,7 @@ prost-build = { version = "0.11", optional = true }
 protobuf-src = { version = "1.1", optional = true }
 
 [dev-dependencies]
+criterion = "0.5"
 env_logger = "0.10"
 serial_test = "2.0.0"
 tempfile = "3"
@@ -48,7 +50,11 @@ which = "4"
 kerberos = ["libgssapi"]
 object_store = ["dep:object_store", "async-trait", "chrono"]
 token = ["gsasl-sys"]
-rs = ["reed-solomon-erasure"]
 
 generate-protobuf = ["prost-build", "protobuf-src"]
 integration-test = ["which"]
+benchmark = []
+
+[[bench]]
+name = "ec"
+harness = false

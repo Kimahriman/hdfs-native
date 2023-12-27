@@ -4,6 +4,3 @@ members = [
     "python",
 ]
 resolver = "2"
-
-[patch.crates-io]
-reed-solomon-erasure = { git = "https://github.com/Kimahriman/reed-solomon-erasure.git", branch = "SNB/23C24_external_matrix" }

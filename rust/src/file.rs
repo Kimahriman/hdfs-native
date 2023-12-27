@@ -4,8 +4,8 @@ use bytes::{BufMut, Bytes, BytesMut};
 use futures::stream::BoxStream;
 use futures::{stream, Stream, StreamExt};
 
+use crate::ec::EcSchema;
 use crate::hdfs::datanode::{get_block_stream, BlockWriter};
-use crate::hdfs::ec::EcSchema;
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::proto::hdfs;
 use crate::Result;

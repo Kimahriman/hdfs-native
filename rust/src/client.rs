@@ -7,9 +7,9 @@ use futures::{stream, StreamExt};
 use url::Url;
 
 use crate::common::config::{self, Configuration};
+use crate::ec::resolve_ec_policy;
 use crate::error::{HdfsError, Result};
 use crate::file::{FileReader, FileWriter};
-use crate::hdfs::ec::resolve_ec_policy;
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;

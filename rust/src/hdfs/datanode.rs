@@ -10,12 +10,13 @@ use log::{debug, error};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
+    ec::EcSchema,
     hdfs::connection::{DatanodeConnection, Op},
     proto::{common, hdfs},
     HdfsError, Result,
 };
 
-use super::{connection::Packet, ec::EcSchema};
+use super::connection::Packet;
 
 const HEART_BEAT_SEQNO: i64 = -1;
 const UNKNOWN_SEQNO: i64 = -1;
@@ -208,7 +209,7 @@ impl StripedBlockStream {
             .zip(self.block.locs.iter())
             .collect();
 
-        let mut stripe_results: Vec<Option<BytesMut>> =
+        let mut stripe_results: Vec<Option<Bytes>> =
             vec![None; self.ec_schema.data_units + self.ec_schema.parity_units];
 
         let mut futures = Vec::new();
@@ -289,7 +290,7 @@ impl StripedBlockStream {
         datanode: Option<&&hdfs::DatanodeInfoProto>,
         offset: usize,
         len: usize,
-    ) -> Result<BytesMut> {
+    ) -> Result<Bytes> {
         #[cfg(feature = "integration-test")]
         if let Some(fault_injection) = crate::test::EC_FAULT_INJECTOR.lock().unwrap().as_ref() {
             if fault_injection.fail_blocks.contains(&(index as usize)) {
@@ -322,7 +323,7 @@ impl StripedBlockStream {
                 .await?;
         }
 
-        Ok(buf)
+        Ok(buf.freeze())
     }
 
     async fn read_from_datanode(
