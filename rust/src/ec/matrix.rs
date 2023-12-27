@@ -5,6 +5,9 @@ use std::{
 
 use num_traits::{One, Zero};
 
+/// Helper struct for matrix operations needed for erasure coded. Mostly used for inverting
+/// matrices for reed-solomon decoding, and matrix multiplication for recovering data shards
+/// or computing parity shards.
 #[derive(PartialEq, Debug, Clone)]
 pub struct Matrix<T> {
     data: Vec<Vec<T>>,
@@ -195,6 +198,9 @@ impl<T: Zero + One + Add + AddAssign + Mul + Clone + Copy> Mul for Matrix<T> {
     }
 }
 
+/// Maybe overly convoluted generic function for computing matrix multiplication with a 2D
+/// slice of entries that can be turned into the type stored in this Matrix. In practice this
+/// is only used for multiplying a Matrix of GF256 by a 2D slice of u8.
 impl<T, U> Mul<&[&[U]]> for Matrix<T>
 where
     T: Zero + One + Add + AddAssign + Mul + Clone + Copy + std::fmt::Debug,

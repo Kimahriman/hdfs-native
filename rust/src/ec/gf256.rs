@@ -76,6 +76,8 @@ impl Coder {
             .collect()
     }
 
+    /// Takes a slice of Option<Bytes>, and fills in any missing data shards using parity shards.
+    /// Returns an error if there aren't enough parity shards to recompute missing data shards.
     pub fn decode(&self, data: &mut [Option<Bytes>]) -> Result<()> {
         let mut valid_indices: Vec<usize> = Vec::new();
         let mut invalid_indices: Vec<usize> = Vec::new();
@@ -92,6 +94,11 @@ impl Coder {
                 // We don't care about missing parity data for decoding
                 invalid_indices.push(i);
             }
+        }
+
+        if invalid_indices.is_empty() {
+            // We have all the data shards so just return
+            return Ok(());
         }
 
         if valid_indices.len() < self.data_units {
