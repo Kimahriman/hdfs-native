@@ -20,12 +20,6 @@ Here is a list of currently supported and unsupported but possible future featur
 - [x] Router based federation
 - [x] Erasure coded reads 
     - RS schema only, no support for RS-Legacy or XOR
-    - Relies on a fork of https://github.com/rust-rse/reed-solomon-erasure
-    - You can include a `patch` in your downstream `Cargo.toml` to use the required patch
-    ```toml
-    [patch.crates-io]
-    reed-solomon-erasure = { git = "https://github.com/Kimahriman/reed-solomon-erasure.git", branch = "SNB/23C24_external_matrix" }
-    ```
 - [ ] Erasure coded writes
 
 ### Security Features
