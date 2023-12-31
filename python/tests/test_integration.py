@@ -37,4 +37,18 @@ def test_integration(minidfs: str):
     for i in range(0, 32 * 1024 * 1024):
         assert data.read(4) == i.to_bytes(4, 'big')
 
+    with client.append("/testfile") as file:
+        data = io.BytesIO()
+
+        for i in range(32 * 1024 * 1024, 33 * 1024 * 1024):
+            data.write(i.to_bytes(4, 'big'))
+
+        file.write(data.getbuffer())
+
+    with client.read("/testfile") as file:
+        data = io.BytesIO(file.read())
+
+    for i in range(0, 33 * 1024 * 1024):
+        assert data.read(4) == i.to_bytes(4, 'big')
+
     client.delete("/testfile", False)
