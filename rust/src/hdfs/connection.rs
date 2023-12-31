@@ -434,10 +434,14 @@ impl Packet {
     }
 
     fn max_packet_chunks(bytes_per_checksum: u32, max_packet_size: u32) -> usize {
-        let data_size = max_packet_size as usize - MAX_PACKET_HEADER_SIZE;
-        let chunk_size = bytes_per_checksum as usize + CHECKSUM_BYTES;
-
-        data_size / chunk_size
+        if max_packet_size > 0 {
+            let data_size = max_packet_size as usize - MAX_PACKET_HEADER_SIZE;
+            let chunk_size = bytes_per_checksum as usize + CHECKSUM_BYTES;
+            data_size / chunk_size
+        } else {
+            // Create a packet with a single chunk for appending to a file
+            1
+        }
     }
 
     pub(crate) fn write(&mut self, buf: &mut Bytes) {

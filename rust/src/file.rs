@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::stream::BoxStream;
@@ -8,7 +9,10 @@ use crate::ec::EcSchema;
 use crate::hdfs::datanode::{get_block_stream, BlockWriter};
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::proto::hdfs;
-use crate::Result;
+use crate::{HdfsError, Result};
+
+const COMPLETE_RETRY_DELAY_MS: u64 = 500;
+const COMPLETE_RETRIES: u32 = 5;
 
 pub struct FileReader {
     status: hdfs::HdfsFileStatusProto,
@@ -141,6 +145,7 @@ pub struct FileWriter {
     status: hdfs::HdfsFileStatusProto,
     server_defaults: hdfs::FsServerDefaultsProto,
     block_writer: Option<BlockWriter>,
+    last_block: Option<hdfs::LocatedBlockProto>,
     closed: bool,
     bytes_written: usize,
 }
@@ -150,6 +155,8 @@ impl FileWriter {
         protocol: Arc<NamenodeProtocol>,
         src: String,
         status: hdfs::HdfsFileStatusProto,
+        // Some for append, None for create
+        last_block: Option<hdfs::LocatedBlockProto>,
         server_defaults: hdfs::FsServerDefaultsProto,
     ) -> Self {
         Self {
@@ -158,23 +165,39 @@ impl FileWriter {
             status,
             server_defaults,
             block_writer: None,
+            last_block,
             closed: false,
             bytes_written: 0,
         }
     }
 
-    async fn create_block_writer(&self) -> Result<BlockWriter> {
-        let new_block = self
-            .protocol
-            .add_block(
-                &self.src,
-                self.block_writer.as_ref().map(|b| b.get_extended_block()),
-                self.status.file_id,
-            )
-            .await?;
+    async fn create_block_writer(&mut self) -> Result<BlockWriter> {
+        let new_block = if let Some(last_block) = self.last_block.take() {
+            // Append operation on first write
+            if last_block.b.num_bytes() < self.status.blocksize() {
+                // The last block isn't full, just write data to it
+                last_block
+            } else {
+                // The last block is full, so create a new block to write to
+                self.protocol
+                    .add_block(&self.src, Some(last_block.b), self.status.file_id)
+                    .await?
+                    .block
+            }
+        } else {
+            // Not appending to an existing block, just create a new one
+            self.protocol
+                .add_block(
+                    &self.src,
+                    self.block_writer.as_ref().map(|b| b.get_extended_block()),
+                    self.status.file_id,
+                )
+                .await?
+                .block
+        };
 
         BlockWriter::new(
-            new_block.block,
+            new_block,
             self.status.blocksize() as usize,
             self.server_defaults.clone(),
         )
@@ -217,15 +240,33 @@ impl FileWriter {
             if let Some(block_writer) = self.block_writer.as_mut() {
                 block_writer.close().await?;
             }
-            self.protocol
-                .complete(
-                    &self.src,
-                    self.block_writer.as_ref().map(|b| b.get_extended_block()),
-                    self.status.file_id,
-                )
-                .await?;
-            self.closed = true;
+
+            let mut retry_delay = COMPLETE_RETRY_DELAY_MS;
+            let mut retries = 0;
+            while retries < COMPLETE_RETRIES {
+                let successful = self
+                    .protocol
+                    .complete(
+                        &self.src,
+                        self.block_writer.as_ref().map(|b| b.get_extended_block()),
+                        self.status.file_id,
+                    )
+                    .await?
+                    .result;
+
+                if successful {
+                    self.closed = true;
+                    return Ok(());
+                }
+
+                tokio::time::sleep(Duration::from_millis(retry_delay)).await;
+
+                retry_delay *= 2;
+                retries += 1;
+            }
         }
-        Ok(())
+        Err(HdfsError::OperationFailed(
+            "Failed to complete file in time".to_string(),
+        ))
     }
 }

@@ -112,11 +112,26 @@ mod test {
         test_read(&client).await?;
         test_rename(&client).await?;
         test_dirs(&client).await?;
-        test_write(&client).await?;
+        test_create(&client).await?;
+        test_append(&client).await?;
         // We use writing to create files, so do this after
         test_recursive_listing(&client).await?;
 
         Ok(())
+    }
+
+    fn assert_bufs_equal(buf1: &impl Buf, buf2: &impl Buf, message: Option<String>) {
+        assert_eq!(buf1.chunk().len(), buf2.chunk().len());
+
+        let message = message.unwrap_or_default();
+
+        buf1.chunk()
+            .iter()
+            .zip(buf2.chunk())
+            .enumerate()
+            .for_each(move |(i, (b1, b2))| {
+                assert_eq!(b1, b2, "data is different as position {} {}", i, message)
+            });
     }
 
     async fn test_file_info(client: &Client) -> Result<()> {
@@ -205,7 +220,7 @@ mod test {
         Ok(())
     }
 
-    async fn test_write(client: &Client) -> Result<()> {
+    async fn test_create(client: &Client) -> Result<()> {
         let mut write_options = WriteOptions::default();
 
         // Create an empty file
@@ -242,18 +257,64 @@ mod test {
             let mut reader = client.read("/newfile").await?;
             let read_data = reader.read(reader.file_length()).await?;
 
-            assert_eq!(buf.len(), read_data.len());
-
-            for pos in 0..buf.len() {
-                assert_eq!(
-                    buf[pos], read_data[pos],
-                    "data is different as position {} for size {}",
-                    pos, size_to_check
-                );
-            }
+            assert_bufs_equal(
+                &buf,
+                &read_data,
+                Some(format!("for size {}", size_to_check)),
+            );
         }
 
         assert!(client.delete("/newfile", false).await.is_ok_and(|r| r));
+
+        Ok(())
+    }
+
+    async fn test_append(client: &Client) -> Result<()> {
+        // Create an empty file
+        client
+            .create("/newfile", WriteOptions::default())
+            .await?
+            .close()
+            .await?;
+
+        assert_eq!(client.get_file_info("/newfile").await?.length, 0);
+
+        // Keep track of what should be in the file
+        let mut file_contents = BytesMut::new();
+
+        // Test a few different things with each range:
+
+        for range in [
+            // Append a few bytes to an empty file
+            0u32..4,
+            // Append a few bytes to a partial chunk
+            4..8,
+            // Append multiple chunks to a file
+            8..2048,
+            // Append to the file filling up the block
+            2048..(128 * 1024 * 1024),
+            // Append some bytes to a new block
+            0..511,
+            // Append to a chunk with only one byte missing
+            512..1024,
+        ] {
+            let mut data = BytesMut::new();
+            for i in range {
+                file_contents.put_u8((i % 256) as u8);
+                data.put_u8((i % 256) as u8);
+            }
+
+            let buf = data.freeze();
+
+            let mut writer = client.append("/newfile").await?;
+            writer.write(buf).await?;
+            writer.close().await?;
+
+            let mut reader = client.read("/newfile").await?;
+            let read_data = reader.read(reader.file_length()).await?;
+
+            assert_bufs_equal(&file_contents, &read_data, None);
+        }
 
         Ok(())
     }

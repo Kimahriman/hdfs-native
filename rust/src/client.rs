@@ -282,6 +282,34 @@ impl Client {
                     Arc::clone(&link.protocol),
                     resolved_path,
                     status,
+                    None,
+                    server_defaults,
+                ))
+            }
+            None => Err(HdfsError::FileNotFound(src.to_string())),
+        }
+    }
+
+    pub async fn append(&self, src: &str) -> Result<FileWriter> {
+        let (link, resolved_path) = self.mount_table.resolve(src);
+        let server_defaults = link.protocol.get_server_defaults().await?.server_defaults;
+
+        let append_response = link.protocol.append(&resolved_path).await?;
+
+        match append_response.stat {
+            Some(status) => {
+                if status.ec_policy.is_some() {
+                    return Err(HdfsError::UnsupportedFeature("Erasure coding".to_string()));
+                }
+                if status.file_encryption_info.is_some() {
+                    return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
+                }
+
+                Ok(FileWriter::new(
+                    Arc::clone(&link.protocol),
+                    resolved_path,
+                    status,
+                    append_response.block,
                     server_defaults,
                 ))
             }

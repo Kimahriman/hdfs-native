@@ -392,7 +392,6 @@ pub(crate) struct BlockWriter {
     block_size: usize,
     server_defaults: hdfs::FsServerDefaultsProto,
 
-    bytes_written: usize,
     next_seqno: i64,
     connection: DatanodeConnection,
     current_packet: Packet,
@@ -419,12 +418,22 @@ impl BlockWriter {
             bytes_per_checksum: server_defaults.bytes_per_checksum,
         };
 
+        let append = block.b.num_bytes() > 0;
+
+        let stage = if append {
+            hdfs::op_write_block_proto::BlockConstructionStage::PipelineSetupAppend as i32
+        } else {
+            hdfs::op_write_block_proto::BlockConstructionStage::PipelineSetupCreate as i32
+        };
+
         let message = hdfs::OpWriteBlockProto {
             header: connection.build_header(&block.b, Some(block.block_token.clone())),
-            stage: hdfs::op_write_block_proto::BlockConstructionStage::PipelineSetupCreate as i32,
+            stage,
             targets: block.locs[1..].to_vec(),
             pipeline_size: block.locs.len() as u32,
-            latest_generation_stamp: 0,
+            latest_generation_stamp: block.b.generation_stamp,
+            min_bytes_rcvd: block.b.num_bytes(),
+            max_bytes_rcvd: block.b.num_bytes(),
             requested_checksum: checksum,
             storage_type: Some(block.storage_types[0]),
             target_storage_types: block.storage_types[1..].to_vec(),
@@ -452,14 +461,29 @@ impl BlockWriter {
         let bytes_per_checksum = server_defaults.bytes_per_checksum;
         let write_packet_size = server_defaults.write_packet_size;
 
+        let bytes_left_in_chunk = server_defaults.bytes_per_checksum
+            - (block.b.num_bytes() % server_defaults.bytes_per_checksum as u64) as u32;
+        let current_packet = if append && bytes_left_in_chunk > 0 {
+            // When appending, we want to first send a packet with a single chunk of the data required
+            // to get the block to a multiple of bytes_per_checksum. After that, things work the same
+            // as create.
+            Packet::empty(block.b.num_bytes() as i64, 0, bytes_left_in_chunk, 0)
+        } else {
+            Packet::empty(
+                block.b.num_bytes() as i64,
+                0,
+                bytes_per_checksum,
+                write_packet_size,
+            )
+        };
+
         let this = Self {
             block,
             block_size,
             server_defaults,
-            bytes_written: 0,
             next_seqno: 1,
             connection,
-            current_packet: Packet::empty(0, 0, bytes_per_checksum, write_packet_size),
+            current_packet,
             status: Some(status_receiver),
             ack_queue: ack_queue_sender,
         };
@@ -473,12 +497,12 @@ impl BlockWriter {
     }
 
     pub(crate) fn is_full(&self) -> bool {
-        self.bytes_written == self.block_size
+        self.block.b.num_bytes() == self.block_size as u64
     }
 
     fn create_next_packet(&mut self) {
         self.current_packet = Packet::empty(
-            self.bytes_written as i64,
+            self.block.b.num_bytes() as i64,
             self.next_seqno,
             self.server_defaults.bytes_per_checksum,
             self.server_defaults.write_packet_size,
@@ -531,7 +555,10 @@ impl BlockWriter {
         self.check_error()?;
 
         // Only write up to what's left in this block
-        let bytes_to_write = usize::min(buf.len(), self.block_size - self.bytes_written);
+        let bytes_to_write = usize::min(
+            buf.len(),
+            self.block_size - self.block.b.num_bytes() as usize,
+        );
         let mut buf_to_write = buf.split_to(bytes_to_write);
 
         while !buf_to_write.is_empty() {
@@ -539,7 +566,8 @@ impl BlockWriter {
             self.current_packet.write(&mut buf_to_write);
 
             // Track how many bytes are written to this block
-            self.bytes_written += initial_buf_len - buf_to_write.len();
+            *self.block.b.num_bytes.as_mut().unwrap() +=
+                (initial_buf_len - buf_to_write.len()) as u64;
 
             if self.current_packet.is_full() {
                 self.send_current_packet().await?;
@@ -574,9 +602,6 @@ impl BlockWriter {
                 "Block already closed".to_string(),
             ));
         }
-
-        // Update the block size in the ExtendedBlockProto used for communicate the status with the namenode
-        self.block.b.num_bytes = Some(self.bytes_written as u64);
 
         Ok(())
     }
