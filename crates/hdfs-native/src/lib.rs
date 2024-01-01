@@ -44,9 +44,6 @@ pub mod minidfs;
 pub(crate) mod proto;
 pub(crate) mod security;
 
-#[cfg(feature = "object_store")]
-pub mod object_store;
-
 pub use client::Client;
 pub use client::WriteOptions;
 pub use error::HdfsError;

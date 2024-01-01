@@ -1,10 +1,11 @@
-#[cfg(all(feature = "integration-test", feature = "object_store"))]
+#[cfg(feature = "integration-test")]
 mod common;
 
-#[cfg(all(feature = "integration-test", feature = "object_store"))]
+#[cfg(feature = "integration-test")]
 mod test {
     use bytes::{Buf, BufMut, Bytes, BytesMut};
-    use hdfs_native::{minidfs::DfsFeatures, object_store::HdfsObjectStore, Client};
+    use hdfs_native::{minidfs::DfsFeatures, Client};
+    use hdfs_native_objectstore::HdfsObjectStore;
     use serial_test::serial;
     use std::collections::HashSet;
 

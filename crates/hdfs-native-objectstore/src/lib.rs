@@ -1,3 +1,34 @@
+// #![warn(missing_docs)]
+//! Native HDFS client implementation in Rust
+//!
+//! # Usage
+//!
+//! Create a client to a single NameNode
+//! ```rust
+//! use hdfs_native::Client;
+//! # use hdfs_native::Result;
+//! # fn main() -> Result<()> {
+//! let client = Client::new("hdfs://localhost:9000")?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Create a client for a Name Service
+//! ```rust
+//! use hdfs_native::Client;
+//! # use hdfs_native::Result;
+//! # fn main() -> Result<()> {
+//! let client = Client::new("hdfs://ns")?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Optional cargo package features
+//! - `kerberos` - include support for Kerberos authentication. Uses the libgssapi package. Supports all RPC authentication and encryption methods.
+//! - `token` - include support for Token authentication. Uses the gsasl native library. Only
+//!   supports authentication, not integrity or privacy modes.
+//! - `object_store` - an `object_store` implementation for HDFS.
+//! ```
 use std::{
     fmt::{Display, Formatter},
     future,
@@ -8,11 +39,11 @@ use std::{
     },
 };
 
-use crate::{client::FileStatus, file::FileWriter, Client, HdfsError, WriteOptions};
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use futures::stream::{BoxStream, StreamExt};
+use hdfs_native::{client::FileStatus, file::FileWriter, Client, HdfsError, WriteOptions};
 use object_store::{
     multipart::{PartId, PutPart, WriteMultiPart},
     path::Path,
@@ -36,26 +67,33 @@ impl HdfsObjectStore {
     async fn internal_copy(&self, from: &Path, to: &Path, overwrite: bool) -> Result<()> {
         let overwrite = match self.client.get_file_info(&make_absolute_file(to)).await {
             Ok(_) if overwrite => true,
-            Ok(_) => Err(HdfsError::AlreadyExists(make_absolute_file(to)))?,
+            Ok(_) => Err(HdfsError::AlreadyExists(make_absolute_file(to))).to_object_store_err()?,
             Err(HdfsError::FileNotFound(_)) => false,
-            Err(e) => Err(e)?,
+            Err(e) => Err(e).to_object_store_err()?,
         };
 
-        let mut write_options = WriteOptions::default();
-        write_options.overwrite = overwrite;
+        let write_options = WriteOptions {
+            overwrite,
+            ..Default::default()
+        };
 
-        let file = self.client.read(&make_absolute_file(from)).await?;
+        let file = self
+            .client
+            .read(&make_absolute_file(from))
+            .await
+            .to_object_store_err()?;
         let mut stream = file.read_range_stream(0, file.file_length()).boxed();
 
         let mut new_file = self
             .client
             .create(&make_absolute_file(to), write_options)
-            .await?;
+            .await
+            .to_object_store_err()?;
 
-        while let Some(bytes) = stream.next().await.transpose()? {
-            new_file.write(bytes).await?;
+        while let Some(bytes) = stream.next().await.transpose().to_object_store_err()? {
+            new_file.write(bytes).await.to_object_store_err()?;
         }
-        new_file.close().await?;
+        new_file.close().await.to_object_store_err()?;
 
         Ok(())
     }
@@ -85,34 +123,44 @@ impl ObjectStore for HdfsObjectStore {
 
         let file_name = path_buf
             .file_name()
-            .ok_or(HdfsError::InvalidPath("path missing filename".to_string()))?
+            .ok_or(HdfsError::InvalidPath("path missing filename".to_string()))
+            .to_object_store_err()?
             .to_str()
-            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))?
+            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
+            .to_object_store_err()?
             .to_string();
 
         let tmp_filename = path_buf
             .with_file_name(format!(".{}.tmp", file_name))
             .to_str()
-            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))?
+            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
+            .to_object_store_err()?
             .to_string();
 
         // First we need to check if the tmp file exists so we know whether to overwrite
         let overwrite = match self.client.get_file_info(&tmp_filename).await {
             Ok(_) => true,
             Err(HdfsError::FileNotFound(_)) => false,
-            Err(e) => Err(e)?,
+            Err(e) => Err(e).to_object_store_err()?,
         };
 
-        let mut write_options = WriteOptions::default();
-        write_options.overwrite = overwrite;
+        let write_options = WriteOptions {
+            overwrite,
+            ..Default::default()
+        };
 
-        let mut writer = self.client.create(&tmp_filename, write_options).await?;
-        writer.write(bytes).await?;
-        writer.close().await?;
+        let mut writer = self
+            .client
+            .create(&tmp_filename, write_options)
+            .await
+            .to_object_store_err()?;
+        writer.write(bytes).await.to_object_store_err()?;
+        writer.close().await.to_object_store_err()?;
 
         self.client
             .rename(&tmp_filename, &final_file_path, true)
-            .await?;
+            .await
+            .to_object_store_err()?;
 
         Ok(())
     }
@@ -128,28 +176,37 @@ impl ObjectStore for HdfsObjectStore {
 
         let file_name = path_buf
             .file_name()
-            .ok_or(HdfsError::InvalidPath("path missing filename".to_string()))?
+            .ok_or(HdfsError::InvalidPath("path missing filename".to_string()))
+            .to_object_store_err()?
             .to_str()
-            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))?
+            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
+            .to_object_store_err()?
             .to_string();
 
         let tmp_filename = path_buf
             .with_file_name(format!(".{}.tmp", file_name))
             .to_str()
-            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))?
+            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
+            .to_object_store_err()?
             .to_string();
 
         // First we need to check if the tmp file exists so we know whether to overwrite
         let overwrite = match self.client.get_file_info(&tmp_filename).await {
             Ok(_) => true,
             Err(HdfsError::FileNotFound(_)) => false,
-            Err(e) => Err(e)?,
+            Err(e) => Err(e).to_object_store_err()?,
         };
 
-        let mut write_options = WriteOptions::default();
-        write_options.overwrite = overwrite;
+        let write_options = WriteOptions {
+            overwrite,
+            ..Default::default()
+        };
 
-        let writer = self.client.create(&tmp_filename, write_options).await?;
+        let writer = self
+            .client
+            .create(&tmp_filename, write_options)
+            .await
+            .to_object_store_err()?;
 
         Ok((
             tmp_filename.clone(),
@@ -171,7 +228,10 @@ impl ObjectStore for HdfsObjectStore {
     /// vary by object store.
     async fn abort_multipart(&self, _location: &Path, multipart_id: &MultipartId) -> Result<()> {
         // The multipart_id is the resolved temporary file name, so we can just delete it
-        self.client.delete(multipart_id, false).await?;
+        self.client
+            .delete(multipart_id, false)
+            .await
+            .to_object_store_err()?;
         Ok(())
     }
 
@@ -188,10 +248,14 @@ impl ObjectStore for HdfsObjectStore {
 
         let range = options.range.unwrap_or(0..meta.size);
 
-        let reader = self.client.read(&make_absolute_file(location)).await?;
+        let reader = self
+            .client
+            .read(&make_absolute_file(location))
+            .await
+            .to_object_store_err()?;
         let stream = reader
             .read_range_stream(range.start, range.end - range.start)
-            .map(|b| Ok::<_, object_store::Error>(b?))
+            .map(|b| b.to_object_store_err())
             .boxed();
 
         let payload = GetResultPayload::Stream(stream);
@@ -208,7 +272,8 @@ impl ObjectStore for HdfsObjectStore {
         let status = self
             .client
             .get_file_info(&make_absolute_file(location))
-            .await?;
+            .await
+            .to_object_store_err()?;
 
         Ok(ObjectMeta {
             location: location.clone(),
@@ -225,12 +290,14 @@ impl ObjectStore for HdfsObjectStore {
         let result = self
             .client
             .delete(&make_absolute_file(location), false)
-            .await?;
+            .await
+            .to_object_store_err()?;
 
         if !result {
             Err(HdfsError::OperationFailed(
                 "failed to delete object".to_string(),
-            ))?
+            ))
+            .to_object_store_err()?
         }
 
         Ok(())
@@ -246,9 +313,7 @@ impl ObjectStore for HdfsObjectStore {
         let status_stream = self
             .client
             .list_status_iter(
-                &prefix
-                    .map(|p| make_absolute_dir(p))
-                    .unwrap_or("".to_string()),
+                &prefix.map(make_absolute_dir).unwrap_or("".to_string()),
                 true,
             )
             .into_stream()
@@ -261,12 +326,7 @@ impl ObjectStore for HdfsObjectStore {
                 };
                 future::ready(result)
             })
-            .map(|res| {
-                res.map_or_else(
-                    |e| Err(object_store::Error::from(e)),
-                    |s| get_object_meta(&s),
-                )
-            });
+            .map(|res| res.map_or_else(|e| Err(e).to_object_store_err(), |s| get_object_meta(&s)));
 
         Ok(Box::pin(status_stream))
     }
@@ -281,9 +341,7 @@ impl ObjectStore for HdfsObjectStore {
         let mut status_stream = self
             .client
             .list_status_iter(
-                &prefix
-                    .map(|p| make_absolute_dir(p))
-                    .unwrap_or("".to_string()),
+                &prefix.map(make_absolute_dir).unwrap_or("".to_string()),
                 false,
             )
             .into_stream()
@@ -298,7 +356,7 @@ impl ObjectStore for HdfsObjectStore {
 
         let mut statuses = Vec::<FileStatus>::new();
         while let Some(status) = status_stream.next().await {
-            statuses.push(status?);
+            statuses.push(status.to_object_store_err()?);
         }
 
         let mut dirs: Vec<Path> = Vec::new();
@@ -321,14 +379,16 @@ impl ObjectStore for HdfsObjectStore {
         Ok(self
             .client
             .rename(&make_absolute_file(from), &make_absolute_file(to), true)
-            .await?)
+            .await
+            .to_object_store_err()?)
     }
 
     async fn rename_if_not_exists(&self, from: &Path, to: &Path) -> Result<()> {
         Ok(self
             .client
             .rename(&make_absolute_file(from), &make_absolute_file(to), false)
-            .await?)
+            .await
+            .to_object_store_err()?)
     }
 
     /// Copy an object from one path to another in the same object store.
@@ -350,9 +410,13 @@ impl ObjectStore for HdfsObjectStore {
     }
 }
 
-impl From<HdfsError> for object_store::Error {
-    fn from(value: HdfsError) -> Self {
-        match value {
+trait HdfsErrorConvert<T> {
+    fn to_object_store_err(self) -> Result<T>;
+}
+
+impl<T> HdfsErrorConvert<T> for hdfs_native::Result<T> {
+    fn to_object_store_err(self) -> Result<T> {
+        self.map_err(|err| match err {
             HdfsError::FileNotFound(path) => object_store::Error::NotFound {
                 path: path.clone(),
                 source: Box::new(HdfsError::FileNotFound(path)),
@@ -363,9 +427,9 @@ impl From<HdfsError> for object_store::Error {
             },
             _ => object_store::Error::Generic {
                 store: "HdfsObjectStore",
-                source: Box::new(value),
+                source: Box::new(err),
             },
-        }
+        })
     }
 }
 
@@ -409,7 +473,12 @@ impl PutPart for HdfsMultipartWriter {
             });
         }
 
-        self.inner.lock().await.write(buf.into()).await?;
+        self.inner
+            .lock()
+            .await
+            .write(buf.into())
+            .await
+            .to_object_store_err()?;
 
         self.next_part.fetch_add(1, Ordering::SeqCst);
 
@@ -422,10 +491,16 @@ impl PutPart for HdfsMultipartWriter {
     ///
     /// `completed_parts` is in order of part number
     async fn complete(&self, _completed_parts: Vec<PartId>) -> Result<()> {
-        self.inner.lock().await.close().await?;
+        self.inner
+            .lock()
+            .await
+            .close()
+            .await
+            .to_object_store_err()?;
         self.client
             .rename(&self.tmp_filename, &self.final_filename, true)
-            .await?;
+            .await
+            .to_object_store_err()?;
         Ok(())
     }
 }
