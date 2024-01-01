@@ -81,7 +81,7 @@ class Client:
         return FileWriter(self.inner.create(path, write_options))
     
     def append(self, path: str) -> FileWriter:
-        """Creates a new file and opens it for writing at `path`"""
+        """Opens an existing file to append to at `path`"""
         return FileWriter(self.inner.append(path))
 
     def mkdirs(self, path: str, permission: int, create_parent: bool) -> None:
