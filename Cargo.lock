@@ -637,10 +637,8 @@ checksum = "2c6201b9ff9fd90a5a3bac2e56a830d0caa509576f0e503818ee82c181b3437a"
 name = "hdfs-native"
 version = "0.5.0"
 dependencies = [
- "async-trait",
  "base64",
  "bytes",
- "chrono",
  "crc",
  "criterion",
  "env_logger",
@@ -651,7 +649,6 @@ dependencies = [
  "libgssapi",
  "log",
  "num-traits",
- "object_store",
  "prost",
  "prost-build",
  "prost-types",
@@ -679,7 +676,6 @@ dependencies = [
  "env_logger",
  "futures",
  "hdfs-native",
- "log",
  "object_store",
  "serial_test",
  "tempfile",

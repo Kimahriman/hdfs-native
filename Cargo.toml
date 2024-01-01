@@ -5,3 +5,8 @@ members = [
     "python",
 ]
 resolver = "2"
+
+[workspace.dependencies]
+bytes = "1"
+futures = "0.3"
+tokio = "1"

@@ -410,7 +410,7 @@ impl ObjectStore for HdfsObjectStore {
     }
 }
 
-trait HdfsErrorConvert<T> {
+pub trait HdfsErrorConvert<T> {
     fn to_object_store_err(self) -> Result<T>;
 }
 

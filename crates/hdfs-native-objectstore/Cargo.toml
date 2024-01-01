@@ -12,14 +12,13 @@ license = "Apache-2.0"
 
 [dependencies]
 async-trait = { version = "0.1" }
-bytes = "1"
+bytes = { workspace = true }
 chrono = { version = "0.4" }
-futures = "0.3"
-hdfs-native = { path = "../hdfs-native", features=["token", "kerberos"] }
-log = "0.4"
+futures = { workspace = true }
+hdfs-native = { path = "../hdfs-native", features = ["token", "kerberos"] }
 object_store = { version = "0.7", features = ["cloud"] }
 thiserror = "1"
-tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "sync", "time"] }
+tokio = { workspace = true, features = ["rt", "net", "io-util", "macros", "sync", "time"] }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -30,4 +29,4 @@ which = "4"
 
 
 [features]
-integration-test = []
+integration-test = ["hdfs-native/integration-test"]

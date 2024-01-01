@@ -11,25 +11,22 @@ readme = "../README.md"
 license = "Apache-2.0"
 
 [dependencies]
-async-trait = { version = "0.1", optional = true }
 base64 = "0.21"
-bytes = "1"
-chrono = { version = "0.4", optional = true }
+bytes = { workspace = true }
 crc = "3"
-futures = "0.3"
+futures = { workspace = true }
 g2p = "1"
 gsasl-sys = { version = "0.2", default-features = false, optional = true }
 libc = "0.2"
 libgssapi = { version = "0.6", default-features = false, optional = true }
 log = "0.4"
 num-traits = "0.2"
-object_store = { version = "0.7", optional = true, features = ["cloud"] }
 prost = "0.11"
 prost-types = "0.11"
 roxmltree = "0.18"
 socket2 = "0.5"
 thiserror = "1"
-tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "sync", "time"] }
+tokio = { workspace = true, features = ["rt", "net", "io-util", "macros", "sync", "time"] }
 url = "2"
 users = { version = "0.11", default-features = false }
 uuid = { version = "1", features = ["v4"] }
@@ -48,7 +45,6 @@ which = "4"
 
 [features]
 kerberos = ["libgssapi"]
-object_store = ["dep:object_store", "async-trait", "chrono"]
 token = ["gsasl-sys"]
 
 generate-protobuf = ["prost-build", "protobuf-src"]
