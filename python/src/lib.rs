@@ -220,6 +220,15 @@ impl RawClient {
         })
     }
 
+    pub fn append(&self, src: &str) -> PyHdfsResult<RawFileWriter> {
+        let file_writer = self.rt.block_on(self.inner.append(src))?;
+
+        Ok(RawFileWriter {
+            inner: file_writer,
+            rt: Arc::clone(&self.rt),
+        })
+    }
+
     pub fn mkdirs(&self, path: &str, permission: u32, create_parent: bool) -> PyHdfsResult<()> {
         Ok(self
             .rt
