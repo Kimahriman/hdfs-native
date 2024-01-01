@@ -1,33 +1,18 @@
 // #![warn(missing_docs)]
-//! Native HDFS client implementation in Rust
+//! Object store implementation for the Native Rust HDFS client
 //!
 //! # Usage
 //!
-//! Create a client to a single NameNode
 //! ```rust
 //! use hdfs_native::Client;
+//! use hdfs_native_object_store::HdfsObjectStore;
 //! # use hdfs_native::Result;
 //! # fn main() -> Result<()> {
 //! let client = Client::new("hdfs://localhost:9000")?;
+//! let store = HdfsObjectStore::new(client);
 //! # Ok(())
 //! # }
 //! ```
-//!
-//! Create a client for a Name Service
-//! ```rust
-//! use hdfs_native::Client;
-//! # use hdfs_native::Result;
-//! # fn main() -> Result<()> {
-//! let client = Client::new("hdfs://ns")?;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! # Optional cargo package features
-//! - `kerberos` - include support for Kerberos authentication. Uses the libgssapi package. Supports all RPC authentication and encryption methods.
-//! - `token` - include support for Token authentication. Uses the gsasl native library. Only
-//!   supports authentication, not integrity or privacy modes.
-//! - `object_store` - an `object_store` implementation for HDFS.
 use std::{
     fmt::{Display, Formatter},
     future,

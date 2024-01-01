@@ -5,7 +5,7 @@ mod common;
 mod test {
     use bytes::{Buf, BufMut, Bytes, BytesMut};
     use hdfs_native::{minidfs::DfsFeatures, Client};
-    use hdfs_native_objectstore::{HdfsErrorConvert, HdfsObjectStore};
+    use hdfs_native_object_store::{HdfsErrorConvert, HdfsObjectStore};
     use serial_test::serial;
     use std::collections::HashSet;
 

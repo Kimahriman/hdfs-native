@@ -27,8 +27,6 @@
 //! - `kerberos` - include support for Kerberos authentication. Uses the libgssapi package. Supports all RPC authentication and encryption methods.
 //! - `token` - include support for Token authentication. Uses the gsasl native library. Only
 //!   supports authentication, not integrity or privacy modes.
-//! - `object_store` - an `object_store` implementation for HDFS.
-//! ```
 
 pub mod client;
 pub(crate) mod common;
