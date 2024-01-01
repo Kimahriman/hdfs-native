@@ -149,8 +149,8 @@ impl ObjectStore for HdfsObjectStore {
         Ok(())
     }
 
-    /// Currently not implemented. Once object_store is upgraded to 0.7, we can implement this
-    /// using the PutPart trait in the multipart mod that was made public.
+    /// Uses the [PutPart] trait to implement an asynchronous writer. We can't actually upload
+    /// multiple parts at once, so we simply set a limit of one part at a time.
     async fn put_multipart(
         &self,
         location: &Path,
@@ -206,10 +206,7 @@ impl ObjectStore for HdfsObjectStore {
         ))
     }
 
-    /// Cleanup an aborted upload.
-    ///
-    /// See documentation for individual stores for exact behavior, as capabilities
-    /// vary by object store.
+    /// Attempts to delete the temporary file used for multipart uploads.
     async fn abort_multipart(&self, _location: &Path, multipart_id: &MultipartId) -> Result<()> {
         // The multipart_id is the resolved temporary file name, so we can just delete it
         self.client
@@ -394,7 +391,13 @@ impl ObjectStore for HdfsObjectStore {
     }
 }
 
+#[cfg(feature = "integration-test")]
 pub trait HdfsErrorConvert<T> {
+    fn to_object_store_err(self) -> Result<T>;
+}
+
+#[cfg(not(feature = "integration-test"))]
+trait HdfsErrorConvert<T> {
     fn to_object_store_err(self) -> Result<T>;
 }
 
