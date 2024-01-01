@@ -7,7 +7,7 @@ homepage = "https://github.com/Kimahriman/hdfs-native"
 repository = "https://github.com/Kimahriman/hdfs-native"
 keywords = ["hadoop", "hdfs"]
 description = "objectstore implementation for Native HDFS client"
-readme = "../README.md"
+readme = "../../README.md"
 license = "Apache-2.0"
 
 [dependencies]

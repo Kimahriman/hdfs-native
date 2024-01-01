@@ -1,7 +1,6 @@
 [workspace]
 members = [
-    "crates/hdfs-native",
-    "crates/hdfs-native-objectstore",
+    "crates/*",
     "python",
 ]
 resolver = "2"
