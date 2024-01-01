@@ -15,7 +15,7 @@ async-trait = { version = "0.1" }
 bytes = { workspace = true }
 chrono = { version = "0.4" }
 futures = { workspace = true }
-hdfs-native = { path = "../hdfs-native", features = ["token", "kerberos"] }
+hdfs-native = { path = "../hdfs-native", version = "0.5", features = ["token", "kerberos"] }
 object_store = { version = "0.7", features = ["cloud"] }
 thiserror = "1"
 tokio = { workspace = true, features = ["rt", "net", "io-util", "macros", "sync", "time"] }
