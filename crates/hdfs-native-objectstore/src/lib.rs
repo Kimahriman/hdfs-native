@@ -28,7 +28,6 @@
 //! - `token` - include support for Token authentication. Uses the gsasl native library. Only
 //!   supports authentication, not integrity or privacy modes.
 //! - `object_store` - an `object_store` implementation for HDFS.
-//! ```
 use std::{
     fmt::{Display, Formatter},
     future,

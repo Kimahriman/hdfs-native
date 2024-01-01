@@ -5,8 +5,8 @@ edition = "2021"
 authors = ["Adam Binford <adamq43@gmail.com>"]
 homepage = "https://github.com/Kimahriman/hdfs-native"
 repository = "https://github.com/Kimahriman/hdfs-native"
-keywords = ["hadoop", "hdfs"]
-description = "objectstore implementation for Native HDFS client"
+keywords = ["hadoop", "hdfs", "object_store"]
+description = "object_store implementation for Native HDFS client"
 readme = "../../README.md"
 license = "Apache-2.0"
 
