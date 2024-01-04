@@ -23,9 +23,7 @@ pub struct Configuration {
 
 impl From<HashMap<String, String>> for Configuration {
     fn from(conf_map: HashMap<String, String>) -> Self {
-        Self {
-            map: conf_map,
-        }
+        Self { map: conf_map }
     }
 }
 
