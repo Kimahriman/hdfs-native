@@ -8,7 +8,7 @@ def minidfs():
         [
             "mvn",
             "-f",
-            "../rust/minidfs",
+            "../crates/hdfs-native/minidfs",
             "--quiet",
             "clean",
             "compile",
