@@ -115,6 +115,11 @@ impl Client {
         Self::with_config(&parsed_url, Configuration::new()?)
     }
 
+    pub fn new_with_config(url: &str, configuration: Configuration) -> Result<Self> {
+        let parsed_url = Url::parse(url)?;
+        Self::with_config(&parsed_url, configuration)
+    }
+
     fn with_config(url: &Url, config: Configuration) -> Result<Self> {
         if !url.has_host() {
             return Err(HdfsError::InvalidArgument(
