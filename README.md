@@ -60,7 +60,9 @@ cargo build --features token,kerberos
 ## Crate features
 - `token` - enables token based DIGEST-MD5 authentication support. This uses the `gsasl` native library and only supports authentication, not integrity or confidentiality
 - `kerberos` - enables kerberos GSSAPI authentication support. This uses the `libgssapi` crate and supports integrity as well as confidentiality
-- `object_store` - provides an `object_store` wrapper around the HDFS client
+
+## Object store implementation
+An object_store implementation for HDFS is provided in the [hdfs-native-object-store](./crates/hdfs-native-object-store/) crate.
 
 ## Running tests
 The tests are mostly integration tests that utilize a small Java application in `rust/mindifs/` that runs a custom `MiniDFSCluster`. To run the tests, you need to have Java, Maven, Hadoop binaries, and Kerberos tools available and on your path. Any Java version between 8 and 17 should work.
