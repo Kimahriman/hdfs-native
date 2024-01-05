@@ -25,6 +25,7 @@ impl One for GF256 {
 pub struct Coder {
     data_units: usize,
     parity_units: usize,
+    encode_matrix: Matrix<GF256>,
 }
 
 impl Coder {
@@ -32,6 +33,7 @@ impl Coder {
         Self {
             data_units,
             parity_units,
+            encode_matrix: Self::gen_rs_matrix(data_units, parity_units),
         }
     }
 
@@ -62,7 +64,8 @@ impl Coder {
 
         assert!(data.iter().skip(1).all(|s| s.len() == shard_bytes));
 
-        let mut encode_matrix = Self::gen_rs_matrix(self.data_units, self.parity_units);
+        let mut encode_matrix = self.encode_matrix.clone();
+
         // We only care about generating the parity rows
         encode_matrix.select_rows(self.data_units..self.data_units + self.parity_units);
 
@@ -108,7 +111,7 @@ impl Coder {
         }
 
         // Build the encoding matrix
-        let mut decode_matrix = Self::gen_rs_matrix(self.data_units, self.parity_units);
+        let mut decode_matrix = self.encode_matrix.clone();
 
         // Select just the rows we have data for
         decode_matrix.select_rows(valid_indices.iter().cloned().take(self.data_units));

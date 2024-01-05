@@ -271,10 +271,8 @@ impl Client {
 
         match create_response.fs {
             Some(status) => {
-                if status.ec_policy.is_some() {
-                    return Err(HdfsError::UnsupportedFeature("Erasure coding".to_string()));
-                }
                 if status.file_encryption_info.is_some() {
+                    let _ = self.delete(src, false).await;
                     return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
                 }
 

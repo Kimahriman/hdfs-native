@@ -5,8 +5,10 @@ use bytes::{BufMut, Bytes, BytesMut};
 use futures::stream::BoxStream;
 use futures::{stream, Stream, StreamExt};
 
-use crate::ec::EcSchema;
-use crate::hdfs::datanode::{get_block_stream, BlockWriter};
+use crate::ec::{resolve_ec_policy, EcSchema};
+use crate::hdfs::datanode::{
+    get_block_stream, BlockWriter, ReplicatedBlockWriter, StripedBlockWriter,
+};
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::proto::hdfs;
 use crate::{HdfsError, Result};
@@ -171,7 +173,7 @@ impl FileWriter {
         }
     }
 
-    async fn create_block_writer(&mut self) -> Result<BlockWriter> {
+    async fn create_block_writer(&mut self) -> Result<()> {
         let new_block = if let Some(last_block) = self.last_block.take() {
             // Append operation on first write
             if last_block.b.num_bytes() < self.status.blocksize() {
@@ -196,12 +198,30 @@ impl FileWriter {
                 .block
         };
 
-        BlockWriter::new(
-            new_block,
-            self.status.blocksize() as usize,
-            self.server_defaults.clone(),
-        )
-        .await
+        let block_writer = if let Some(ec_policy) = self.status.ec_policy.as_ref() {
+            let ec_schema = resolve_ec_policy(ec_policy)?;
+            BlockWriter::Striped(
+                StripedBlockWriter::new(
+                    new_block,
+                    &ec_schema,
+                    self.status.blocksize() as usize,
+                    self.server_defaults.clone(),
+                )
+                .await?,
+            )
+        } else {
+            BlockWriter::Replicated(
+                ReplicatedBlockWriter::new(
+                    new_block,
+                    self.status.blocksize() as usize,
+                    self.server_defaults.clone(),
+                )
+                .await?,
+            )
+        };
+
+        self.block_writer = Some(block_writer);
+        Ok(())
     }
 
     async fn get_block_writer(&mut self) -> Result<&mut BlockWriter> {
@@ -209,13 +229,13 @@ impl FileWriter {
         if let Some(block_writer) = self.block_writer.as_mut() {
             if block_writer.is_full() {
                 block_writer.close().await?;
-                self.block_writer = Some(self.create_block_writer().await?);
+                self.create_block_writer().await?;
             }
         }
 
         // If we haven't created a writer yet, create one
         if self.block_writer.is_none() {
-            self.block_writer = Some(self.create_block_writer().await?);
+            self.create_block_writer().await?;
         }
 
         Ok(self.block_writer.as_mut().unwrap())
