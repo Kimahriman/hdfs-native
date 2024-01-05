@@ -21,6 +21,12 @@ pub struct Configuration {
     map: HashMap<String, String>,
 }
 
+impl From<HashMap<String, String>> for Configuration {
+    fn from(conf_map: HashMap<String, String>) -> Self {
+        Self { map: conf_map }
+    }
+}
+
 impl Configuration {
     pub fn new() -> io::Result<Self> {
         let mut map: HashMap<String, String> = HashMap::new();

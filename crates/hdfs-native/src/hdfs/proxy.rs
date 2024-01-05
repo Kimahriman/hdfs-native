@@ -117,7 +117,8 @@ impl NameServiceProxy {
                 .map(|_| ())
                 .or_else(|err| match err {
                     HdfsError::RPCError(class, _)
-                        if class == "java.lang.UnsupportedOperationException" =>
+                        if class == "java.lang.UnsupportedOperationException"
+                            || class == "org.apache.hadoop.ipc.RpcNoSuchMethodException" =>
                     {
                         Ok(())
                     }
