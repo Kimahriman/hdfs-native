@@ -33,7 +33,12 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Publish to crates.io
+      - name: Publish hdfs-native to crates.io
+        run: cargo publish -p hdfs-native --token ${CRATES_TOKEN}
+        env:
+          CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+
+      - name: Publish hdfs-native-objectstore to crates.io
         run: cargo publish -p hdfs-native --token ${CRATES_TOKEN}
         env:
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}

@@ -8,10 +8,6 @@ on:
     branches:
       - "*"
 
-defaults:
-  run:
-    working-directory: ./rust
-
 jobs:
   format:
     runs-on: ubuntu-latest
@@ -62,11 +58,8 @@ jobs:
       - name: Check token
         run: cargo check --features token
 
-      - name: Check object_store
-        run: cargo check --features object_store
-
       - name: Check all features
-        run: cargo check --features kerberos,token,object_store,integration-test
+        run: cargo check --features kerberos,token,integration-test
 
   test:
     strategy:
@@ -109,4 +102,4 @@ jobs:
           echo "$GITHUB_WORKSPACE/hadoop-3.3.6/bin" >> $GITHUB_PATH
 
       - name: Run tests
-        run: cargo test --features kerberos,token,object_store,integration-test
+        run: cargo test --features kerberos,token,integration-test

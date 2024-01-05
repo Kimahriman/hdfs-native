@@ -1,10 +1,11 @@
-#[cfg(all(feature = "integration-test", feature = "object_store"))]
+#[cfg(feature = "integration-test")]
 mod common;
 
-#[cfg(all(feature = "integration-test", feature = "object_store"))]
+#[cfg(feature = "integration-test")]
 mod test {
     use bytes::{Buf, BufMut, Bytes, BytesMut};
-    use hdfs_native::{minidfs::DfsFeatures, object_store::HdfsObjectStore, Client};
+    use hdfs_native::{minidfs::DfsFeatures, Client};
+    use hdfs_native_object_store::{HdfsErrorConvert, HdfsObjectStore};
     use serial_test::serial;
     use std::collections::HashSet;
 
@@ -14,7 +15,7 @@ mod test {
     #[serial]
     async fn test_object_store() -> object_store::Result<()> {
         let dfs = setup(&HashSet::from([DfsFeatures::HA]));
-        let client = Client::new(&dfs.url)?;
+        let client = Client::new(&dfs.url).to_object_store_err()?;
         let store = HdfsObjectStore::new(client);
 
         test_object_store_head(&store).await?;
@@ -101,7 +102,7 @@ mod test {
         }
 
         // Read a single integer from the file
-        let offset = TEST_FILE_INTS as usize / 2 * 4;
+        let offset = TEST_FILE_INTS / 2 * 4;
         let mut buf = store.get_range(&location, offset..(offset + 4)).await?;
         assert_eq!(buf.get_i32(), TEST_FILE_INTS as i32 / 2);
         Ok(())
@@ -158,7 +159,11 @@ mod test {
         use tokio::io::AsyncWriteExt;
 
         let (_, mut writer) = store.put_multipart(&"/newfile".into()).await?;
-        writer.shutdown().await.map_err(HdfsError::from)?;
+        writer
+            .shutdown()
+            .await
+            .map_err(HdfsError::from)
+            .to_object_store_err()?;
 
         store.put(&Path::from("/newfile"), Bytes::new()).await?;
         store.head(&Path::from("/newfile")).await?;
@@ -181,10 +186,15 @@ mod test {
                 writer
                     .write_all_buf(&mut buf.split_to(to_write))
                     .await
-                    .map_err(HdfsError::from)?;
+                    .map_err(HdfsError::from)
+                    .to_object_store_err()?;
             }
 
-            writer.shutdown().await.map_err(HdfsError::from)?;
+            writer
+                .shutdown()
+                .await
+                .map_err(HdfsError::from)
+                .to_object_store_err()?;
 
             assert_eq!(
                 store.head(&Path::from("/newfile")).await?.size,
