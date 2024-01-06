@@ -293,11 +293,22 @@ impl Client {
         }
     }
 
+    fn needs_new_block(class: &str, msg: &str) -> bool {
+        class == "java.lang.UnsupportedOperationException" && msg.contains("NEW_BLOCK")
+    }
+
     pub async fn append(&self, src: &str) -> Result<FileWriter> {
         let (link, resolved_path) = self.mount_table.resolve(src);
         let server_defaults = link.protocol.get_server_defaults().await?.server_defaults;
 
-        let append_response = link.protocol.append(&resolved_path).await?;
+        // Assume the file is replicated and try to append to the current block. If the file is
+        // erasure coded, then try again by appending to a new block.
+        let append_response = match link.protocol.append(&resolved_path, false).await {
+            Err(HdfsError::RPCError(class, msg)) if Self::needs_new_block(&class, &msg) => {
+                link.protocol.append(&resolved_path, true).await?
+            }
+            resp => resp?,
+        };
 
         match append_response.stat {
             Some(status) => {

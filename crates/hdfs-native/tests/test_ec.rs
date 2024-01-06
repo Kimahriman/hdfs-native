@@ -179,9 +179,14 @@ mod test {
             writer.write(buf.freeze()).await?;
             writer.close().await?;
 
+            let _ = EC_FAULT_INJECTOR.lock().unwrap().take();
+
             let reader = client.read(&file).await?;
-            assert_eq!(reader.file_length(), file_size);
-            verify_read(reader.read_range(0, reader.file_length()).await?, file_size)
+            assert_eq!(reader.file_length(), file_size * 2);
+            verify_read(
+                reader.read_range(0, reader.file_length()).await?,
+                file_size * 2,
+            )
         }
 
         Ok(())
