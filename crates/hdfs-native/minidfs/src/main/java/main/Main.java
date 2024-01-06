@@ -155,6 +155,8 @@ public class Main {
                 DataOutputStream os = new DataOutputStream(new FileOutputStream("target/test/delegation_token"));
                 creds.writeTokenStorageToStream(os, SerializedFormat.WRITABLE);
                 os.close();
+            } else {
+                new File("target/test/delegation_token").delete();
             }
         }
 

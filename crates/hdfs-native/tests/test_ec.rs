@@ -108,6 +108,7 @@ mod test {
 
             assert!(client.delete(&file, false).await?);
         }
+        let _ = EC_FAULT_INJECTOR.lock().unwrap().take();
         Ok(())
     }
 

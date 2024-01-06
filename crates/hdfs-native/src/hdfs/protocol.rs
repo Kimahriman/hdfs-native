@@ -109,11 +109,6 @@ impl NamenodeProtocol {
     ) -> Result<hdfs::CreateResponseProto> {
         let masked = hdfs::FsPermissionProto { perm: permission };
 
-        let mut create_flag = hdfs::CreateFlagProto::Create as u32;
-        if overwrite {
-            create_flag |= hdfs::CreateFlagProto::Overwrite as u32;
-        }
-
         let message = hdfs::CreateRequestProto {
             src: src.to_string(),
             masked,
@@ -121,7 +116,11 @@ impl NamenodeProtocol {
             create_parent,
             replication,
             block_size,
-            create_flag,
+            create_flag: if overwrite {
+                hdfs::CreateFlagProto::Overwrite
+            } else {
+                hdfs::CreateFlagProto::Create
+            } as u32,
             ..Default::default()
         };
 
