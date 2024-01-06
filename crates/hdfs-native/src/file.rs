@@ -6,9 +6,7 @@ use futures::stream::BoxStream;
 use futures::{stream, Stream, StreamExt};
 
 use crate::ec::{resolve_ec_policy, EcSchema};
-use crate::hdfs::datanode::{
-    get_block_stream, BlockWriter, ReplicatedBlockWriter, StripedBlockWriter,
-};
+use crate::hdfs::datanode::{get_block_stream, BlockWriter};
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::proto::hdfs;
 use crate::{HdfsError, Result};
@@ -199,27 +197,18 @@ impl FileWriter {
                 .block
         };
 
-        let block_writer = if let Some(ec_policy) = self.status.ec_policy.as_ref() {
-            let ec_schema = resolve_ec_policy(ec_policy)?;
-            BlockWriter::Striped(
-                StripedBlockWriter::new(
-                    new_block,
-                    &ec_schema,
-                    self.status.blocksize() as usize,
-                    self.server_defaults.clone(),
-                )
-                .await?,
-            )
-        } else {
-            BlockWriter::Replicated(
-                ReplicatedBlockWriter::new(
-                    new_block,
-                    self.status.blocksize() as usize,
-                    self.server_defaults.clone(),
-                )
-                .await?,
-            )
-        };
+        let block_writer = BlockWriter::new(
+            new_block,
+            self.status.blocksize() as usize,
+            self.server_defaults.clone(),
+            self.status
+                .ec_policy
+                .as_ref()
+                .map(resolve_ec_policy)
+                .transpose()?
+                .as_ref(),
+        )
+        .await?;
 
         self.block_writer = Some(block_writer);
         Ok(())

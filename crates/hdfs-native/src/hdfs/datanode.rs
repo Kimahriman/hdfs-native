@@ -389,12 +389,30 @@ impl StripedBlockStream {
     }
 }
 
+/// Wrapper around both types of block writers. This was simpler than trying to
+/// do dynamic dispatch with a BlockWriter trait.
 pub(crate) enum BlockWriter {
     Replicated(ReplicatedBlockWriter),
     Striped(StripedBlockWriter),
 }
 
 impl BlockWriter {
+    pub(crate) async fn new(
+        block: hdfs::LocatedBlockProto,
+        block_size: usize,
+        server_defaults: hdfs::FsServerDefaultsProto,
+        ec_schema: Option<&EcSchema>,
+    ) -> Result<Self> {
+        let block_writer = if let Some(ec_schema) = ec_schema {
+            Self::Striped(
+                StripedBlockWriter::new(block, ec_schema, block_size, server_defaults).await?,
+            )
+        } else {
+            Self::Replicated(ReplicatedBlockWriter::new(block, block_size, server_defaults).await?)
+        };
+        Ok(block_writer)
+    }
+
     pub(crate) async fn write(&mut self, buf: &mut Bytes) -> Result<()> {
         match self {
             Self::Replicated(writer) => writer.write(buf).await,
@@ -440,7 +458,7 @@ pub(crate) struct ReplicatedBlockWriter {
 }
 
 impl ReplicatedBlockWriter {
-    pub(crate) async fn new(
+    async fn new(
         block: hdfs::LocatedBlockProto,
         block_size: usize,
         server_defaults: hdfs::FsServerDefaultsProto,
@@ -640,6 +658,14 @@ impl ReplicatedBlockWriter {
         });
     }
 
+    fn is_full(&self) -> bool {
+        self.block.b.num_bytes() == self.block_size as u64
+    }
+
+    fn get_extended_block(&self) -> hdfs::ExtendedBlockProto {
+        self.block.b.clone()
+    }
+
     async fn write(&mut self, buf: &mut Bytes) -> Result<()> {
         self.check_error()?;
 
@@ -665,13 +691,6 @@ impl ReplicatedBlockWriter {
         Ok(())
     }
 
-    fn is_full(&self) -> bool {
-        self.block.b.num_bytes() == self.block_size as u64
-    }
-
-    fn get_extended_block(&self) -> hdfs::ExtendedBlockProto {
-        self.block.b.clone()
-    }
     /// Send a packet with any remaining data and then send a last packet
     async fn close(&mut self) -> Result<()> {
         self.check_error()?;
@@ -796,7 +815,7 @@ pub(crate) struct StripedBlockWriter {
 }
 
 impl StripedBlockWriter {
-    pub(crate) async fn new(
+    async fn new(
         block: hdfs::LocatedBlockProto,
         ec_schema: &EcSchema,
         block_size: usize,
@@ -849,7 +868,7 @@ impl StripedBlockWriter {
         Ok(())
     }
 
-    pub(crate) async fn write(&mut self, buf: &mut Bytes) -> Result<()> {
+    async fn write(&mut self, buf: &mut Bytes) -> Result<()> {
         let bytes_to_write = usize::min(buf.len(), self.bytes_remaining());
 
         let mut buf_to_write = buf.split_to(bytes_to_write);
@@ -866,7 +885,7 @@ impl StripedBlockWriter {
         Ok(())
     }
 
-    pub(crate) async fn close(&mut self) -> Result<()> {
+    async fn close(&mut self) -> Result<()> {
         if !self.cell_buffer.is_empty() {
             self.write_cells().await?;
         }
