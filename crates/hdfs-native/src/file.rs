@@ -175,8 +175,9 @@ impl FileWriter {
 
     async fn create_block_writer(&mut self) -> Result<()> {
         let new_block = if let Some(last_block) = self.last_block.take() {
-            // Append operation on first write
-            if last_block.b.num_bytes() < self.status.blocksize() {
+            // Append operation on first write. Erasure code appends always just create a new block.
+            if last_block.b.num_bytes() < self.status.blocksize() && self.status.ec_policy.is_none()
+            {
                 // The last block isn't full, just write data to it
                 last_block
             } else {

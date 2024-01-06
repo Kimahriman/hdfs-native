@@ -117,9 +117,9 @@ mod test {
         let _ = env_logger::builder().is_test(true).try_init();
 
         #[cfg(feature = "kerberos")]
-        let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC, DfsFeatures::SECURITY]));
+        let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC, DfsFeatures::SECURITY]));
         #[cfg(not(feature = "kerberos"))]
-        let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC]));
+        let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC]));
         let client = Client::default();
 
         // Test each of Hadoop's built-in RS policies
@@ -157,6 +157,31 @@ mod test {
 
                 assert!(client.delete(&file, false).await?);
             }
+
+            let mut writer = client.create(&file, WriteOptions::default()).await?;
+            let num_ints = 4;
+            let mut buf = BytesMut::with_capacity(16);
+            for i in 0..num_ints as u32 {
+                buf.put_u32(i);
+            }
+
+            writer.write(buf.freeze()).await?;
+            writer.close().await?;
+
+            let mut writer = client.append(&file).await?;
+            let file_size = 16usize;
+            let num_ints = file_size / 4;
+            let mut buf = BytesMut::with_capacity(16);
+            for i in num_ints..num_ints * 2 {
+                buf.put_u32(i as u32);
+            }
+
+            writer.write(buf.freeze()).await?;
+            writer.close().await?;
+
+            let reader = client.read(&file).await?;
+            assert_eq!(reader.file_length(), file_size);
+            verify_read(reader.read_range(0, reader.file_length()).await?, file_size)
         }
 
         Ok(())

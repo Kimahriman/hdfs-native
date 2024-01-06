@@ -301,10 +301,11 @@ impl Client {
 
         match append_response.stat {
             Some(status) => {
-                if status.ec_policy.is_some() {
-                    return Err(HdfsError::UnsupportedFeature("Erasure coding".to_string()));
-                }
                 if status.file_encryption_info.is_some() {
+                    let _ = link
+                        .protocol
+                        .complete(src, append_response.block.map(|b| b.b), status.file_id)
+                        .await;
                     return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
                 }
 
