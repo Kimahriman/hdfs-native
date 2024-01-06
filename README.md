@@ -18,9 +18,8 @@ Here is a list of currently supported and unsupported but possible future featur
 - [ ] Observer reads (state ID tracking is supported, but needs improvements on tracking Observer/Active NameNode)
 - [x] ViewFS
 - [x] Router based federation
-- [x] Erasure coded reads 
+- [x] Erasure coded reads and writes
     - RS schema only, no support for RS-Legacy or XOR
-- [ ] Erasure coded writes
 
 ### Security Features
 - [x] Kerberos authentication (GSSAPI SASL support)
