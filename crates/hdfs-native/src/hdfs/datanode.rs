@@ -404,9 +404,12 @@ impl BlockWriter {
         ec_schema: Option<&EcSchema>,
     ) -> Result<Self> {
         let block_writer = if let Some(ec_schema) = ec_schema {
-            Self::Striped(
-                StripedBlockWriter::new(block, ec_schema, block_size, server_defaults).await?,
-            )
+            Self::Striped(StripedBlockWriter::new(
+                block,
+                ec_schema,
+                block_size,
+                server_defaults,
+            ))
         } else {
             Self::Replicated(ReplicatedBlockWriter::new(block, block_size, server_defaults).await?)
         };
@@ -808,42 +811,33 @@ impl CellBuffer {
 
 // Writer for erasure coded blocks.
 pub(crate) struct StripedBlockWriter {
-    block_writers: Vec<ReplicatedBlockWriter>,
+    block: hdfs::LocatedBlockProto,
+    server_defaults: hdfs::FsServerDefaultsProto,
+    block_size: usize,
+    block_writers: Vec<Option<ReplicatedBlockWriter>>,
     cell_buffer: CellBuffer,
     bytes_written: usize,
     capacity: usize,
 }
 
 impl StripedBlockWriter {
-    async fn new(
+    fn new(
         block: hdfs::LocatedBlockProto,
         ec_schema: &EcSchema,
         block_size: usize,
         server_defaults: hdfs::FsServerDefaultsProto,
-    ) -> Result<Self> {
-        // Create invididual BlockWriter's for each location
-        let mut block_writers: Vec<ReplicatedBlockWriter> = Vec::new();
+    ) -> Self {
+        let block_writers = (0..block.block_indices().len()).map(|_| None).collect();
 
-        for index in 0..block.block_indices().len() {
-            // Just pretend we are writing to a replicated block with no replicas
-            let mut cloned = block.clone();
-            cloned.b.block_id += index as u64;
-            cloned.locs = vec![cloned.locs[index].clone()];
-            cloned.block_token = cloned.block_tokens[index].clone();
-            cloned.storage_i_ds = vec![cloned.storage_i_ds[index].clone()];
-            cloned.storage_types = vec![cloned.storage_types[index]];
-
-            block_writers.push(
-                ReplicatedBlockWriter::new(cloned, block_size, server_defaults.clone()).await?,
-            );
-        }
-
-        Ok(Self {
+        Self {
+            block,
+            block_size,
+            server_defaults,
             block_writers,
             cell_buffer: CellBuffer::new(ec_schema),
             bytes_written: 0,
             capacity: ec_schema.data_units * block_size,
-        })
+        }
     }
 
     fn bytes_remaining(&self) -> usize {
@@ -851,15 +845,35 @@ impl StripedBlockWriter {
     }
 
     async fn write_cells(&mut self) -> Result<()> {
-        let write_futures = self
+        let mut write_futures = vec![];
+        for (index, (data, writer)) in self
             .cell_buffer
             .encode()
             .into_iter()
             .zip(self.block_writers.iter_mut())
-            .map(|(data, writer)| async move {
-                let mut data = data.clone();
-                writer.write(&mut data).await
-            });
+            .enumerate()
+        {
+            if writer.is_none() {
+                let mut cloned = self.block.clone();
+                cloned.b.block_id += index as u64;
+                cloned.locs = vec![cloned.locs[index].clone()];
+                cloned.block_token = cloned.block_tokens[index].clone();
+                cloned.storage_i_ds = vec![cloned.storage_i_ds[index].clone()];
+                cloned.storage_types = vec![cloned.storage_types[index]];
+
+                *writer = Some(
+                    ReplicatedBlockWriter::new(
+                        cloned,
+                        self.block_size,
+                        self.server_defaults.clone(),
+                    )
+                    .await?,
+                )
+            }
+
+            let mut data = data.clone();
+            write_futures.push(async move { writer.as_mut().unwrap().write(&mut data).await })
+        }
 
         for write in join_all(write_futures).await {
             write?;
@@ -893,6 +907,7 @@ impl StripedBlockWriter {
         let close_futures = self
             .block_writers
             .iter_mut()
+            .filter_map(|writer| writer.as_mut())
             .map(|writer| async move { writer.close().await });
 
         for close_result in join_all(close_futures).await {
@@ -903,12 +918,13 @@ impl StripedBlockWriter {
     }
 
     fn is_full(&self) -> bool {
-        self.block_writers.iter().all(|writer| writer.is_full())
+        self.block_writers
+            .iter()
+            .all(|writer| writer.as_ref().is_some_and(|w| w.is_full()))
     }
 
     fn get_extended_block(&self) -> hdfs::ExtendedBlockProto {
-        // Just use the first blocks and update the size
-        let mut extended_block = self.block_writers[0].get_extended_block();
+        let mut extended_block = self.block.b.clone();
 
         extended_block.num_bytes = Some(self.bytes_written as u64);
         extended_block
