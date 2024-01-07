@@ -52,26 +52,31 @@ impl AsRef<WriteOptions> for WriteOptions {
 }
 
 impl WriteOptions {
+    /// Set the block_size for the new file
     pub fn block_size(mut self, block_size: u64) -> Self {
         self.block_size = Some(block_size);
         self
     }
 
+    /// Set the replication for the new file
     pub fn replication(mut self, replication: u32) -> Self {
         self.replication = Some(replication);
         self
     }
 
+    /// Set the raw octal permission value for the new file
     pub fn permission(mut self, permission: u32) -> Self {
         self.permission = permission;
         self
     }
 
+    /// Set whether to overwrite an existing file
     pub fn overwrite(mut self, overwrite: bool) -> Self {
         self.overwrite = overwrite;
         self
     }
 
+    /// Set whether to create all missing parent directories
     pub fn create_parent(mut self, create_parent: bool) -> Self {
         self.create_parent = create_parent;
         self
