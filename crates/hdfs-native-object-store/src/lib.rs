@@ -32,7 +32,7 @@ use object_store::{
     multipart::{PartId, PutPart, WriteMultiPart},
     path::Path,
     GetOptions, GetResult, GetResultPayload, ListResult, MultipartId, ObjectMeta, ObjectStore,
-    Result,
+    PutMode, PutOptions, PutResult, Result,
 };
 use tokio::io::AsyncWrite;
 
@@ -101,7 +101,17 @@ impl ObjectStore for HdfsObjectStore {
     ///
     /// To make the operation atomic, we write to a temporary file ".{filename}.tmp" and rename
     /// on a successful write.
-    async fn put(&self, location: &Path, bytes: Bytes) -> Result<()> {
+    async fn put_opts(&self, location: &Path, bytes: Bytes, opts: PutOptions) -> Result<PutResult> {
+        let overwrite = match opts.mode {
+            PutMode::Create => false,
+            PutMode::Overwrite => true,
+            PutMode::Update(_) => {
+                return Err(object_store::Error::NotSupported {
+                    source: "Update mode not supported".to_string().into(),
+                })
+            }
+        };
+
         let final_file_path = make_absolute_file(location);
         let path_buf = PathBuf::from(&final_file_path);
 
@@ -121,13 +131,6 @@ impl ObjectStore for HdfsObjectStore {
             .to_object_store_err()?
             .to_string();
 
-        // First we need to check if the tmp file exists so we know whether to overwrite
-        let overwrite = match self.client.get_file_info(&tmp_filename).await {
-            Ok(_) => true,
-            Err(HdfsError::FileNotFound(_)) => false,
-            Err(e) => Err(e).to_object_store_err()?,
-        };
-
         let write_options = WriteOptions {
             overwrite,
             ..Default::default()
@@ -142,11 +145,14 @@ impl ObjectStore for HdfsObjectStore {
         writer.close().await.to_object_store_err()?;
 
         self.client
-            .rename(&tmp_filename, &final_file_path, true)
+            .rename(&tmp_filename, &final_file_path, overwrite)
             .await
             .to_object_store_err()?;
 
-        Ok(())
+        Ok(PutResult {
+            e_tag: None,
+            version: None,
+        })
     }
 
     /// Uses the [PutPart] trait to implement an asynchronous writer. We can't actually upload
@@ -263,6 +269,7 @@ impl ObjectStore for HdfsObjectStore {
             ),
             size: status.length,
             e_tag: None,
+            version: None,
         })
     }
 
@@ -290,7 +297,7 @@ impl ObjectStore for HdfsObjectStore {
     /// `foo/bar_baz/x`.
     ///
     /// Note: the order of returned [`ObjectMeta`] is not guaranteed
-    async fn list(&self, prefix: Option<&Path>) -> Result<BoxStream<'_, Result<ObjectMeta>>> {
+    fn list(&self, prefix: Option<&Path>) -> BoxStream<'_, Result<ObjectMeta>> {
         let status_stream = self
             .client
             .list_status_iter(
@@ -309,7 +316,7 @@ impl ObjectStore for HdfsObjectStore {
             })
             .map(|res| res.map_or_else(|e| Err(e).to_object_store_err(), |s| get_object_meta(&s)));
 
-        Ok(Box::pin(status_stream))
+        Box::pin(status_stream)
     }
 
     /// List objects with the given prefix and an implementation specific
@@ -513,5 +520,6 @@ fn get_object_meta(status: &FileStatus) -> Result<ObjectMeta> {
         ),
         size: status.length,
         e_tag: None,
+        version: None,
     })
 }

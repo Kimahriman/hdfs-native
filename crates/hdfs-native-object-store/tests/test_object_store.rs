@@ -6,6 +6,7 @@ mod test {
     use bytes::{Buf, BufMut, Bytes, BytesMut};
     use hdfs_native::{minidfs::DfsFeatures, Client};
     use hdfs_native_object_store::{HdfsErrorConvert, HdfsObjectStore};
+    use object_store::{PutMode, PutOptions};
     use serial_test::serial;
     use std::collections::HashSet;
 
@@ -46,18 +47,14 @@ mod test {
         use object_store::{path::Path, ObjectMeta, ObjectStore};
 
         let list: Vec<object_store::Result<ObjectMeta>> =
-            store.list(Some(&Path::from("/"))).await?.collect().await;
+            store.list(Some(&Path::from("/"))).collect().await;
 
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].as_ref().unwrap().location, Path::from("/testfile"));
 
         // Listing of a prefix that doesn't exist should return an empty result, not an error
         assert_eq!(
-            store
-                .list(Some(&Path::from("/doesnt/exist")))
-                .await?
-                .count()
-                .await,
+            store.list(Some(&Path::from("/doesnt/exist"))).count().await,
             0
         );
 
@@ -114,11 +111,26 @@ mod test {
         store.put(&Path::from("/newfile"), Bytes::new()).await?;
         store.head(&Path::from("/newfile")).await?;
 
+        // PutMode = Create should fail for existing file
+        match store
+            .put_opts(
+                &Path::from("/newfile"),
+                Bytes::new(),
+                PutOptions {
+                    mode: PutMode::Create,
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            Err(object_store::Error::AlreadyExists { .. }) => (),
+            Err(e) => panic!("Wrong error was thrown for put without overewrite: {:?}", e),
+            Ok(_) => panic!("No error was thrown for put without overwrite for existing file"),
+        }
+
         // Check a small files, a file that is exactly one block, and a file slightly bigger than a block
         for size_to_check in [16i32, 128 * 1024 * 1024, 130 * 1024 * 1024] {
             let ints_to_write = size_to_check / 4;
-
-            // let mut writer = client.create("/newfile", write_options.clone()).await?;
 
             let mut data = BytesMut::with_capacity(size_to_check as usize);
             for i in 0..ints_to_write {
