@@ -853,6 +853,11 @@ impl StripedBlockWriter {
             .zip(self.block_writers.iter_mut())
             .enumerate()
         {
+            // Don't create the blocks on the data nodes until there's actually data for it
+            if data.is_empty() {
+                continue;
+            }
+
             if writer.is_none() {
                 let mut cloned = self.block.clone();
                 cloned.b.block_id += index as u64;
