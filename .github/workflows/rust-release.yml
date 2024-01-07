@@ -16,7 +16,16 @@ jobs:
       - name: compare git tag with cargo metadata
         run: |
           PUSHED_TAG=${GITHUB_REF##*/}
-          CURR_VER=$( grep version rust/Cargo.toml | head -n 1 | awk '{print $3}' | tr -d '"' )
+          CURR_VER=$( grep version crates/hdfs-native/Cargo.toml | head -n 1 | awk '{print $3}' | tr -d '"' )
+          if [[ "${PUSHED_TAG}" != "v${CURR_VER}" ]]; then
+            echo "Cargo metadata has version set to ${CURR_VER}, but got pushed tag ${PUSHED_TAG}."
+            exit 1
+          fi
+      
+      - name: compare git tag with cargo metadata for object-store
+        run: |
+          PUSHED_TAG=${GITHUB_REF##*/}
+          CURR_VER=$( grep version crates/hdfs-native-object-store/Cargo.toml | head -n 1 | awk '{print $3}' | tr -d '"' )
           if [[ "${PUSHED_TAG}" != "v${CURR_VER}" ]]; then
             echo "Cargo metadata has version set to ${CURR_VER}, but got pushed tag ${PUSHED_TAG}."
             exit 1
@@ -39,6 +48,6 @@ jobs:
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
 
       - name: Publish hdfs-native-objectstore to crates.io
-        run: cargo publish -p hdfs-native --token ${CRATES_TOKEN}
+        run: cargo publish -p hdfs-native-object-store --token ${CRATES_TOKEN}
         env:
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
