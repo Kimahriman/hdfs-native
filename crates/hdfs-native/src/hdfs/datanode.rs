@@ -10,7 +10,7 @@ use log::{debug, error};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    ec::EcSchema,
+    ec::{gf256::Coder, EcSchema},
     hdfs::connection::{DatanodeConnection, Op},
     proto::{common, hdfs},
     HdfsError, Result,
@@ -335,7 +335,9 @@ impl StripedBlockStream {
         len: usize,
         mut buf: &mut [u8],
     ) -> Result<()> {
-        assert!(len > 0);
+        if len == 0 {
+            return Ok(());
+        }
 
         let mut conn =
             DatanodeConnection::connect(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
@@ -387,7 +389,63 @@ impl StripedBlockStream {
     }
 }
 
-pub(crate) struct BlockWriter {
+/// Wrapper around both types of block writers. This was simpler than trying to
+/// do dynamic dispatch with a BlockWriter trait.
+pub(crate) enum BlockWriter {
+    Replicated(ReplicatedBlockWriter),
+    Striped(StripedBlockWriter),
+}
+
+impl BlockWriter {
+    pub(crate) async fn new(
+        block: hdfs::LocatedBlockProto,
+        block_size: usize,
+        server_defaults: hdfs::FsServerDefaultsProto,
+        ec_schema: Option<&EcSchema>,
+    ) -> Result<Self> {
+        let block_writer = if let Some(ec_schema) = ec_schema {
+            Self::Striped(StripedBlockWriter::new(
+                block,
+                ec_schema,
+                block_size,
+                server_defaults,
+            ))
+        } else {
+            Self::Replicated(ReplicatedBlockWriter::new(block, block_size, server_defaults).await?)
+        };
+        Ok(block_writer)
+    }
+
+    pub(crate) async fn write(&mut self, buf: &mut Bytes) -> Result<()> {
+        match self {
+            Self::Replicated(writer) => writer.write(buf).await,
+            Self::Striped(writer) => writer.write(buf).await,
+        }
+    }
+
+    pub(crate) fn is_full(&self) -> bool {
+        match self {
+            Self::Replicated(writer) => writer.is_full(),
+            Self::Striped(writer) => writer.is_full(),
+        }
+    }
+
+    pub(crate) fn get_extended_block(&self) -> hdfs::ExtendedBlockProto {
+        match self {
+            Self::Replicated(writer) => writer.get_extended_block(),
+            Self::Striped(writer) => writer.get_extended_block(),
+        }
+    }
+
+    pub(crate) async fn close(&mut self) -> Result<()> {
+        match self {
+            Self::Replicated(writer) => writer.close().await,
+            Self::Striped(writer) => writer.close().await,
+        }
+    }
+}
+
+pub(crate) struct ReplicatedBlockWriter {
     block: hdfs::LocatedBlockProto,
     block_size: usize,
     server_defaults: hdfs::FsServerDefaultsProto,
@@ -402,8 +460,8 @@ pub(crate) struct BlockWriter {
     ack_queue: mpsc::Sender<(i64, bool)>,
 }
 
-impl BlockWriter {
-    pub(crate) async fn new(
+impl ReplicatedBlockWriter {
+    async fn new(
         block: hdfs::LocatedBlockProto,
         block_size: usize,
         server_defaults: hdfs::FsServerDefaultsProto,
@@ -492,14 +550,6 @@ impl BlockWriter {
         Ok(this)
     }
 
-    pub(crate) fn get_extended_block(&self) -> hdfs::ExtendedBlockProto {
-        self.block.b.clone()
-    }
-
-    pub(crate) fn is_full(&self) -> bool {
-        self.block.b.num_bytes() == self.block_size as u64
-    }
-
     fn create_next_packet(&mut self) {
         self.current_packet = Packet::empty(
             self.block.b.num_bytes() as i64,
@@ -546,61 +596,6 @@ impl BlockWriter {
                     ))
                 }
             }
-        }
-
-        Ok(())
-    }
-
-    pub(crate) async fn write(&mut self, buf: &mut Bytes) -> Result<()> {
-        self.check_error()?;
-
-        // Only write up to what's left in this block
-        let bytes_to_write = usize::min(
-            buf.len(),
-            self.block_size - self.block.b.num_bytes() as usize,
-        );
-        let mut buf_to_write = buf.split_to(bytes_to_write);
-
-        while !buf_to_write.is_empty() {
-            let initial_buf_len = buf_to_write.len();
-            self.current_packet.write(&mut buf_to_write);
-
-            // Track how many bytes are written to this block
-            *self.block.b.num_bytes.as_mut().unwrap() +=
-                (initial_buf_len - buf_to_write.len()) as u64;
-
-            if self.current_packet.is_full() {
-                self.send_current_packet().await?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Send a packet with any remaining data and then send a last packet
-    pub(crate) async fn close(&mut self) -> Result<()> {
-        self.check_error()?;
-
-        // Send a packet with any remaining data
-        if !self.current_packet.is_empty() {
-            self.send_current_packet().await?;
-        }
-
-        // Send an empty last packet
-        self.current_packet.set_last_packet();
-        self.send_current_packet().await?;
-
-        // Wait for the channel to close, meaning all acks have been received or an error occured
-        if let Some(status) = self.status.take() {
-            let result = status.await.map_err(|_| {
-                HdfsError::DataTransferError(
-                    "Status channel closed while waiting for final ack".to_string(),
-                )
-            })?;
-            result?;
-        } else {
-            return Err(HdfsError::DataTransferError(
-                "Block already closed".to_string(),
-            ));
         }
 
         Ok(())
@@ -664,5 +659,279 @@ impl BlockWriter {
                 }
             }
         });
+    }
+
+    fn is_full(&self) -> bool {
+        self.block.b.num_bytes() == self.block_size as u64
+    }
+
+    fn get_extended_block(&self) -> hdfs::ExtendedBlockProto {
+        self.block.b.clone()
+    }
+
+    async fn write(&mut self, buf: &mut Bytes) -> Result<()> {
+        self.check_error()?;
+
+        // Only write up to what's left in this block
+        let bytes_to_write = usize::min(
+            buf.len(),
+            self.block_size - self.block.b.num_bytes() as usize,
+        );
+        let mut buf_to_write = buf.split_to(bytes_to_write);
+
+        while !buf_to_write.is_empty() {
+            let initial_buf_len = buf_to_write.len();
+            self.current_packet.write(&mut buf_to_write);
+
+            // Track how many bytes are written to this block
+            *self.block.b.num_bytes.as_mut().unwrap() +=
+                (initial_buf_len - buf_to_write.len()) as u64;
+
+            if self.current_packet.is_full() {
+                self.send_current_packet().await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Send a packet with any remaining data and then send a last packet
+    async fn close(&mut self) -> Result<()> {
+        self.check_error()?;
+
+        // Send a packet with any remaining data
+        if !self.current_packet.is_empty() {
+            self.send_current_packet().await?;
+        }
+
+        // Send an empty last packet
+        self.current_packet.set_last_packet();
+        self.send_current_packet().await?;
+
+        // Wait for the channel to close, meaning all acks have been received or an error occured
+        if let Some(status) = self.status.take() {
+            let result = status.await.map_err(|_| {
+                HdfsError::DataTransferError(
+                    "Status channel closed while waiting for final ack".to_string(),
+                )
+            })?;
+            result?;
+        } else {
+            return Err(HdfsError::DataTransferError(
+                "Block already closed".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+// Holds data for the current slice being written.
+struct CellBuffer {
+    buffers: Vec<BytesMut>,
+    cell_size: usize,
+    current_index: usize,
+    coder: Coder,
+}
+
+impl CellBuffer {
+    fn new(ec_schema: &EcSchema) -> Self {
+        let buffers = (0..ec_schema.data_units)
+            .map(|_| BytesMut::with_capacity(ec_schema.cell_size))
+            .collect();
+        Self {
+            buffers,
+            cell_size: ec_schema.cell_size,
+            current_index: 0,
+            coder: Coder::new(ec_schema.data_units, ec_schema.parity_units),
+        }
+    }
+
+    fn write(&mut self, buf: &mut Bytes) {
+        while !buf.is_empty() && self.current_index < self.buffers.len() {
+            let current_buffer = &mut self.buffers[self.current_index];
+            let remaining = self.cell_size - current_buffer.len();
+
+            let split_at = usize::min(remaining, buf.len());
+
+            let bytes_to_write = buf.split_to(split_at);
+            current_buffer.put(bytes_to_write);
+
+            if current_buffer.len() == self.cell_size {
+                self.current_index += 1;
+            }
+        }
+    }
+
+    #[inline]
+    fn is_full(&self) -> bool {
+        self.current_index == self.buffers.len()
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.buffers[0].is_empty()
+    }
+
+    fn encode(&mut self) -> Vec<Bytes> {
+        // This is kinda dumb how many copies are being made. Figure out how to do this without
+        // cloning the buffers at all.
+
+        // Pad any buffers with 0 so they are all the same length. The first buffer will always be
+        // the largest since we write data there first.
+        let slice_size = self.buffers[0].len();
+
+        // Remember the original sizes so we can resize after encoding
+        let original_sizes: Vec<_> = self.buffers.iter().map(|buf| buf.len()).collect();
+
+        let mut data_slices: Vec<_> = self
+            .buffers
+            .iter()
+            .cloned()
+            .map(|mut buf| {
+                buf.resize(slice_size, 0);
+                buf.freeze()
+            })
+            .collect();
+
+        let parity_slices = self.coder.encode(&data_slices[..]);
+
+        for (slice, size) in data_slices.iter_mut().zip(original_sizes.into_iter()) {
+            let _ = slice.split_off(size);
+        }
+
+        for buf in self.buffers.iter_mut() {
+            buf.clear();
+        }
+        self.current_index = 0;
+
+        data_slices.extend(parity_slices);
+        data_slices
+    }
+}
+
+// Writer for erasure coded blocks.
+pub(crate) struct StripedBlockWriter {
+    block: hdfs::LocatedBlockProto,
+    server_defaults: hdfs::FsServerDefaultsProto,
+    block_size: usize,
+    block_writers: Vec<Option<ReplicatedBlockWriter>>,
+    cell_buffer: CellBuffer,
+    bytes_written: usize,
+    capacity: usize,
+}
+
+impl StripedBlockWriter {
+    fn new(
+        block: hdfs::LocatedBlockProto,
+        ec_schema: &EcSchema,
+        block_size: usize,
+        server_defaults: hdfs::FsServerDefaultsProto,
+    ) -> Self {
+        let block_writers = (0..block.block_indices().len()).map(|_| None).collect();
+
+        Self {
+            block,
+            block_size,
+            server_defaults,
+            block_writers,
+            cell_buffer: CellBuffer::new(ec_schema),
+            bytes_written: 0,
+            capacity: ec_schema.data_units * block_size,
+        }
+    }
+
+    fn bytes_remaining(&self) -> usize {
+        self.capacity - self.bytes_written
+    }
+
+    async fn write_cells(&mut self) -> Result<()> {
+        let mut write_futures = vec![];
+        for (index, (data, writer)) in self
+            .cell_buffer
+            .encode()
+            .into_iter()
+            .zip(self.block_writers.iter_mut())
+            .enumerate()
+        {
+            // Don't create the blocks on the data nodes until there's actually data for it
+            if data.is_empty() {
+                continue;
+            }
+
+            if writer.is_none() {
+                let mut cloned = self.block.clone();
+                cloned.b.block_id += index as u64;
+                cloned.locs = vec![cloned.locs[index].clone()];
+                cloned.block_token = cloned.block_tokens[index].clone();
+                cloned.storage_i_ds = vec![cloned.storage_i_ds[index].clone()];
+                cloned.storage_types = vec![cloned.storage_types[index]];
+
+                *writer = Some(
+                    ReplicatedBlockWriter::new(
+                        cloned,
+                        self.block_size,
+                        self.server_defaults.clone(),
+                    )
+                    .await?,
+                )
+            }
+
+            let mut data = data.clone();
+            write_futures.push(async move { writer.as_mut().unwrap().write(&mut data).await })
+        }
+
+        for write in join_all(write_futures).await {
+            write?;
+        }
+
+        Ok(())
+    }
+
+    async fn write(&mut self, buf: &mut Bytes) -> Result<()> {
+        let bytes_to_write = usize::min(buf.len(), self.bytes_remaining());
+
+        let mut buf_to_write = buf.split_to(bytes_to_write);
+
+        while !buf_to_write.is_empty() {
+            self.cell_buffer.write(&mut buf_to_write);
+            if self.cell_buffer.is_full() {
+                self.write_cells().await?;
+            }
+        }
+
+        self.bytes_written += bytes_to_write;
+
+        Ok(())
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        if !self.cell_buffer.is_empty() {
+            self.write_cells().await?;
+        }
+
+        let close_futures = self
+            .block_writers
+            .iter_mut()
+            .filter_map(|writer| writer.as_mut())
+            .map(|writer| async move { writer.close().await });
+
+        for close_result in join_all(close_futures).await {
+            close_result?;
+        }
+
+        Ok(())
+    }
+
+    fn is_full(&self) -> bool {
+        self.block_writers
+            .iter()
+            .all(|writer| writer.as_ref().is_some_and(|w| w.is_full()))
+    }
+
+    fn get_extended_block(&self) -> hdfs::ExtendedBlockProto {
+        let mut extended_block = self.block.b.clone();
+
+        extended_block.num_bytes = Some(self.bytes_written as u64);
+        extended_block
     }
 }

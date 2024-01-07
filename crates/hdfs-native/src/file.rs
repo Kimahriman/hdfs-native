@@ -5,7 +5,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use futures::stream::BoxStream;
 use futures::{stream, Stream, StreamExt};
 
-use crate::ec::EcSchema;
+use crate::ec::{resolve_ec_policy, EcSchema};
 use crate::hdfs::datanode::{get_block_stream, BlockWriter};
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::proto::hdfs;
@@ -171,10 +171,11 @@ impl FileWriter {
         }
     }
 
-    async fn create_block_writer(&mut self) -> Result<BlockWriter> {
+    async fn create_block_writer(&mut self) -> Result<()> {
         let new_block = if let Some(last_block) = self.last_block.take() {
-            // Append operation on first write
-            if last_block.b.num_bytes() < self.status.blocksize() {
+            // Append operation on first write. Erasure code appends always just create a new block.
+            if last_block.b.num_bytes() < self.status.blocksize() && self.status.ec_policy.is_none()
+            {
                 // The last block isn't full, just write data to it
                 last_block
             } else {
@@ -196,12 +197,21 @@ impl FileWriter {
                 .block
         };
 
-        BlockWriter::new(
+        let block_writer = BlockWriter::new(
             new_block,
             self.status.blocksize() as usize,
             self.server_defaults.clone(),
+            self.status
+                .ec_policy
+                .as_ref()
+                .map(resolve_ec_policy)
+                .transpose()?
+                .as_ref(),
         )
-        .await
+        .await?;
+
+        self.block_writer = Some(block_writer);
+        Ok(())
     }
 
     async fn get_block_writer(&mut self) -> Result<&mut BlockWriter> {
@@ -209,13 +219,13 @@ impl FileWriter {
         if let Some(block_writer) = self.block_writer.as_mut() {
             if block_writer.is_full() {
                 block_writer.close().await?;
-                self.block_writer = Some(self.create_block_writer().await?);
+                self.create_block_writer().await?;
             }
         }
 
         // If we haven't created a writer yet, create one
         if self.block_writer.is_none() {
-            self.block_writer = Some(self.create_block_writer().await?);
+            self.create_block_writer().await?;
         }
 
         Ok(self.block_writer.as_mut().unwrap())

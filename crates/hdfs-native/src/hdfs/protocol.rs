@@ -136,11 +136,20 @@ impl NamenodeProtocol {
         Ok(decoded)
     }
 
-    pub(crate) async fn append(&self, src: &str) -> Result<hdfs::AppendResponseProto> {
+    pub(crate) async fn append(
+        &self,
+        src: &str,
+        new_block: bool,
+    ) -> Result<hdfs::AppendResponseProto> {
+        let mut flag = hdfs::CreateFlagProto::Append as u32;
+        if new_block {
+            flag |= hdfs::CreateFlagProto::NewBlock as u32;
+        }
+
         let message = hdfs::AppendRequestProto {
             src: src.to_string(),
             client_name: self.client_name.clone(),
-            flag: Some(hdfs::CreateFlagProto::Append as u32),
+            flag: Some(flag),
         };
 
         debug!("append request: {:?}", &message);

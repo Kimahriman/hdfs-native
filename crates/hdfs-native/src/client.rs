@@ -18,15 +18,18 @@ use crate::proto::hdfs::HdfsFileStatusProto;
 
 #[derive(Clone)]
 pub struct WriteOptions {
-    // Block size. Default is retrieved from the server.
+    /// Block size. Default is retrieved from the server.
     pub block_size: Option<u64>,
-    // Replication factor. Default is retrieved from the server.
+    /// Replication factor. Default is retrieved from the server.
     pub replication: Option<u32>,
-    // Unix file permission, defaults to 755
+    /// Unix file permission, defaults to 0o755. This is the raw octal
+    /// value represented in base 10.
     pub permission: u32,
-    // Whether to overwrite the file, defaults to false
+    /// Whether to overwrite the file, defaults to false. If true and the
+    /// file does not exist, it will result in an error.
     pub overwrite: bool,
-    // Whether to create any missing parent directories, defaults to true
+    /// Whether to create any missing parent directories, defaults to true. If false
+    /// and the parent directory does not exist, an error will be returned.
     pub create_parent: bool,
 }
 
@@ -251,6 +254,8 @@ impl Client {
         }
     }
 
+    /// Opens a new file for writing. See [WriteOptions] for options and behavior for different
+    /// scenarios.
     pub async fn create(&self, src: &str, write_options: WriteOptions) -> Result<FileWriter> {
         let (link, resolved_path) = self.mount_table.resolve(src);
         let server_defaults = link.protocol.get_server_defaults().await?.server_defaults;
@@ -276,10 +281,8 @@ impl Client {
 
         match create_response.fs {
             Some(status) => {
-                if status.ec_policy.is_some() {
-                    return Err(HdfsError::UnsupportedFeature("Erasure coding".to_string()));
-                }
                 if status.file_encryption_info.is_some() {
+                    let _ = self.delete(src, false).await;
                     return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
                 }
 
@@ -295,18 +298,33 @@ impl Client {
         }
     }
 
+    fn needs_new_block(class: &str, msg: &str) -> bool {
+        class == "java.lang.UnsupportedOperationException" && msg.contains("NEW_BLOCK")
+    }
+
+    /// Opens an existing file for appending. An Err will be returned if the file does not exist. If the
+    /// file is replicated, the current block will be appended to until it is full. If the file is erasure
+    /// coded, a new block will be created.
     pub async fn append(&self, src: &str) -> Result<FileWriter> {
         let (link, resolved_path) = self.mount_table.resolve(src);
         let server_defaults = link.protocol.get_server_defaults().await?.server_defaults;
 
-        let append_response = link.protocol.append(&resolved_path).await?;
+        // Assume the file is replicated and try to append to the current block. If the file is
+        // erasure coded, then try again by appending to a new block.
+        let append_response = match link.protocol.append(&resolved_path, false).await {
+            Err(HdfsError::RPCError(class, msg)) if Self::needs_new_block(&class, &msg) => {
+                link.protocol.append(&resolved_path, true).await?
+            }
+            resp => resp?,
+        };
 
         match append_response.stat {
             Some(status) => {
-                if status.ec_policy.is_some() {
-                    return Err(HdfsError::UnsupportedFeature("Erasure coding".to_string()));
-                }
                 if status.file_encryption_info.is_some() {
+                    let _ = link
+                        .protocol
+                        .complete(src, append_response.block.map(|b| b.b), status.file_id)
+                        .await;
                     return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
                 }
 
@@ -322,9 +340,13 @@ impl Client {
         }
     }
 
-    /// Create a new directory at `path` with the given `permission`. If `create_parent` is true,
-    /// any missing parent directories will be created as well, otherwise an error will be returned
-    /// if the parent directory doesn't already exist.
+    /// Create a new directory at `path` with the given `permission`.
+    ///
+    /// `permission` is the raw octal value representing the Unix style permission. For example, to
+    /// set 755 (`rwxr-x-rx`) permissions, use 0o755.
+    ///
+    /// If `create_parent` is true, any missing parent directories will be created as well,
+    /// otherwise an error will be returned if the parent directory doesn't already exist.
     pub async fn mkdirs(&self, path: &str, permission: u32, create_parent: bool) -> Result<()> {
         let (link, resolved_path) = self.mount_table.resolve(path);
         link.protocol
