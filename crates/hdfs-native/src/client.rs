@@ -45,6 +45,39 @@ impl Default for WriteOptions {
     }
 }
 
+impl AsRef<WriteOptions> for WriteOptions {
+    fn as_ref(&self) -> &WriteOptions {
+        self
+    }
+}
+
+impl WriteOptions {
+    pub fn block_size(mut self, block_size: u64) -> Self {
+        self.block_size = Some(block_size);
+        self
+    }
+
+    pub fn replication(mut self, replication: u32) -> Self {
+        self.replication = Some(replication);
+        self
+    }
+
+    pub fn permission(mut self, permission: u32) -> Self {
+        self.permission = permission;
+        self
+    }
+
+    pub fn overwrite(mut self, overwrite: bool) -> Self {
+        self.overwrite = overwrite;
+        self
+    }
+
+    pub fn create_parent(mut self, create_parent: bool) -> Self {
+        self.create_parent = create_parent;
+        self
+    }
+}
+
 #[derive(Debug, Clone)]
 struct MountLink {
     viewfs_path: PathBuf,
@@ -256,7 +289,13 @@ impl Client {
 
     /// Opens a new file for writing. See [WriteOptions] for options and behavior for different
     /// scenarios.
-    pub async fn create(&self, src: &str, write_options: WriteOptions) -> Result<FileWriter> {
+    pub async fn create(
+        &self,
+        src: &str,
+        write_options: impl AsRef<WriteOptions>,
+    ) -> Result<FileWriter> {
+        let write_options = write_options.as_ref();
+
         let (link, resolved_path) = self.mount_table.resolve(src);
         let server_defaults = link.protocol.get_server_defaults().await?.server_defaults;
 

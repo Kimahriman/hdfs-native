@@ -221,23 +221,20 @@ mod test {
     }
 
     async fn test_create(client: &Client) -> Result<()> {
-        let mut write_options = WriteOptions::default();
+        let write_options = WriteOptions::default().overwrite(true);
 
         // Create an empty file
-        let mut writer = client.create("/newfile", write_options.clone()).await?;
+        let mut writer = client.create("/newfile", &write_options).await?;
 
         writer.close().await?;
 
         assert_eq!(client.get_file_info("/newfile").await?.length, 0);
 
-        // Overwrite now
-        write_options.overwrite = true;
-
         // Check a small files, a file that is exactly one block, and a file slightly bigger than a block
         for size_to_check in [16i32, 128 * 1024 * 1024, 130 * 1024 * 1024] {
             let ints_to_write = size_to_check / 4;
 
-            let mut writer = client.create("/newfile", write_options.clone()).await?;
+            let mut writer = client.create("/newfile", &write_options).await?;
 
             let mut data = BytesMut::with_capacity(size_to_check as usize);
             for i in 0..ints_to_write {
@@ -323,17 +320,17 @@ mod test {
         let write_options = WriteOptions::default();
         client.mkdirs("/dir/nested", 0o755, true).await?;
         client
-            .create("/dir/file1", write_options.clone())
+            .create("/dir/file1", &write_options)
             .await?
             .close()
             .await?;
         client
-            .create("/dir/nested/file2", write_options.clone())
+            .create("/dir/nested/file2", &write_options)
             .await?
             .close()
             .await?;
         client
-            .create("/dir/nested/file3", write_options.clone())
+            .create("/dir/nested/file3", &write_options)
             .await?
             .close()
             .await?;
