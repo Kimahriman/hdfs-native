@@ -6,7 +6,8 @@ use futures::stream::BoxStream;
 use futures::{stream, Stream, StreamExt};
 
 use crate::ec::{resolve_ec_policy, EcSchema};
-use crate::hdfs::datanode::{get_block_stream, BlockWriter};
+use crate::hdfs::block_reader::get_block_stream;
+use crate::hdfs::block_writer::BlockWriter;
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::proto::hdfs;
 use crate::{HdfsError, Result};
