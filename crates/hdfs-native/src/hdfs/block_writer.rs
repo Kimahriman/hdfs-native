@@ -88,6 +88,8 @@ pub(crate) struct ReplicatedBlockWriter {
     ack_listener_handle: JoinHandle<Result<()>>,
     // Tracks the state of packet sender. Set to Err if any error occurs during writing packets,
     packet_sender_handle: JoinHandle<Result<DatanodeWriter>>,
+    // Tracks the heartbeat task so we can abort it when we close
+    heartbeat_handle: JoinHandle<()>,
 
     ack_queue: mpsc::Sender<(i64, bool)>,
     packet_sender: mpsc::Sender<Packet>,
@@ -147,7 +149,7 @@ impl ReplicatedBlockWriter {
 
         let ack_listener_handle = Self::listen_for_acks(reader, ack_queue_receiever);
         let packet_sender_handle = Self::start_packet_sender(writer, packet_receiver);
-        Self::start_heartbeat_sender(packet_sender.clone());
+        let heartbeat_handle = Self::start_heartbeat_sender(packet_sender.clone());
 
         let bytes_per_checksum = server_defaults.bytes_per_checksum;
         let write_packet_size = server_defaults.write_packet_size;
@@ -177,6 +179,7 @@ impl ReplicatedBlockWriter {
 
             ack_listener_handle,
             packet_sender_handle,
+            heartbeat_handle,
 
             ack_queue: ack_queue_sender,
             packet_sender,
@@ -284,6 +287,8 @@ impl ReplicatedBlockWriter {
         self.current_packet.set_last_packet();
         self.send_current_packet().await?;
 
+        self.heartbeat_handle.abort();
+
         // Wait for all packets to be sent
         self.packet_sender_handle.await.map_err(|_| {
             HdfsError::DataTransferError(
@@ -361,7 +366,7 @@ impl ReplicatedBlockWriter {
         })
     }
 
-    fn start_heartbeat_sender(packet_sender: mpsc::Sender<Packet>) {
+    fn start_heartbeat_sender(packet_sender: mpsc::Sender<Packet>) -> JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(HEARTBEAT_INTERVAL_SECONDS)).await;
@@ -371,7 +376,7 @@ impl ReplicatedBlockWriter {
                     break;
                 }
             }
-        });
+        })
     }
 }
 

@@ -4,6 +4,7 @@ use std::time::Duration;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::stream::BoxStream;
 use futures::{stream, Stream, StreamExt};
+use log::warn;
 
 use crate::ec::{resolve_ec_policy, EcSchema};
 use crate::hdfs::block_reader::get_block_stream;
@@ -272,9 +273,19 @@ impl FileWriter {
                 retry_delay *= 2;
                 retries += 1;
             }
+            Err(HdfsError::OperationFailed(
+                "Failed to complete file in time".to_string(),
+            ))
+        } else {
+            Ok(())
         }
-        Err(HdfsError::OperationFailed(
-            "Failed to complete file in time".to_string(),
-        ))
+    }
+}
+
+impl Drop for FileWriter {
+    fn drop(&mut self) {
+        if !self.closed {
+            warn!("FileWriter dropped without being closed. File content may not have saved or may not be complete");
+        }
     }
 }
