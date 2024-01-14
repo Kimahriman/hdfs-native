@@ -600,6 +600,7 @@ impl DatanodeConnection {
         (reader, writer)
     }
 
+    // For future use where we cache datanode connections
     #[allow(dead_code)]
     pub(crate) fn reunite(reader: DatanodeReader, writer: DatanodeWriter) -> Self {
         assert_eq!(reader.client_name, writer.client_name);

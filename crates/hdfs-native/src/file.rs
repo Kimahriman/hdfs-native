@@ -188,12 +188,17 @@ impl FileWriter {
             }
         } else {
             // Not appending to an existing block, just create a new one
+            // If there's an existing block writer, close it first
+            let extended_block = if let Some(block_writer) = self.block_writer.take() {
+                let extended_block = block_writer.get_extended_block();
+                block_writer.close().await?;
+                Some(extended_block)
+            } else {
+                None
+            };
+
             self.protocol
-                .add_block(
-                    &self.src,
-                    self.block_writer.as_ref().map(|b| b.get_extended_block()),
-                    self.status.file_id,
-                )
+                .add_block(&self.src, extended_block, self.status.file_id)
                 .await?
                 .block
         };
@@ -216,16 +221,8 @@ impl FileWriter {
     }
 
     async fn get_block_writer(&mut self) -> Result<&mut BlockWriter> {
-        // If the current writer is full, close it
-        if let Some(block_writer) = self.block_writer.as_mut() {
-            if block_writer.is_full() {
-                block_writer.close().await?;
-                self.create_block_writer().await?;
-            }
-        }
-
-        // If we haven't created a writer yet, create one
-        if self.block_writer.is_none() {
+        // If the current writer is full, or hasn't been created, create one
+        if self.block_writer.as_ref().is_some_and(|b| b.is_full()) || self.block_writer.is_none() {
             self.create_block_writer().await?;
         }
 
@@ -248,20 +245,20 @@ impl FileWriter {
 
     pub async fn close(&mut self) -> Result<()> {
         if !self.closed {
-            if let Some(block_writer) = self.block_writer.as_mut() {
+            let extended_block = if let Some(block_writer) = self.block_writer.take() {
+                let extended_block = block_writer.get_extended_block();
                 block_writer.close().await?;
-            }
+                Some(extended_block)
+            } else {
+                None
+            };
 
             let mut retry_delay = COMPLETE_RETRY_DELAY_MS;
             let mut retries = 0;
             while retries < COMPLETE_RETRIES {
                 let successful = self
                     .protocol
-                    .complete(
-                        &self.src,
-                        self.block_writer.as_ref().map(|b| b.get_extended_block()),
-                        self.status.file_id,
-                    )
+                    .complete(&self.src, extended_block.clone(), self.status.file_id)
                     .await?
                     .result;
 
