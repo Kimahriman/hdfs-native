@@ -7,10 +7,10 @@ use std::sync::Mutex;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use crc::{Crc, CRC_32_CKSUM, CRC_32_ISCSI};
-use log::{debug, error, warn};
+use log::{debug, warn};
 use prost::Message;
 use socket2::SockRef;
-use tokio::sync::mpsc::Sender;
+use tokio::io::BufStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -510,33 +510,29 @@ impl Packet {
 #[derive(Debug)]
 pub(crate) struct DatanodeConnection {
     client_name: String,
-    reader: Option<BufReader<OwnedReadHalf>>,
-    writer: OwnedWriteHalf,
+    stream: BufStream<TcpStream>,
 }
 
 impl DatanodeConnection {
     pub(crate) async fn connect(url: &str) -> Result<Self> {
-        let stream = connect(url).await?;
-
-        let (reader, writer) = stream.into_split();
+        let stream = BufStream::new(connect(url).await?);
 
         let conn = DatanodeConnection {
             client_name: Uuid::new_v4().to_string(),
-            reader: Some(BufReader::new(reader)),
-            writer,
+            stream,
         };
         Ok(conn)
     }
 
     pub(crate) async fn send(&mut self, op: Op, message: &impl Message) -> Result<()> {
-        self.writer
+        self.stream
             .write_all(&DATA_TRANSFER_VERSION.to_be_bytes())
             .await?;
-        self.writer.write_all(&[op.value()]).await?;
-        self.writer
+        self.stream.write_all(&[op.value()]).await?;
+        self.stream
             .write_all(&message.encode_length_delimited_to_vec())
             .await?;
-        self.writer.flush().await?;
+        self.stream.flush().await?;
         Ok(())
     }
 
@@ -558,34 +554,28 @@ impl DatanodeConnection {
     }
 
     pub(crate) async fn read_block_op_response(&mut self) -> Result<hdfs::BlockOpResponseProto> {
-        let reader = self.reader.as_mut().ok_or(HdfsError::DataTransferError(
-            "Cannot read block op response after starting to listen for packet acks".to_string(),
-        ))?;
-        let buf = reader.fill_buf().await?;
+        let buf = self.stream.fill_buf().await?;
         let msg_length = prost::decode_length_delimiter(buf)?;
         let total_size = msg_length + prost::length_delimiter_len(msg_length);
 
         let mut response_buf = BytesMut::zeroed(total_size);
-        reader.read_exact(&mut response_buf).await?;
+        self.stream.read_exact(&mut response_buf).await?;
 
         let response = hdfs::BlockOpResponseProto::decode_length_delimited(response_buf.freeze())?;
         Ok(response)
     }
 
     pub(crate) async fn read_packet(&mut self) -> Result<Packet> {
-        let reader = self.reader.as_mut().ok_or(HdfsError::DataTransferError(
-            "Cannot read packets after starting to listen for packet acks".to_string(),
-        ))?;
         let mut payload_len_buf = [0u8; 4];
         let mut header_len_buf = [0u8; 2];
-        reader.read_exact(&mut payload_len_buf).await?;
-        reader.read_exact(&mut header_len_buf).await?;
+        self.stream.read_exact(&mut payload_len_buf).await?;
+        self.stream.read_exact(&mut header_len_buf).await?;
 
         let payload_length = u32::from_be_bytes(payload_len_buf) as usize;
         let header_length = u16::from_be_bytes(header_len_buf) as usize;
 
         let mut remaining_buf = BytesMut::zeroed(payload_length - 4 + header_length);
-        reader.read_exact(&mut remaining_buf).await?;
+        self.stream.read_exact(&mut remaining_buf).await?;
 
         let header =
             hdfs::PacketHeaderProto::decode(remaining_buf.split_to(header_length).freeze())?;
@@ -597,6 +587,67 @@ impl DatanodeConnection {
         Ok(Packet::new(header, checksum, data))
     }
 
+    pub(crate) fn split(self) -> (DatanodeReader, DatanodeWriter) {
+        let (reader, writer) = self.stream.into_inner().into_split();
+        let reader = DatanodeReader {
+            client_name: self.client_name.clone(),
+            reader: BufReader::new(reader),
+        };
+        let writer = DatanodeWriter {
+            client_name: self.client_name,
+            writer,
+        };
+        (reader, writer)
+    }
+
+    // For future use where we cache datanode connections
+    #[allow(dead_code)]
+    pub(crate) fn reunite(reader: DatanodeReader, writer: DatanodeWriter) -> Self {
+        assert_eq!(reader.client_name, writer.client_name);
+        let stream = BufStream::new(reader.reader.into_inner().reunite(writer.writer).unwrap());
+        Self {
+            client_name: reader.client_name,
+            stream,
+        }
+    }
+}
+
+/// A reader half of a Datanode connection used for reading acks during
+/// write operations.
+pub(crate) struct DatanodeReader {
+    client_name: String,
+    reader: BufReader<OwnedReadHalf>,
+}
+
+impl DatanodeReader {
+    pub(crate) async fn read_ack(&mut self) -> Result<hdfs::PipelineAckProto> {
+        let buf = self.reader.fill_buf().await?;
+
+        if buf.is_empty() {
+            // The stream has been closed
+            return Err(HdfsError::DataTransferError(
+                "Datanode connection closed while waiting for ack".to_string(),
+            ));
+        }
+
+        let ack_length = prost::decode_length_delimiter(buf)?;
+        let total_size = ack_length + prost::length_delimiter_len(ack_length);
+
+        let mut response_buf = BytesMut::zeroed(total_size);
+        self.reader.read_exact(&mut response_buf).await?;
+
+        let response = hdfs::PipelineAckProto::decode_length_delimited(response_buf.freeze())?;
+        Ok(response)
+    }
+}
+
+/// A write half of a Datanode connection used for writing packets.
+pub(crate) struct DatanodeWriter {
+    client_name: String,
+    writer: OwnedWriteHalf,
+}
+
+impl DatanodeWriter {
     /// Create a buffer to send to the datanode
     pub(crate) async fn write_packet(&mut self, packet: &mut Packet) -> Result<()> {
         let (header, checksum, data) = packet.finalize();
@@ -612,54 +663,6 @@ impl DatanodeConnection {
         self.writer.flush().await?;
 
         Ok(())
-    }
-
-    /// Spawn a task to read acknowledgements of packets
-    pub(crate) fn read_acks(&mut self, sender: Sender<hdfs::PipelineAckProto>) -> Result<()> {
-        let mut reader = self.reader.take().ok_or(HdfsError::DataTransferError(
-            "Cannot read for acks twice".to_string(),
-        ))?;
-        task::spawn(async move {
-            loop {
-                let next_ack = Self::read_ack(&mut reader).await;
-                if let Err(error) = next_ack.as_ref() {
-                    error!("Failed to get next ack from data node: {:?}", error);
-                    break;
-                }
-                if let Ok(ack) = next_ack {
-                    if let Some(ack_proto) = ack {
-                        if let Err(error) = sender.send(ack_proto).await {
-                            error!("Failed to send ack to receiver: {:?}", error);
-                            break;
-                        }
-                    } else {
-                        // Stream has been closed, return
-                        return;
-                    }
-                }
-            }
-        });
-        Ok(())
-    }
-
-    async fn read_ack(
-        reader: &mut BufReader<OwnedReadHalf>,
-    ) -> Result<Option<hdfs::PipelineAckProto>> {
-        let buf = reader.fill_buf().await?;
-
-        if buf.is_empty() {
-            // The stream has been closed
-            return Ok(None);
-        }
-
-        let ack_length = prost::decode_length_delimiter(buf)?;
-        let total_size = ack_length + prost::length_delimiter_len(ack_length);
-
-        let mut response_buf = BytesMut::zeroed(total_size);
-        reader.read_exact(&mut response_buf).await?;
-
-        let response = hdfs::PipelineAckProto::decode_length_delimited(response_buf.freeze())?;
-        Ok(Some(response))
     }
 }
 
