@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use bytes::Buf;
 use std::collections::HashSet;
 use std::io::{BufWriter, Write};
 use std::process::Command;
@@ -37,4 +38,18 @@ pub fn setup(features: &HashSet<DfsFeatures>) -> MiniDfs {
     assert!(status.success());
 
     dfs
+}
+
+pub fn assert_bufs_equal(buf1: &impl Buf, buf2: &impl Buf, message: Option<String>) {
+    assert_eq!(buf1.chunk().len(), buf2.chunk().len());
+
+    let message = message.unwrap_or_default();
+
+    buf1.chunk()
+        .iter()
+        .zip(buf2.chunk())
+        .enumerate()
+        .for_each(move |(i, (b1, b2))| {
+            assert_eq!(b1, b2, "data is different as position {} {}", i, message)
+        });
 }
