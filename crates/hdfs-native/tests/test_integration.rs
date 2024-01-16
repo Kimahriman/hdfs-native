@@ -4,7 +4,7 @@ mod common;
 #[cfg(feature = "integration-test")]
 mod test {
     use crate::common::{assert_bufs_equal, setup, TEST_FILE_INTS};
-    use bytes::{Buf, BufMut, BytesMut};
+    use bytes::{BufMut, BytesMut};
     use hdfs_native::{client::FileStatus, minidfs::DfsFeatures, Client, Result, WriteOptions};
     use serial_test::serial;
     use std::collections::HashSet;
@@ -109,10 +109,9 @@ mod test {
 
         test_file_info(&client).await?;
         test_listing(&client).await?;
-        test_read(&client).await?;
         test_rename(&client).await?;
         test_dirs(&client).await?;
-        test_write(&client).await?;
+        test_read_write(&client).await?;
         // We use writing to create files, so do this after
         test_recursive_listing(&client).await?;
 
@@ -139,33 +138,6 @@ mod test {
         let status = &statuses[0];
         assert_eq!(status.path, "/testfile");
         assert_eq!(status.length, TEST_FILE_INTS * 4);
-        Ok(())
-    }
-
-    async fn test_read(client: &Client) -> Result<()> {
-        // Read the whole file
-        let reader = client.read("/testfile").await?;
-        let mut buf = reader.read_range(0, TEST_FILE_INTS * 4).await?;
-        for i in 0..TEST_FILE_INTS as i32 {
-            assert_eq!(buf.get_i32(), i);
-        }
-
-        // Read a single integer from the file
-        let mut buf = reader.read_range(TEST_FILE_INTS / 2 * 4, 4).await?;
-        assert_eq!(buf.get_i32(), TEST_FILE_INTS as i32 / 2);
-
-        // Read the whole file in 1 MiB chunks
-        let mut offset = 0;
-        let mut val = 0;
-        while offset < TEST_FILE_INTS * 4 {
-            let mut buf = reader.read_range(offset, 1024 * 1024).await?;
-            while !buf.is_empty() {
-                assert_eq!(buf.get_i32(), val);
-                val += 1;
-            }
-            offset += 1024 * 1024;
-        }
-
         Ok(())
     }
 
@@ -205,7 +177,7 @@ mod test {
         Ok(())
     }
 
-    async fn test_write(client: &Client) -> Result<()> {
+    async fn test_read_write(client: &Client) -> Result<()> {
         let write_options = WriteOptions::default().overwrite(true);
 
         // Create an empty file

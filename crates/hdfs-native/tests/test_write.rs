@@ -4,7 +4,7 @@ mod common;
 #[cfg(feature = "integration-test")]
 mod test {
     use crate::common::{assert_bufs_equal, setup};
-    use bytes::{Buf, BufMut, BytesMut};
+    use bytes::{BufMut, BytesMut};
     use hdfs_native::{minidfs::DfsFeatures, Client, Result, WriteOptions};
     use serial_test::serial;
     use std::collections::HashSet;
