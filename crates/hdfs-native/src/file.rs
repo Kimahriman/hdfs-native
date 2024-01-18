@@ -161,6 +161,7 @@ impl FileWriter {
         last_block: Option<hdfs::LocatedBlockProto>,
         server_defaults: hdfs::FsServerDefaultsProto,
     ) -> Self {
+        protocol.add_file_lease(status.file_id(), status.namespace.clone());
         Self {
             protocol,
             src,
@@ -287,5 +288,8 @@ impl Drop for FileWriter {
         if !self.closed {
             warn!("FileWriter dropped without being closed. File content may not have saved or may not be complete");
         }
+
+        self.protocol
+            .remove_file_lease(self.status.file_id(), self.status.namespace.clone());
     }
 }
