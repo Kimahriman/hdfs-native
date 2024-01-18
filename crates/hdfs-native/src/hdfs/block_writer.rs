@@ -316,7 +316,7 @@ impl ReplicatedBlockWriter {
                     if *reply != hdfs::Status::Success as i32 {
                         return Err(HdfsError::DataTransferError(format!(
                             "Received non-success status in datanode ack: {:?}",
-                            hdfs::Status::from_i32(*reply)
+                            hdfs::Status::try_from(*reply)
                         )));
                     }
                 }
