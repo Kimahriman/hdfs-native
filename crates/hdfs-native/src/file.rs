@@ -9,7 +9,7 @@ use log::warn;
 use crate::ec::{resolve_ec_policy, EcSchema};
 use crate::hdfs::block_reader::get_block_stream;
 use crate::hdfs::block_writer::BlockWriter;
-use crate::hdfs::protocol::NamenodeProtocol;
+use crate::hdfs::protocol::{LeaseTracker, NamenodeProtocol};
 use crate::proto::hdfs;
 use crate::{HdfsError, Result};
 

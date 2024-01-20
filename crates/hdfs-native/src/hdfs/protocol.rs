@@ -26,6 +26,7 @@ pub(crate) struct NamenodeProtocol {
     client_name: String,
     // Stores files currently opened for writing for lease renewal purposes
     open_files: Arc<Mutex<HashSet<LeasedFile>>>,
+    lease_renewer: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl NamenodeProtocol {
@@ -35,6 +36,7 @@ impl NamenodeProtocol {
             proxy,
             client_name,
             open_files: Arc::new(Mutex::new(HashSet::new())),
+            lease_renewer: Mutex::new(None),
         }
     }
 
@@ -323,15 +325,38 @@ impl NamenodeProtocol {
         debug!("renewLease response: {:?}", &decoded);
         Ok(decoded)
     }
+}
 
-    pub(crate) fn add_file_lease(&self, file_id: u64, namespace: Option<String>) {
+impl Drop for NamenodeProtocol {
+    fn drop(&mut self) {
+        if let Some(handle) = self.lease_renewer.lock().unwrap().take() {
+            handle.abort();
+        }
+    }
+}
+
+// This is a little awkward but this needs to be implemented for Arc<NamenodeProtocol>
+// so we can spawn the renewal thread lazily. Maybe there's a better way to handle this
+pub(crate) trait LeaseTracker {
+    fn add_file_lease(&self, file_id: u64, namespace: Option<String>);
+
+    fn remove_file_lease(&self, file_id: u64, namespace: Option<String>);
+}
+
+impl LeaseTracker for Arc<NamenodeProtocol> {
+    fn add_file_lease(&self, file_id: u64, namespace: Option<String>) {
         self.open_files
             .lock()
             .unwrap()
             .insert(LeasedFile { file_id, namespace });
+
+        let mut lease_renewer = self.lease_renewer.lock().unwrap();
+        if lease_renewer.is_none() {
+            *lease_renewer = Some(start_lease_renewal(Arc::clone(self)));
+        }
     }
 
-    pub(crate) fn remove_file_lease(&self, file_id: u64, namespace: Option<String>) {
+    fn remove_file_lease(&self, file_id: u64, namespace: Option<String>) {
         self.open_files
             .lock()
             .unwrap()
@@ -339,42 +364,38 @@ impl NamenodeProtocol {
     }
 }
 
-pub(crate) fn start_lease_renewal(protocols: Vec<Arc<NamenodeProtocol>>) -> JoinHandle<()> {
+fn start_lease_renewal(protocol: Arc<NamenodeProtocol>) -> JoinHandle<()> {
     tokio::spawn(async move {
         // Track renewal times for each protocol
-        let mut last_renewals: Vec<Option<SystemTime>> = vec![None; protocols.len()];
+        let mut last_renewal: Option<SystemTime> = None;
 
         loop {
-            for (protocol, last_renewal) in protocols.iter().zip(last_renewals.iter_mut()) {
-                let (writing, namespaces) = {
-                    let files = protocol.open_files.lock().unwrap();
-                    let namespaces: HashSet<String> = files
-                        .iter()
-                        .flat_map(|f| f.namespace.as_ref())
-                        .cloned()
-                        .collect();
+            let (writing, namespaces) = {
+                let files = protocol.open_files.lock().unwrap();
+                let namespaces: HashSet<String> = files
+                    .iter()
+                    .flat_map(|f| f.namespace.as_ref())
+                    .cloned()
+                    .collect();
 
-                    (!files.is_empty(), namespaces)
-                };
+                (!files.is_empty(), namespaces)
+            };
 
-                if !writing {
-                    *last_renewal = None;
-                } else {
-                    if last_renewal.is_some_and(|last| {
-                        last.elapsed()
-                            .is_ok_and(|elapsed| elapsed.as_secs() > LEASE_RENEWAL_INTERVAL_SECS)
-                    }) {
-                        if let Err(err) =
-                            protocol.renew_lease(namespaces.into_iter().collect()).await
-                        {
-                            warn!("Failed to renew lease: {:?}", err);
-                        }
-                        *last_renewal = Some(SystemTime::now());
+            if !writing {
+                last_renewal = None;
+            } else {
+                if last_renewal.is_some_and(|last| {
+                    last.elapsed()
+                        .is_ok_and(|elapsed| elapsed.as_secs() > LEASE_RENEWAL_INTERVAL_SECS)
+                }) {
+                    if let Err(err) = protocol.renew_lease(namespaces.into_iter().collect()).await {
+                        warn!("Failed to renew lease: {:?}", err);
                     }
+                    last_renewal = Some(SystemTime::now());
+                }
 
-                    if last_renewal.is_none() {
-                        *last_renewal = Some(SystemTime::now());
-                    }
+                if last_renewal.is_none() {
+                    last_renewal = Some(SystemTime::now());
                 }
             }
             tokio::time::sleep(Duration::from_secs(1)).await;

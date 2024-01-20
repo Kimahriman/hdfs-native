@@ -4,14 +4,13 @@ use std::sync::Arc;
 
 use futures::stream::BoxStream;
 use futures::{stream, StreamExt};
-use tokio::task::JoinHandle;
 use url::Url;
 
 use crate::common::config::{self, Configuration};
 use crate::ec::resolve_ec_policy;
 use crate::error::{HdfsError, Result};
 use crate::file::{FileReader, FileWriter};
-use crate::hdfs::protocol::{start_lease_renewal, NamenodeProtocol};
+use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
 
@@ -146,7 +145,6 @@ impl MountTable {
 #[derive(Debug)]
 pub struct Client {
     mount_table: Arc<MountTable>,
-    lease_renewer: JoinHandle<()>,
 }
 
 impl Client {
@@ -188,16 +186,8 @@ impl Client {
             }
         };
 
-        let protocols = mount_table
-            .mounts
-            .iter()
-            .chain([&mount_table.fallback])
-            .map(|mount| Arc::clone(&mount.protocol))
-            .collect();
-
         Ok(Self {
             mount_table: Arc::new(mount_table),
-            lease_renewer: start_lease_renewal(protocols),
         })
     }
 
@@ -457,12 +447,6 @@ impl Default for Client {
             config,
         )
         .expect("Failed to create default client")
-    }
-}
-
-impl Drop for Client {
-    fn drop(&mut self) {
-        self.lease_renewer.abort();
     }
 }
 
