@@ -168,24 +168,27 @@ impl Client {
             ));
         }
 
-        match url.scheme() {
+        let mount_table = match url.scheme() {
             "hdfs" => {
                 let proxy = NameServiceProxy::new(url, &config);
                 let protocol = Arc::new(NamenodeProtocol::new(proxy));
 
-                let mount_table = Arc::new(MountTable {
+                MountTable {
                     mounts: Vec::new(),
                     fallback: MountLink::new("/", "/", protocol),
-                });
-                Ok(Self { mount_table })
+                }
             }
-            "viewfs" => Ok(Self {
-                mount_table: Arc::new(Self::build_mount_table(url.host_str().unwrap(), &config)?),
-            }),
-            _ => Err(HdfsError::InvalidArgument(
-                "Only `hdfs` and `viewfs` schemes are supported".to_string(),
-            )),
-        }
+            "viewfs" => Self::build_mount_table(url.host_str().unwrap(), &config)?,
+            _ => {
+                return Err(HdfsError::InvalidArgument(
+                    "Only `hdfs` and `viewfs` schemes are supported".to_string(),
+                ))
+            }
+        };
+
+        Ok(Self {
+            mount_table: Arc::new(mount_table),
+        })
     }
 
     fn build_mount_table(host: &str, config: &Configuration) -> Result<MountTable> {
