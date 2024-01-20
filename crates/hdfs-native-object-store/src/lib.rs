@@ -31,8 +31,8 @@ use hdfs_native::{client::FileStatus, file::FileWriter, Client, HdfsError, Write
 use object_store::{
     multipart::{PartId, PutPart, WriteMultiPart},
     path::Path,
-    GetOptions, GetResult, GetResultPayload, ListResult, MultipartId, ObjectMeta, ObjectStore,
-    PutMode, PutOptions, PutResult, Result,
+    GetOptions, GetRange, GetResult, GetResultPayload, ListResult, MultipartId, ObjectMeta,
+    ObjectStore, PutMode, PutOptions, PutResult, Result,
 };
 use tokio::io::AsyncWrite;
 
@@ -233,7 +233,14 @@ impl ObjectStore for HdfsObjectStore {
 
         let meta = self.head(location).await?;
 
-        let range = options.range.unwrap_or(0..meta.size);
+        let range = options
+            .range
+            .map(|r| match r {
+                GetRange::Bounded(range) => range,
+                GetRange::Offset(offset) => offset..meta.size,
+                GetRange::Suffix(suffix) => meta.size.saturating_sub(suffix)..meta.size,
+            })
+            .unwrap_or(0..meta.size);
 
         let reader = self
             .client
