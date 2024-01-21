@@ -1,6 +1,6 @@
 [package]
 name = "hdfs-native-object-store"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 authors = ["Adam Binford <adamq43@gmail.com>"]
 homepage = "https://github.com/Kimahriman/hdfs-native"
@@ -15,8 +15,8 @@ async-trait = { version = "0.1" }
 bytes = { workspace = true }
 chrono = { version = "0.4" }
 futures = { workspace = true }
-hdfs-native = { path = "../hdfs-native", version = "0.6" }
-object_store = { version = "0.7", features = ["cloud"] }
+hdfs-native = { path = "../hdfs-native", version = "0.7" }
+object_store = { version = "0.9", features = ["cloud"] }
 thiserror = "1"
 tokio = { workspace = true, features = ["rt", "net", "io-util", "macros", "sync", "time"] }
 

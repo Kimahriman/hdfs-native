@@ -94,7 +94,7 @@ impl SaslRpcClient {
             let mut response: Option<RpcSaslProto> = None;
             let message = self.reader.read_response().await?;
             debug!("Handling SASL message: {:?}", message);
-            match SaslState::from_i32(message.state).unwrap() {
+            match SaslState::try_from(message.state).unwrap() {
                 SaslState::Negotiate => {
                     let (mut selected_auth, selected_session) =
                         self.select_method(&message.auths, service)?;
@@ -248,7 +248,7 @@ impl SaslReader {
         let rpc_response = RpcResponseHeaderProto::decode_length_delimited(&mut bytes)?;
         debug!("{:?}", rpc_response);
 
-        match RpcStatusProto::from_i32(rpc_response.status).unwrap() {
+        match RpcStatusProto::try_from(rpc_response.status).unwrap() {
             RpcStatusProto::Error => {
                 return Err(HdfsError::RPCError(
                     rpc_response.exception_class_name().to_string(),

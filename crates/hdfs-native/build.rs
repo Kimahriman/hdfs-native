@@ -6,8 +6,6 @@ fn main() -> Result<()> {
 
     #[cfg(feature = "generate-protobuf")]
     {
-        use protobuf_src;
-
         std::env::set_var("PROTOC", protobuf_src::protoc());
 
         prost_build::compile_protos(

@@ -155,7 +155,7 @@ impl NameServiceProxy {
                 // RPCError indicates the call was successfully attempted but had an error, so should be returned immediately
                 Err(HdfsError::RPCError(exception, msg)) if !Self::is_retriable(&exception) => {
                     warn!("{}: {}", exception, msg);
-                    return Err(HdfsError::RPCError(exception, msg));
+                    return Err(Self::convert_rpc_error(exception, msg));
                 }
                 Err(_) if attempts >= self.proxy_connections.len() - 1 => return result,
                 Err(e) => {
@@ -165,6 +165,13 @@ impl NameServiceProxy {
 
             proxy_index = (proxy_index + 1) % self.proxy_connections.len();
             attempts += 1;
+        }
+    }
+
+    fn convert_rpc_error(exception: String, msg: String) -> HdfsError {
+        match exception.as_ref() {
+            "org.apache.hadoop.fs.FileAlreadyExistsException" => HdfsError::AlreadyExists(msg),
+            _ => HdfsError::RPCError(exception, msg),
         }
     }
 }
