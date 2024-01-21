@@ -627,7 +627,7 @@ checksum = "290f1a1d9242c78d09ce40a5e87e7554ee637af1351968159f4952f028f75604"
 
 [[package]]
 name = "hdfs-native"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64",
  "bytes",
@@ -659,7 +659,7 @@ dependencies = [
 
 [[package]]
 name = "hdfs-native-object-store"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "hdfs-native-python"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bytes",
  "env_logger",
