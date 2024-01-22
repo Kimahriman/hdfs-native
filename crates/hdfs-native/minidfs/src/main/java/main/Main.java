@@ -160,6 +160,7 @@ public class Main {
             }
         }
 
+        hdfsConf.set("dfs.client.socketcache.capacity", "0");
         hdfsConf.writeXml(new FileOutputStream("target/test/core-site.xml"));
 
         System.out.println("Ready!");

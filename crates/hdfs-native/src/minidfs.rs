@@ -67,7 +67,7 @@ impl MiniDfs {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            // .stderr(Stdio::null())
             .spawn()
             .unwrap();
 
@@ -130,7 +130,7 @@ impl MiniDfs {
             "hdfs://127.0.0.1:9000"
         };
 
-        env::set_var("HADOOP_CONF_DIR", "target/test");
+        // env::set_var("HADOOP_CONF_DIR", "target/test");
 
         MiniDfs {
             process: child,

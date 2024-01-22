@@ -34,7 +34,15 @@ fn bench(c: &mut Criterion) {
 
     rt.block_on(async { write_file(&client, ints_to_write).await });
 
-    let fs = get_hdfs_by_full_path(&_dfs.url).unwrap();
+    let fs = get_hdfs().unwrap();
+    println!(
+        "{:?}",
+        fs.list_status("/")
+            .unwrap()
+            .into_iter()
+            .map(|s| s.name().to_string())
+            .collect::<Vec<_>>()
+    );
 
     let mut group = c.benchmark_group("read");
     group.throughput(Throughput::Bytes((ints_to_write * 4) as u64));
@@ -49,22 +57,23 @@ fn bench(c: &mut Criterion) {
         })
     });
     group.sample_size(10);
-    group.bench_function("read-libhdfs", |b| {
-        b.iter(|| {
-            let mut buf = BytesMut::zeroed(ints_to_write * 4);
-            let mut bytes_read = 0;
-            let reader = fs.open("/bench").unwrap();
+    // group.bench_function("read-libhdfs", |b| {
+    //     b.iter(|| {
+    //         let mut buf = BytesMut::zeroed(ints_to_write * 4);
+    //         let mut bytes_read = 0;
+    //         println!("{}", fs.used().unwrap());
+    //         let reader = fs.open("/bench").unwrap();
 
-            while bytes_read < ints_to_write * 4 {
-                bytes_read += reader
-                    .read(&mut buf[bytes_read..ints_to_write * 4])
-                    .unwrap() as usize;
-            }
-            reader.close().unwrap();
-            println!("{:?}", &buf[ints_to_write * 4 - 16..ints_to_write * 4]);
-            buf
-        })
-    });
+    //         while bytes_read < ints_to_write * 4 {
+    //             bytes_read += reader
+    //                 .read(&mut buf[bytes_read..ints_to_write * 4])
+    //                 .unwrap() as usize;
+    //         }
+    //         reader.close().unwrap();
+    //         println!("{:?}", &buf[ints_to_write * 4 - 16..ints_to_write * 4]);
+    //         buf
+    //     })
+    // });
 }
 
 criterion_group!(benches, bench);
