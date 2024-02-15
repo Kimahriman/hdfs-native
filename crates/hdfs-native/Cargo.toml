@@ -26,7 +26,7 @@ prost-types = "0.12"
 roxmltree = "0.18"
 socket2 = "0.5"
 thiserror = "1"
-tokio = { workspace = true, features = ["rt", "net", "io-util", "macros", "sync", "time"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "io-util", "macros", "sync", "time"] }
 url = "2"
 users = { version = "0.11", default-features = false }
 uuid = { version = "1", features = ["v4"] }
@@ -57,5 +57,9 @@ name = "ec"
 harness = false
 
 [[bench]]
-name = "read"
+name = "io"
+harness = false
+
+[[bench]]
+name = "rpc"
 harness = false
