@@ -54,7 +54,6 @@ fn bench(c: &mut Criterion) {
             let mut buf = BytesMut::zeroed(ints_to_write * 4);
             let mut bytes_read = 0;
             let fs = get_hdfs().unwrap();
-            println!("{}", fs.used().unwrap());
             let reader = fs.open("/bench").unwrap();
 
             while bytes_read < ints_to_write * 4 {
@@ -63,7 +62,6 @@ fn bench(c: &mut Criterion) {
                     .unwrap() as usize;
             }
             reader.close().unwrap();
-            println!("{:?}", &buf[ints_to_write * 4 - 16..ints_to_write * 4]);
             buf
         })
     });
