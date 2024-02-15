@@ -130,8 +130,7 @@ impl MiniDfs {
             "hdfs://127.0.0.1:9000"
         };
 
-        // env::set_var("HADOOP_CONF_DIR", "target/test");
-
+        env::set_var("HADOOP_CONF_DIR", "target/test");
         MiniDfs {
             process: child,
             url: url.to_string(),
