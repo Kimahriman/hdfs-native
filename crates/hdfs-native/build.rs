@@ -20,7 +20,7 @@ fn main() -> Result<()> {
         )?;
     }
 
-    #[cfg(feature = "integration-test")]
+    #[cfg(any(feature = "integration-test", feature = "benchmark"))]
     {
         // Copy the minidfs src to the build directory so we can run it in downstream tests
         let status = std::process::Command::new("cp")
