@@ -26,7 +26,7 @@ prost-types = "0.12"
 roxmltree = "0.18"
 socket2 = "0.5"
 thiserror = "1"
-tokio = { workspace = true, features = ["rt", "net", "io-util", "macros", "sync", "time"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "io-util", "macros", "sync", "time"] }
 url = "2"
 users = { version = "0.11", default-features = false }
 uuid = { version = "1", features = ["v4"] }
@@ -37,8 +37,9 @@ prost-build = { version = "0.12", optional = true }
 protobuf-src = { version = "1.1", optional = true }
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = { version = "0.5", features = ["async_tokio", "async_futures"] }
 env_logger = "0.10"
+fs-hdfs3 = "0.1.12"
 serial_test = "2.0.0"
 tempfile = "3"
 which = "4"
@@ -49,8 +50,16 @@ token = ["gsasl-sys"]
 
 generate-protobuf = ["prost-build", "protobuf-src"]
 integration-test = ["which"]
-benchmark = []
+benchmark = ["which"]
 
 [[bench]]
 name = "ec"
+harness = false
+
+[[bench]]
+name = "io"
+harness = false
+
+[[bench]]
+name = "rpc"
 harness = false

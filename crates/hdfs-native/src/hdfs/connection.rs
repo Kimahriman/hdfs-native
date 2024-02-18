@@ -587,6 +587,20 @@ impl DatanodeConnection {
         Ok(Packet::new(header, checksum, data))
     }
 
+    pub(crate) async fn send_read_success(&mut self) -> Result<()> {
+        let client_read_status = hdfs::ClientReadStatusProto {
+            status: hdfs::Status::ChecksumOk as i32,
+        };
+
+        self.stream
+            .write_all(&client_read_status.encode_length_delimited_to_vec())
+            .await?;
+        self.stream.flush().await?;
+        self.stream.shutdown().await?;
+
+        Ok(())
+    }
+
     pub(crate) fn split(self) -> (DatanodeReader, DatanodeWriter) {
         let (reader, writer) = self.stream.into_inner().into_split();
         let reader = DatanodeReader {

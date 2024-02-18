@@ -302,6 +302,7 @@ dependencies = [
  "ciborium",
  "clap",
  "criterion-plot",
+ "futures",
  "is-terminal",
  "itertools 0.10.5",
  "num-traits",
@@ -314,6 +315,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "tinytemplate",
+ "tokio",
  "walkdir",
 ]
 
@@ -446,6 +448,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13624c2627564efccf4934284bdd98cbaa14e79b0b5a141218e507b3a823456"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fs-hdfs3"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f38e500596a428817fd4fd8a9a21da32f4edb3250e87886039670b12ea02f5d"
+dependencies = [
+ "bindgen",
+ "cc",
+ "lazy_static",
+ "libc",
+ "log",
+ "url",
 ]
 
 [[package]]
@@ -634,6 +650,7 @@ dependencies = [
  "crc",
  "criterion",
  "env_logger",
+ "fs-hdfs3",
  "futures",
  "g2p",
  "gsasl-sys",

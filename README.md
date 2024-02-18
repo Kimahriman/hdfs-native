@@ -72,3 +72,16 @@ cargo test -p hdfs-native --features token,kerberos,intergation-test
 
 ### Python tests
 See the [Python README](./python/README.md)
+
+## Running benchmarks
+Some of the benchmarks compare performance to the JVM based client through libhdfs via the fs-hdfs3 crate. Because of that, some extra setup is required to run the benchmarks:
+
+```bash
+export HADOOP_CONF_DIR=$(pwd)/crates/hdfs-native/target/test
+export CLASSPATH=$(hadoop classpath)
+```
+
+then you can run the benchmarks with
+```bash
+cargo bench -p hdfs-native --features benchmark,integration-test
+```

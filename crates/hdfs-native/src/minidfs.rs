@@ -131,7 +131,6 @@ impl MiniDfs {
         };
 
         env::set_var("HADOOP_CONF_DIR", "target/test");
-
         MiniDfs {
             process: child,
             url: url.to_string(),

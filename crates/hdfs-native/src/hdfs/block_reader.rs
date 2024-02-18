@@ -93,13 +93,16 @@ impl ReplicatedBlockStream {
     }
 
     async fn next_packet(&mut self) -> Result<Option<Bytes>> {
-        if self.len == 0 {
-            return Ok(None);
-        }
         if self.connection.is_none() {
             self.select_next_datanode().await?;
         }
         let conn = self.connection.as_mut().unwrap();
+
+        if self.len == 0 {
+            conn.send_read_success().await?;
+            return Ok(None);
+        }
+
         let packet = conn.read_packet().await?;
 
         let packet_offset = if self.offset > packet.header.offset_in_block as usize {
