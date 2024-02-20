@@ -519,7 +519,7 @@ pub(crate) struct DatanodeConnection {
 }
 
 impl DatanodeConnection {
-    async fn connect(url: &str) -> Result<Self> {
+    pub(crate) async fn connect(url: &str) -> Result<Self> {
         let stream = BufStream::new(connect(url).await?);
 
         let conn = DatanodeConnection {
@@ -700,23 +700,14 @@ impl DatanodeConnectionCache {
         }
     }
 
-    pub(crate) async fn get(&self, url: &str) -> Result<DatanodeConnection> {
-        let conn = self
-            .cache
+    pub(crate) fn get(&self, url: &str) -> Option<DatanodeConnection> {
+        self.cache
             .lock()
             .unwrap()
             .get_mut(url)
             .iter_mut()
             .flat_map(|conns| conns.pop_front())
-            .next();
-
-        if let Some(conn) = conn {
-            debug!("Returning cached connection");
-            Ok(conn)
-        } else {
-            debug!("Creating new connection");
-            DatanodeConnection::connect(url).await
-        }
+            .next()
     }
 
     pub(crate) fn release(&self, conn: DatanodeConnection) {

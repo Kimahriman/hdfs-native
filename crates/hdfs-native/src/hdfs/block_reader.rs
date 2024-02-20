@@ -64,9 +64,13 @@ impl ReplicatedBlockStream {
             }
         }
         let datanode = &self.block.locs[self.current_replica].id;
-        let mut connection = DATANODE_CACHE
-            .get(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
-            .await?;
+
+        let datanode_url = format!("{}:{}", datanode.ip_addr, datanode.xfer_port);
+        let mut connection = if let Some(conn) = DATANODE_CACHE.get(&datanode_url) {
+            conn
+        } else {
+            DatanodeConnection::connect(&datanode_url).await?
+        };
 
         let message = hdfs::OpReadBlockProto {
             header: connection.build_header(&self.block.b, Some(self.block.block_token.clone())),
@@ -341,12 +345,15 @@ impl StripedBlockStream {
             return Ok(());
         }
 
-        let mut conn = DATANODE_CACHE
-            .get(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
-            .await?;
+        let datanode_url = format!("{}:{}", datanode.ip_addr, datanode.xfer_port);
+        let mut connection = if let Some(conn) = DATANODE_CACHE.get(&datanode_url) {
+            conn
+        } else {
+            DatanodeConnection::connect(&datanode_url).await?
+        };
 
         let message = hdfs::OpReadBlockProto {
-            header: conn.build_header(block, Some(token.clone())),
+            header: connection.build_header(block, Some(token.clone())),
             offset: offset as u64,
             len: len as u64,
             send_checksums: Some(true),
@@ -354,7 +361,7 @@ impl StripedBlockStream {
         };
 
         debug!("Block read op request {:?}", &message);
-        let response = conn.send(Op::ReadBlock, &message).await?;
+        let response = connection.send(Op::ReadBlock, &message).await?;
         debug!("Block read op response {:?}", response);
 
         if response.status() != hdfs::Status::Success {
@@ -362,7 +369,7 @@ impl StripedBlockStream {
         }
 
         // First handle the offset into the first packet
-        let mut packet = conn.read_packet().await?;
+        let mut packet = connection.read_packet().await?;
         let packet_offset = offset - packet.header.offset_in_block as usize;
         let data_len = packet.header.data_len as usize - packet_offset;
         let data_to_read = usize::min(data_len, len);
@@ -372,7 +379,7 @@ impl StripedBlockStream {
         buf.put(packet_data.slice(packet_offset..(packet_offset + data_to_read)));
 
         while data_left > 0 {
-            packet = conn.read_packet().await?;
+            packet = connection.read_packet().await?;
             // TODO: Error checking
             let data_to_read = usize::min(data_left, packet.header.data_len as usize);
             buf.put(
@@ -384,7 +391,7 @@ impl StripedBlockStream {
         }
 
         // There should be one last empty packet after we are done
-        conn.read_packet().await?;
+        connection.read_packet().await?;
 
         Ok(())
     }
