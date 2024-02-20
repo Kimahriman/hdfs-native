@@ -34,8 +34,6 @@ fn bench(c: &mut Criterion) {
 
     rt.block_on(async { write_file(&client, ints_to_write).await });
 
-    let fs = get_hdfs().unwrap();
-
     let mut group = c.benchmark_group("read");
     group.throughput(Throughput::Bytes((ints_to_write * 4) as u64));
     group.sample_size(10);
@@ -50,10 +48,10 @@ fn bench(c: &mut Criterion) {
     });
     group.sample_size(10);
     group.bench_function("read-libhdfs", |b| {
+        let fs = get_hdfs().unwrap();
         b.iter(|| {
             let mut buf = BytesMut::zeroed(ints_to_write * 4);
             let mut bytes_read = 0;
-            let fs = get_hdfs().unwrap();
             let reader = fs.open("/bench").unwrap();
 
             while bytes_read < ints_to_write * 4 {
@@ -93,6 +91,7 @@ fn bench(c: &mut Criterion) {
 
     group.sample_size(10);
     group.bench_function("write-libhdfs", |b| {
+        let fs = get_hdfs().unwrap();
         b.iter(|| {
             let mut buf = buf.clone();
             let writer = fs.create_with_overwrite("/bench-write", true).unwrap();
