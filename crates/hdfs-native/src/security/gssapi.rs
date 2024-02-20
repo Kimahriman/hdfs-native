@@ -53,7 +53,7 @@ impl GssapiSession {
         let principal = cred.name()?.to_string();
 
         let state = GssapiState::Pending(ClientCtx::new(
-            cred,
+            Some(cred),
             target,
             // Allow all flags. Setting them does not mean the final context will provide
             // them, so this should not be an issue.

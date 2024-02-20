@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::default::Default;
 use std::io::ErrorKind;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use crc::{Crc, CRC_32_CKSUM, CRC_32_ISCSI};
 use log::{debug, warn};
+use once_cell::sync::Lazy;
 use prost::Message;
 use socket2::SockRef;
 use tokio::io::BufStream;
@@ -35,6 +36,9 @@ const MAX_PACKET_HEADER_SIZE: usize = 33;
 
 const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 const CRC32C: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
+
+pub(crate) static DATANODE_CACHE: Lazy<DatanodeConnectionCache> =
+    Lazy::new(DatanodeConnectionCache::new);
 
 // Connect to a remote host and return a TcpStream with standard options we want
 async fn connect(addr: &str) -> Result<TcpStream> {
@@ -511,20 +515,26 @@ impl Packet {
 pub(crate) struct DatanodeConnection {
     client_name: String,
     stream: BufStream<TcpStream>,
+    url: String,
 }
 
 impl DatanodeConnection {
-    pub(crate) async fn connect(url: &str) -> Result<Self> {
+    async fn connect(url: &str) -> Result<Self> {
         let stream = BufStream::new(connect(url).await?);
 
         let conn = DatanodeConnection {
             client_name: Uuid::new_v4().to_string(),
             stream,
+            url: url.to_string(),
         };
         Ok(conn)
     }
 
-    pub(crate) async fn send(&mut self, op: Op, message: &impl Message) -> Result<()> {
+    pub(crate) async fn send(
+        &mut self,
+        op: Op,
+        message: &impl Message,
+    ) -> Result<hdfs::BlockOpResponseProto> {
         self.stream
             .write_all(&DATA_TRANSFER_VERSION.to_be_bytes())
             .await?;
@@ -533,7 +543,16 @@ impl DatanodeConnection {
             .write_all(&message.encode_length_delimited_to_vec())
             .await?;
         self.stream.flush().await?;
-        Ok(())
+
+        let buf = self.stream.fill_buf().await?;
+        let msg_length = prost::decode_length_delimiter(buf)?;
+        let total_size = msg_length + prost::length_delimiter_len(msg_length);
+
+        let mut response_buf = BytesMut::zeroed(total_size);
+        self.stream.read_exact(&mut response_buf).await?;
+
+        let response = hdfs::BlockOpResponseProto::decode_length_delimited(response_buf.freeze())?;
+        Ok(response)
     }
 
     pub(crate) fn build_header(
@@ -551,18 +570,6 @@ impl DatanodeConnection {
             base_header,
             client_name: self.client_name.clone(),
         }
-    }
-
-    pub(crate) async fn read_block_op_response(&mut self) -> Result<hdfs::BlockOpResponseProto> {
-        let buf = self.stream.fill_buf().await?;
-        let msg_length = prost::decode_length_delimiter(buf)?;
-        let total_size = msg_length + prost::length_delimiter_len(msg_length);
-
-        let mut response_buf = BytesMut::zeroed(total_size);
-        self.stream.read_exact(&mut response_buf).await?;
-
-        let response = hdfs::BlockOpResponseProto::decode_length_delimited(response_buf.freeze())?;
-        Ok(response)
     }
 
     pub(crate) async fn read_packet(&mut self) -> Result<Packet> {
@@ -596,7 +603,6 @@ impl DatanodeConnection {
             .write_all(&client_read_status.encode_length_delimited_to_vec())
             .await?;
         self.stream.flush().await?;
-        self.stream.shutdown().await?;
 
         Ok(())
     }
@@ -606,6 +612,7 @@ impl DatanodeConnection {
         let reader = DatanodeReader {
             client_name: self.client_name.clone(),
             reader: BufReader::new(reader),
+            url: self.url,
         };
         let writer = DatanodeWriter {
             client_name: self.client_name,
@@ -622,6 +629,7 @@ impl DatanodeConnection {
         Self {
             client_name: reader.client_name,
             stream,
+            url: reader.url,
         }
     }
 }
@@ -631,6 +639,7 @@ impl DatanodeConnection {
 pub(crate) struct DatanodeReader {
     client_name: String,
     reader: BufReader<OwnedReadHalf>,
+    url: String,
 }
 
 impl DatanodeReader {
@@ -677,6 +686,42 @@ impl DatanodeWriter {
         self.writer.flush().await?;
 
         Ok(())
+    }
+}
+
+pub(crate) struct DatanodeConnectionCache {
+    cache: Mutex<HashMap<String, VecDeque<DatanodeConnection>>>,
+}
+
+impl DatanodeConnectionCache {
+    fn new() -> Self {
+        Self {
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub(crate) async fn get(&self, url: &str) -> Result<DatanodeConnection> {
+        let conn = self
+            .cache
+            .lock()
+            .unwrap()
+            .get_mut(url)
+            .iter_mut()
+            .flat_map(|conns| conns.pop_front())
+            .next();
+
+        if let Some(conn) = conn {
+            debug!("Returning cached connection");
+            Ok(conn)
+        } else {
+            debug!("Creating new connection");
+            DatanodeConnection::connect(url).await
+        }
+    }
+
+    pub(crate) fn release(&self, conn: DatanodeConnection) {
+        let mut cache = self.cache.lock().unwrap();
+        cache.entry(conn.url.clone()).or_default().push_back(conn);
     }
 }
 

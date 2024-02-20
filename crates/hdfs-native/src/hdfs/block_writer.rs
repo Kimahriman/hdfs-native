@@ -7,12 +7,12 @@ use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
     ec::{gf256::Coder, EcSchema},
-    hdfs::connection::{DatanodeConnection, Op},
+    hdfs::connection::{Op, DATANODE_CACHE},
     proto::hdfs,
     HdfsError, Result,
 };
 
-use super::connection::{DatanodeReader, DatanodeWriter, Packet};
+use super::connection::{DatanodeConnection, DatanodeReader, DatanodeWriter, Packet};
 
 const HEART_BEAT_SEQNO: i64 = -1;
 const UNKNOWN_SEQNO: i64 = -2;
@@ -85,7 +85,7 @@ pub(crate) struct ReplicatedBlockWriter {
 
     // Tracks the state of acknowledgements. Set to an Err if any error occurs doing receiving
     // acknowledgements. Set to Ok(()) when the last acknowledgement is received.
-    ack_listener_handle: JoinHandle<Result<()>>,
+    ack_listener_handle: JoinHandle<Result<DatanodeReader>>,
     // Tracks the state of packet sender. Set to Err if any error occurs during writing packets,
     packet_sender_handle: JoinHandle<Result<DatanodeWriter>>,
     // Tracks the heartbeat task so we can abort it when we close
@@ -102,9 +102,9 @@ impl ReplicatedBlockWriter {
         server_defaults: hdfs::FsServerDefaultsProto,
     ) -> Result<Self> {
         let datanode = &block.locs[0].id;
-        let mut connection =
-            DatanodeConnection::connect(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
-                .await?;
+        let mut connection = DATANODE_CACHE
+            .get(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
+            .await?;
 
         let checksum = hdfs::ChecksumProto {
             r#type: hdfs::ChecksumTypeProto::ChecksumCrc32c as i32,
@@ -136,9 +136,7 @@ impl ReplicatedBlockWriter {
         };
 
         debug!("Block write request: {:?}", &message);
-
-        connection.send(Op::WriteBlock, &message).await?;
-        let response = connection.read_block_op_response().await?;
+        let response = connection.send(Op::WriteBlock, &message).await?;
         debug!("Block write response: {:?}", response);
 
         let (reader, writer) = connection.split();
@@ -290,24 +288,29 @@ impl ReplicatedBlockWriter {
         self.heartbeat_handle.abort();
 
         // Wait for all packets to be sent
-        self.packet_sender_handle.await.map_err(|_| {
+        let writer = self.packet_sender_handle.await.map_err(|_| {
             HdfsError::DataTransferError(
                 "Packet sender task err while waiting for packets to send".to_string(),
             )
         })??;
 
         // Wait for the channel to close, meaning all acks have been received or an error occured
-        self.ack_listener_handle.await.map_err(|_| {
+        let reader = self.ack_listener_handle.await.map_err(|_| {
             HdfsError::DataTransferError(
                 "Ack status channel closed while waiting for final ack".to_string(),
             )
-        })?
+        })??;
+
+        let conn = DatanodeConnection::reunite(reader, writer);
+        // DATANODE_CACHE.release(conn);
+
+        Ok(())
     }
 
     fn listen_for_acks(
         mut reader: DatanodeReader,
         mut ack_queue: mpsc::Receiver<(i64, bool)>,
-    ) -> JoinHandle<Result<()>> {
+    ) -> JoinHandle<Result<DatanodeReader>> {
         tokio::spawn(async move {
             loop {
                 let next_ack = reader.read_ack().await?;
@@ -339,7 +342,7 @@ impl ReplicatedBlockWriter {
                     }
 
                     if last_packet {
-                        return Ok(());
+                        return Ok(reader);
                     }
                 } else {
                     return Err(HdfsError::DataTransferError(
