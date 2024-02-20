@@ -674,6 +674,7 @@ version = "0.7.0"
 dependencies = [
  "base64",
  "bytes",
+ "chrono",
  "crc",
  "criterion",
  "env_logger",

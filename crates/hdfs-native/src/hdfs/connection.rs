@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use chrono::{prelude::*, TimeDelta};
 use crc::{Crc, Slice16, CRC_32_CKSUM, CRC_32_ISCSI};
 use log::{debug, warn};
 use once_cell::sync::Lazy;
@@ -31,8 +32,8 @@ use crate::{HdfsError, Result};
 
 const PROTOCOL: &str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
 const DATA_TRANSFER_VERSION: u16 = 28;
-
 const MAX_PACKET_HEADER_SIZE: usize = 33;
+const DATANODE_CACHE_EXPIRY: TimeDelta = TimeDelta::seconds(5);
 
 const CRC32: Crc<Slice16<u32>> = Crc::<Slice16<u32>>::new(&CRC_32_CKSUM);
 const CRC32C: Crc<Slice16<u32>> = Crc::<Slice16<u32>>::new(&CRC_32_ISCSI);
@@ -690,7 +691,7 @@ impl DatanodeWriter {
 }
 
 pub(crate) struct DatanodeConnectionCache {
-    cache: Mutex<HashMap<String, VecDeque<DatanodeConnection>>>,
+    cache: Mutex<HashMap<String, VecDeque<(DateTime<Utc>, DatanodeConnection)>>>,
 }
 
 impl DatanodeConnectionCache {
@@ -701,18 +702,35 @@ impl DatanodeConnectionCache {
     }
 
     pub(crate) fn get(&self, url: &str) -> Option<DatanodeConnection> {
-        self.cache
-            .lock()
-            .unwrap()
+        // Keep things simply and just expire cache entries when checking the cache. We could
+        // move this to its own task but that will add a little more complexity.
+        self.remove_expired();
+
+        let mut cache = self.cache.lock().unwrap();
+
+        cache
             .get_mut(url)
             .iter_mut()
             .flat_map(|conns| conns.pop_front())
+            .map(|(_, conn)| conn)
             .next()
     }
 
     pub(crate) fn release(&self, conn: DatanodeConnection) {
+        let expire_at = Utc::now() + DATANODE_CACHE_EXPIRY;
         let mut cache = self.cache.lock().unwrap();
-        cache.entry(conn.url.clone()).or_default().push_back(conn);
+        cache
+            .entry(conn.url.clone())
+            .or_default()
+            .push_back((expire_at, conn));
+    }
+
+    fn remove_expired(&self) {
+        let mut cache = self.cache.lock().unwrap();
+        let now = Utc::now();
+        for (_, values) in cache.iter_mut() {
+            values.retain(|(expire_at, _)| expire_at > &now)
+        }
     }
 }
 
