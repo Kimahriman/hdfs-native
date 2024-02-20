@@ -87,3 +87,10 @@ cargo bench -p hdfs-native --features benchmark
 ```
 
 The `benchmark` feature is required to expose `minidfs` and the internal erasure coding functions to benchmark.
+
+## Running examples
+The examples make use of the `minidfs` module to create a simple HDFS cluster to run the example. This requires including the `integration-test` feature to enable the `minidfs` module. Alternatively, if you want to run the example against an existing HDFS cluster you can exclude the `integration-test` feature and make sure your `HADOOP_CONF_DIR` points to a directory with HDFS configs for talking to your cluster.
+
+```bash
+cargo run --example simple --features integration-test
+```
