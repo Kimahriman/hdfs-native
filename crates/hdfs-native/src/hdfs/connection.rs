@@ -33,7 +33,7 @@ use crate::{HdfsError, Result};
 const PROTOCOL: &str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
 const DATA_TRANSFER_VERSION: u16 = 28;
 const MAX_PACKET_HEADER_SIZE: usize = 33;
-const DATANODE_CACHE_EXPIRY: TimeDelta = TimeDelta::seconds(5);
+const DATANODE_CACHE_EXPIRY: TimeDelta = TimeDelta::seconds(3);
 
 const CRC32: Crc<Slice16<u32>> = Crc::<Slice16<u32>>::new(&CRC_32_CKSUM);
 const CRC32C: Crc<Slice16<u32>> = Crc::<Slice16<u32>>::new(&CRC_32_ISCSI);
@@ -546,6 +546,9 @@ impl DatanodeConnection {
         self.stream.flush().await?;
 
         let buf = self.stream.fill_buf().await?;
+        if buf.is_empty() {
+            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))?;
+        }
         let msg_length = prost::decode_length_delimiter(buf)?;
         let total_size = msg_length + prost::length_delimiter_len(msg_length);
 
