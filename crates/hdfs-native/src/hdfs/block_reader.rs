@@ -394,8 +394,8 @@ impl StripedBlockStream {
             &datanode_url,
             block,
             token.clone(),
-            self.offset as u64,
-            self.len as u64,
+            offset as u64,
+            len as u64,
         )
         .await?;
 
@@ -427,6 +427,8 @@ impl StripedBlockStream {
 
         // There should be one last empty packet after we are done
         connection.read_packet().await?;
+        connection.send_read_success().await?;
+        DATANODE_CACHE.release(connection);
 
         Ok(())
     }
