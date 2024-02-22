@@ -6,12 +6,15 @@ use futures::{
     stream::{self, BoxStream},
     Stream, StreamExt,
 };
-use log::debug;
+use log::{debug, warn};
 
 use crate::{
     ec::EcSchema,
-    hdfs::connection::{DatanodeConnection, Op},
-    proto::{common, hdfs},
+    hdfs::connection::{DatanodeConnection, Op, DATANODE_CACHE},
+    proto::{
+        common,
+        hdfs::{self, BlockOpResponseProto},
+    },
     HdfsError, Result,
 };
 
@@ -30,6 +33,55 @@ pub(crate) fn get_block_stream(
             .into_stream()
             .boxed()
     }
+}
+
+/// Connects to a DataNode to do a read, attempting to used cached connections.
+async fn connect_and_send(
+    url: &str,
+    block: &hdfs::ExtendedBlockProto,
+    token: common::TokenProto,
+    offset: u64,
+    len: u64,
+) -> Result<(DatanodeConnection, BlockOpResponseProto)> {
+    let mut remaining_attempts = 2;
+    while remaining_attempts > 0 {
+        if let Some(mut conn) = DATANODE_CACHE.get(url) {
+            let message = hdfs::OpReadBlockProto {
+                header: conn.build_header(block, Some(token.clone())),
+                offset,
+                len,
+                send_checksums: Some(true),
+                ..Default::default()
+            };
+            debug!("Block read op request {:?}", &message);
+            match conn.send(Op::ReadBlock, &message).await {
+                Ok(response) => {
+                    debug!("Block read op response {:?}", response);
+                    return Ok((conn, response));
+                }
+                Err(e) => {
+                    warn!("Failed to use cached connection: {:?}", e);
+                }
+            }
+        } else {
+            break;
+        }
+        remaining_attempts -= 1;
+    }
+    let mut conn = DatanodeConnection::connect(url).await?;
+
+    let message = hdfs::OpReadBlockProto {
+        header: conn.build_header(block, Some(token)),
+        offset,
+        len,
+        send_checksums: Some(true),
+        ..Default::default()
+    };
+
+    debug!("Block read op request {:?}", &message);
+    let response = conn.send(Op::ReadBlock, &message).await?;
+    debug!("Block read op response {:?}", response);
+    Ok((conn, response))
 }
 
 struct ReplicatedBlockStream {
@@ -63,24 +115,18 @@ impl ReplicatedBlockStream {
                 ));
             }
         }
+
         let datanode = &self.block.locs[self.current_replica].id;
-        let mut connection =
-            DatanodeConnection::connect(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
-                .await?;
+        let datanode_url = format!("{}:{}", datanode.ip_addr, datanode.xfer_port);
 
-        let message = hdfs::OpReadBlockProto {
-            header: connection.build_header(&self.block.b, Some(self.block.block_token.clone())),
-            offset: self.offset as u64,
-            len: self.len as u64,
-            send_checksums: Some(true),
-            ..Default::default()
-        };
-
-        debug!("Block read op request {:?}", &message);
-
-        connection.send(Op::ReadBlock, &message).await?;
-        let response = connection.read_block_op_response().await?;
-        debug!("Block read op response {:?}", response);
+        let (connection, response) = connect_and_send(
+            &datanode_url,
+            &self.block.b,
+            self.block.block_token.clone(),
+            self.offset as u64,
+            self.len as u64,
+        )
+        .await?;
 
         if response.status() != hdfs::Status::Success {
             return Err(HdfsError::DataTransferError(response.message().to_string()));
@@ -96,12 +142,19 @@ impl ReplicatedBlockStream {
         if self.connection.is_none() {
             self.select_next_datanode().await?;
         }
-        let conn = self.connection.as_mut().unwrap();
 
         if self.len == 0 {
+            let mut conn = self.connection.take().unwrap();
+
+            // Read the final empty packet
+            conn.read_packet().await?;
+
             conn.send_read_success().await?;
+            DATANODE_CACHE.release(conn);
             return Ok(None);
         }
+
+        let conn = self.connection.as_mut().unwrap();
 
         let packet = conn.read_packet().await?;
 
@@ -336,29 +389,22 @@ impl StripedBlockStream {
             return Ok(());
         }
 
-        let mut conn =
-            DatanodeConnection::connect(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
-                .await?;
-
-        let message = hdfs::OpReadBlockProto {
-            header: conn.build_header(block, Some(token.clone())),
-            offset: offset as u64,
-            len: len as u64,
-            send_checksums: Some(true),
-            ..Default::default()
-        };
-        debug!("Block read op request {:?}", &message);
-
-        conn.send(Op::ReadBlock, &message).await?;
-        let response = conn.read_block_op_response().await?;
-        debug!("Block read op response {:?}", response);
+        let datanode_url = format!("{}:{}", datanode.ip_addr, datanode.xfer_port);
+        let (mut connection, response) = connect_and_send(
+            &datanode_url,
+            block,
+            token.clone(),
+            offset as u64,
+            len as u64,
+        )
+        .await?;
 
         if response.status() != hdfs::Status::Success {
             return Err(HdfsError::DataTransferError(response.message().to_string()));
         }
 
         // First handle the offset into the first packet
-        let mut packet = conn.read_packet().await?;
+        let mut packet = connection.read_packet().await?;
         let packet_offset = offset - packet.header.offset_in_block as usize;
         let data_len = packet.header.data_len as usize - packet_offset;
         let data_to_read = usize::min(data_len, len);
@@ -368,7 +414,7 @@ impl StripedBlockStream {
         buf.put(packet_data.slice(packet_offset..(packet_offset + data_to_read)));
 
         while data_left > 0 {
-            packet = conn.read_packet().await?;
+            packet = connection.read_packet().await?;
             // TODO: Error checking
             let data_to_read = usize::min(data_left, packet.header.data_len as usize);
             buf.put(
@@ -380,7 +426,9 @@ impl StripedBlockStream {
         }
 
         // There should be one last empty packet after we are done
-        conn.read_packet().await?;
+        connection.read_packet().await?;
+        connection.send_read_success().await?;
+        DATANODE_CACHE.release(connection);
 
         Ok(())
     }

@@ -7,12 +7,10 @@ use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
     ec::{gf256::Coder, EcSchema},
-    hdfs::connection::{DatanodeConnection, Op},
+    hdfs::connection::{DatanodeConnection, DatanodeReader, DatanodeWriter, Op, Packet},
     proto::hdfs,
     HdfsError, Result,
 };
-
-use super::connection::{DatanodeReader, DatanodeWriter, Packet};
 
 const HEART_BEAT_SEQNO: i64 = -1;
 const UNKNOWN_SEQNO: i64 = -2;
@@ -87,7 +85,7 @@ pub(crate) struct ReplicatedBlockWriter {
     // acknowledgements. Set to Ok(()) when the last acknowledgement is received.
     ack_listener_handle: JoinHandle<Result<()>>,
     // Tracks the state of packet sender. Set to Err if any error occurs during writing packets,
-    packet_sender_handle: JoinHandle<Result<DatanodeWriter>>,
+    packet_sender_handle: JoinHandle<Result<()>>,
     // Tracks the heartbeat task so we can abort it when we close
     heartbeat_handle: JoinHandle<()>,
 
@@ -136,9 +134,7 @@ impl ReplicatedBlockWriter {
         };
 
         debug!("Block write request: {:?}", &message);
-
-        connection.send(Op::WriteBlock, &message).await?;
-        let response = connection.read_block_op_response().await?;
+        let response = connection.send(Op::WriteBlock, &message).await?;
         debug!("Block write response: {:?}", response);
 
         let (reader, writer) = connection.split();
@@ -301,7 +297,9 @@ impl ReplicatedBlockWriter {
             HdfsError::DataTransferError(
                 "Ack status channel closed while waiting for final ack".to_string(),
             )
-        })?
+        })??;
+
+        Ok(())
     }
 
     fn listen_for_acks(
@@ -353,7 +351,7 @@ impl ReplicatedBlockWriter {
     fn start_packet_sender(
         mut writer: DatanodeWriter,
         mut packet_receiver: mpsc::Receiver<Packet>,
-    ) -> JoinHandle<Result<DatanodeWriter>> {
+    ) -> JoinHandle<Result<()>> {
         tokio::spawn(async move {
             while let Some(mut packet) = packet_receiver.recv().await {
                 writer.write_packet(&mut packet).await?;
@@ -362,7 +360,7 @@ impl ReplicatedBlockWriter {
                     break;
                 }
             }
-            Ok(writer)
+            Ok(())
         })
     }
 
