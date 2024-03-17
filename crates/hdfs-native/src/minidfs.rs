@@ -9,6 +9,7 @@ use which::which;
 
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub enum DfsFeatures {
+    TESTFILE,
     SECURITY,
     TOKEN,
     PRIVACY,
@@ -21,6 +22,7 @@ pub enum DfsFeatures {
 impl DfsFeatures {
     pub fn as_str(&self) -> &str {
         match self {
+            DfsFeatures::TESTFILE => "testfile",
             DfsFeatures::EC => "ec",
             DfsFeatures::HA => "ha",
             DfsFeatures::VIEWFS => "viewfs",

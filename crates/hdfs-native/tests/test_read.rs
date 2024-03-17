@@ -3,9 +3,12 @@ mod common;
 
 #[cfg(feature = "integration-test")]
 mod test {
-    use crate::common::{setup, TEST_FILE_INTS};
+    use crate::common::TEST_FILE_INTS;
     use bytes::Buf;
-    use hdfs_native::{minidfs::DfsFeatures, Client, Result};
+    use hdfs_native::{
+        minidfs::{DfsFeatures, MiniDfs},
+        Client, Result,
+    };
     use serial_test::serial;
     use std::collections::HashSet;
 
@@ -14,7 +17,7 @@ mod test {
     async fn test_read() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let _dfs = setup(&HashSet::from([DfsFeatures::HA]));
+        let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::HA, DfsFeatures::TESTFILE]));
         let client = Client::default();
 
         // Read the whole file

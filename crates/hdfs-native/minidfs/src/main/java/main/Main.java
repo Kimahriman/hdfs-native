@@ -9,6 +9,8 @@ import java.util.HashSet;
 import java.util.Set;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
@@ -33,6 +35,8 @@ import org.apache.hadoop.hdfs.DFSConfigKeys;
 import static org.apache.hadoop.hdfs.client.HdfsClientConfigKeys.*;
 
 public class Main {
+
+    static int TEST_FILE_INTS = 64 * 1024 * 1024;
 
     public static void main(String args[]) throws Exception {
         Set<String> flags = new HashSet<>();
@@ -161,6 +165,15 @@ public class Main {
         }
 
         hdfsConf.writeXml(new FileOutputStream("target/test/core-site.xml"));
+
+        if (flags.contains("testfile")) {
+            FileSystem fs = FileSystem.get(hdfsConf);
+            FSDataOutputStream os = fs.create(new Path("/testfile"));
+            for (int i=0; i < TEST_FILE_INTS; i++) {
+                os.writeInt(i);
+            }
+            os.close();
+        }
 
         System.out.println("Ready!");
         if (flags.contains("security")) {
