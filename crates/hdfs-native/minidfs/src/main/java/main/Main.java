@@ -60,8 +60,10 @@ public class Main {
             conf.set(DFSConfigKeys.DFS_DATANODE_KEYTAB_FILE_KEY, "target/test/hdfs.keytab");
             conf.set(DFS_DATANODE_KERBEROS_PRINCIPAL_KEY, "hdfs/localhost@" + kdc.getRealm());
             conf.set(DFSConfigKeys.DFS_BLOCK_ACCESS_TOKEN_ENABLE_KEY, "true");
-            // conf.set(DFS_DATA_TRANSFER_PROTECTION_KEY, "authentication");
             conf.set(DFSConfigKeys.IGNORE_SECURE_PORTS_FOR_TESTING_KEY, "true");
+            if (flags.contains("token")) {
+                conf.set(DFS_DATA_TRANSFER_PROTECTION_KEY, "authentication");
+            }
         }
 
         HdfsConfiguration hdfsConf = new HdfsConfiguration(conf);

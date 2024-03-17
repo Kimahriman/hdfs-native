@@ -9,12 +9,105 @@ use std::path::PathBuf;
 use users::get_current_username;
 
 use crate::proto::common::CredentialsProto;
+use crate::proto::common::TokenProto;
+use crate::proto::hdfs::AccessModeProto;
+use crate::proto::hdfs::BlockTokenSecretProto;
+use crate::proto::hdfs::StorageTypeProto;
+use crate::Result;
 
 const HADOOP_USER_NAME: &str = "HADOOP_USER_NAME";
 #[cfg(feature = "kerberos")]
 const HADOOP_PROXY_USER: &str = "HADOOP_PROXY_USER";
 const HADOOP_TOKEN_FILE_LOCATION: &str = "HADOOP_TOKEN_FILE_LOCATION";
 const TOKEN_STORAGE_MAGIC: &[u8] = "HDTS".as_bytes();
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) struct BlockTokenIdentifier {
+    pub expiry_date: u64,
+    pub key_id: u32,
+    pub user_id: String,
+    pub block_pool_id: String,
+    pub block_id: u64,
+    pub modes: Vec<i32>,
+    pub storage_types: Vec<i32>,
+    pub storage_ids: Vec<String>,
+    pub handshake_secret: Vec<u8>,
+}
+
+#[allow(dead_code)]
+impl BlockTokenIdentifier {
+    fn parse_writable(reader: &mut impl Buf) -> Result<Self> {
+        let expiry_date = parse_vlong(reader) as u64;
+        let key_id = parse_vint(reader) as u32;
+        let user_id = parse_int_string(reader)?.unwrap();
+        let block_pool_id = parse_int_string(reader)?.unwrap();
+        let block_id = parse_vlong(reader) as u64;
+
+        // Modes
+        let mut modes: Vec<i32> = Vec::new();
+        for _ in 0..parse_vint(reader) {
+            if let Some(mode) = AccessModeProto::from_str_name(&parse_vint_string(reader)?) {
+                modes.push(mode as i32);
+            }
+        }
+
+        // Storage Types
+        let mut storage_types: Vec<i32> = Vec::new();
+        for _ in 0..parse_vint(reader) {
+            if let Some(storage_type) = StorageTypeProto::from_str_name(&parse_vint_string(reader)?)
+            {
+                storage_types.push(storage_type as i32);
+            }
+        }
+
+        // Storage IDs
+        let mut storage_ids: Vec<String> = Vec::new();
+        for _ in 0..parse_vint(reader) {
+            storage_ids.push(parse_vint_string(reader)?);
+        }
+
+        let handshake_secret_len = parse_vint(reader) as usize;
+        let handshake_secret = reader.copy_to_bytes(handshake_secret_len).to_vec();
+
+        Ok(BlockTokenIdentifier {
+            expiry_date,
+            key_id,
+            user_id,
+            block_pool_id,
+            block_id,
+            modes: Vec::new(),
+            storage_types: Vec::new(),
+            storage_ids: Vec::new(),
+            handshake_secret,
+        })
+    }
+
+    fn parse_protobuf(identifier: &[u8]) -> Result<Self> {
+        let secret_proto = BlockTokenSecretProto::decode(identifier)?;
+
+        Ok(BlockTokenIdentifier {
+            expiry_date: secret_proto.expiry_date(),
+            key_id: secret_proto.key_id(),
+            user_id: secret_proto.user_id().to_string(),
+            block_pool_id: secret_proto.block_pool_id().to_string(),
+            block_id: secret_proto.block_id(),
+            modes: secret_proto.modes.clone(),
+            storage_types: secret_proto.storage_types.clone(),
+            storage_ids: secret_proto.storage_ids.clone(),
+            handshake_secret: secret_proto.handshake_secret().to_vec(),
+        })
+    }
+
+    pub(crate) fn from_identifier(identifier: &[u8]) -> Result<Self> {
+        if identifier[0] == 0 || identifier[0] > 127 {
+            let mut content = Bytes::from(identifier.to_vec());
+            Self::parse_writable(&mut content)
+        } else {
+            Self::parse_protobuf(identifier)
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Token {
@@ -35,7 +128,6 @@ impl Token {
 
     fn read_token_file(path: PathBuf) -> std::io::Result<Vec<Self>> {
         let mut content = Bytes::from(fs::read(path)?);
-        // let mut reader = content.reader();
 
         let magic = content.copy_to_bytes(4);
 
@@ -78,17 +170,8 @@ impl Token {
             let password_length = parse_vlong(reader);
             let password = reader.copy_to_bytes(password_length as usize).to_vec();
 
-            let kind_length = parse_vlong(reader);
-            let kind = String::from_utf8(reader.copy_to_bytes(kind_length as usize).to_vec())
-                .map_err(|_| {
-                    io::Error::new(io::ErrorKind::Other, "Failed to parse token".to_string())
-                })?;
-
-            let service_length = parse_vlong(reader);
-            let service = String::from_utf8(reader.copy_to_bytes(service_length as usize).to_vec())
-                .map_err(|_| {
-                    io::Error::new(io::ErrorKind::Other, "Failed to parse token".to_string())
-                })?;
+            let kind = parse_vint_string(reader)?;
+            let service = parse_vint_string(reader)?;
 
             tokens.push(Token {
                 alias,
@@ -121,8 +204,18 @@ impl Token {
 
         Ok(tokens)
     }
+}
 
-    // fn parse_writable
+impl From<TokenProto> for Token {
+    fn from(value: TokenProto) -> Self {
+        Self {
+            alias: String::new(),
+            identifier: value.identifier,
+            password: value.password,
+            kind: value.kind,
+            service: value.service,
+        }
+    }
 }
 
 /// Adapted from WritableUtils class in Hadoop
@@ -155,6 +248,42 @@ fn parse_vlong(reader: &mut impl Buf) -> i64 {
     } else {
         i
     }
+}
+
+fn parse_vint(reader: &mut impl Buf) -> i32 {
+    // Same method as a long, but it should just be in the int range
+    let n = parse_vlong(reader);
+    assert!(n > i32::MIN as i64 && n < i32::MAX as i64);
+    n as i32
+}
+
+fn parse_string(reader: &mut impl Buf, length: i32) -> io::Result<String> {
+    String::from_utf8(reader.copy_to_bytes(length as usize).to_vec()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            "Failed to parse string from writable".to_string(),
+        )
+    })
+}
+
+/// Parse a string prefixed with the length as an int
+#[allow(dead_code)]
+fn parse_int_string(reader: &mut impl Buf) -> io::Result<Option<String>> {
+    let length = reader.get_i32();
+    println!("String length {}", length);
+    let value = if length == -1 {
+        None
+    } else {
+        Some(parse_string(reader, length)?)
+    };
+    Ok(value)
+}
+
+/// Parse a string prefixed with the length as a vint
+fn parse_vint_string(reader: &mut impl Buf) -> io::Result<String> {
+    let length = parse_vint(reader);
+    println!("String length {}", length);
+    parse_string(reader, length)
 }
 
 #[derive(Debug)]
@@ -280,5 +409,21 @@ mod tests {
         assert_eq!(tokens[0].kind, "HDFS_DELEGATION_TOKEN");
         assert_eq!(tokens[0].service, "127.0.0.1:9000");
         tokens.iter().for_each(|t| println!("{:?}", t));
+    }
+
+    #[test]
+    fn test_load_token_identifier() {
+        let token = [
+            138u8, 1, 142, 42, 218, 197, 169, 140, 95, 6, 248, 166, 0, 0, 0, 4, 104, 100, 102, 115,
+            0, 0, 0, 38, 66, 80, 45, 49, 50, 52, 55, 56, 51, 54, 56, 53, 49, 45, 49, 48, 46, 49,
+            48, 46, 48, 46, 51, 55, 45, 49, 55, 49, 48, 48, 55, 57, 57, 53, 56, 52, 53, 48, 140,
+            64, 0, 0, 3, 1, 5, 87, 82, 73, 84, 69, 1, 4, 68, 73, 83, 75, 1, 0, 0, 0, 39, 68, 83,
+            45, 51, 101, 50, 99, 102, 98, 102, 99, 45, 56, 54, 101, 52, 45, 52, 102, 53, 53, 45,
+            57, 101, 100, 50, 45, 53, 102, 102, 53, 50, 56, 54, 52, 56, 57, 51, 101,
+        ];
+
+        let token_identifier = BlockTokenIdentifier::from_identifier(&token).unwrap();
+        assert_eq!(token_identifier.user_id, "hdfs");
+        assert_eq!(token_identifier.block_id, 1073741827);
     }
 }

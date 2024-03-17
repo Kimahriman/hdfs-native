@@ -25,10 +25,15 @@ use tokio::{
 use uuid::Uuid;
 
 use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
+use crate::proto::common::TokenProto;
+use crate::proto::hdfs::DatanodeIdProto;
 use crate::proto::{common, hdfs};
 use crate::security::sasl::{SaslReader, SaslRpcClient, SaslWriter};
 use crate::security::user::UserInfo;
 use crate::{HdfsError, Result};
+
+#[cfg(feature = "token")]
+use crate::security::sasl::SaslDatanodeConnection;
 
 const PROTOCOL: &str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
 const DATA_TRANSFER_VERSION: u16 = 28;
@@ -520,12 +525,24 @@ pub(crate) struct DatanodeConnection {
 }
 
 impl DatanodeConnection {
-    pub(crate) async fn connect(url: &str) -> Result<Self> {
-        let stream = BufStream::new(connect(url).await?);
+    #[allow(unused_variables)]
+    pub(crate) async fn connect(datanode_id: &DatanodeIdProto, token: &TokenProto) -> Result<Self> {
+        let url = format!("{}:{}", datanode_id.ip_addr, datanode_id.xfer_port);
+        let stream = connect(&url).await?;
+
+        // If the token has an identifier, we can do SASL negotation
+        #[cfg(feature = "token")]
+        let stream = if token.identifier.is_empty() {
+            stream
+        } else {
+            debug!("{:?}", token);
+            let sasl_connection = SaslDatanodeConnection::create(stream);
+            sasl_connection.negotiate(datanode_id, token).await?
+        };
 
         let conn = DatanodeConnection {
             client_name: Uuid::new_v4().to_string(),
-            stream,
+            stream: BufStream::new(stream),
             url: url.to_string(),
         };
         Ok(conn)
@@ -704,15 +721,16 @@ impl DatanodeConnectionCache {
         }
     }
 
-    pub(crate) fn get(&self, url: &str) -> Option<DatanodeConnection> {
+    pub(crate) fn get(&self, datanode_id: &hdfs::DatanodeIdProto) -> Option<DatanodeConnection> {
         // Keep things simply and just expire cache entries when checking the cache. We could
         // move this to its own task but that will add a little more complexity.
         self.remove_expired();
 
+        let url = format!("{}:{}", datanode_id.ip_addr, datanode_id.xfer_port);
         let mut cache = self.cache.lock().unwrap();
 
         cache
-            .get_mut(url)
+            .get_mut(&url)
             .iter_mut()
             .flat_map(|conns| conns.pop_front())
             .map(|(_, conn)| conn)
