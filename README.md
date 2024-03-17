@@ -25,7 +25,7 @@ Here is a list of currently supported and unsupported but possible future featur
 - [x] Kerberos authentication (GSSAPI SASL support)
 - [x] Token authentication (DIGEST-MD5 SASL support, no encryption support)
 - [x] NameNode SASL connection
-- [ ] DataNode SASL connection
+- [x] DataNode SASL connection
 - [ ] DataNode data transfer encryption
 - [ ] Encryption at rest (KMS support)
 
