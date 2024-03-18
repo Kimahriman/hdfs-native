@@ -16,14 +16,14 @@ mod test {
     #[tokio::test]
     #[serial]
     async fn test_basic() {
-        test_with_features(&HashSet::new()).await.unwrap();
+        test_with_features(HashSet::new()).await.unwrap();
     }
 
     #[tokio::test]
     #[serial]
     #[cfg(feature = "kerberos")]
     async fn test_security_kerberos() {
-        test_with_features(&HashSet::from([DfsFeatures::SECURITY]))
+        test_with_features(HashSet::from([DfsFeatures::SECURITY]))
             .await
             .unwrap();
     }
@@ -32,7 +32,7 @@ mod test {
     #[serial]
     #[cfg(feature = "token")]
     async fn test_security_token() {
-        test_with_features(&HashSet::from([DfsFeatures::SECURITY, DfsFeatures::TOKEN]))
+        test_with_features(HashSet::from([DfsFeatures::SECURITY, DfsFeatures::TOKEN]))
             .await
             .unwrap();
     }
@@ -42,7 +42,7 @@ mod test {
     #[serial]
     #[cfg(feature = "token")]
     async fn test_privacy_token() {
-        test_with_features(&HashSet::from([
+        test_with_features(HashSet::from([
             DfsFeatures::SECURITY,
             DfsFeatures::TOKEN,
             DfsFeatures::PRIVACY,
@@ -55,18 +55,15 @@ mod test {
     #[serial]
     #[cfg(feature = "kerberos")]
     async fn test_privacy_kerberos() {
-        test_with_features(&HashSet::from([
-            DfsFeatures::SECURITY,
-            DfsFeatures::PRIVACY,
-        ]))
-        .await
-        .unwrap();
+        test_with_features(HashSet::from([DfsFeatures::SECURITY, DfsFeatures::PRIVACY]))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     #[serial]
     async fn test_basic_ha() {
-        test_with_features(&HashSet::from([DfsFeatures::HA]))
+        test_with_features(HashSet::from([DfsFeatures::HA]))
             .await
             .unwrap();
     }
@@ -75,7 +72,7 @@ mod test {
     #[serial]
     #[cfg(feature = "kerberos")]
     async fn test_security_privacy_ha() {
-        test_with_features(&HashSet::from([
+        test_with_features(HashSet::from([
             DfsFeatures::SECURITY,
             DfsFeatures::PRIVACY,
             DfsFeatures::HA,
@@ -88,7 +85,7 @@ mod test {
     #[serial]
     #[cfg(feature = "token")]
     async fn test_security_token_ha() {
-        test_with_features(&HashSet::from([
+        test_with_features(HashSet::from([
             DfsFeatures::SECURITY,
             DfsFeatures::TOKEN,
             DfsFeatures::HA,
@@ -100,15 +97,17 @@ mod test {
     #[tokio::test]
     #[serial]
     async fn test_rbf() {
-        test_with_features(&HashSet::from([DfsFeatures::RBF]))
+        test_with_features(HashSet::from([DfsFeatures::RBF]))
             .await
             .unwrap();
     }
 
-    pub async fn test_with_features(features: &HashSet<DfsFeatures>) -> Result<()> {
+    pub async fn test_with_features(mut features: HashSet<DfsFeatures>) -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let _dfs = MiniDfs::with_features(features);
+        features.insert(DfsFeatures::TESTFILE);
+
+        let _dfs = MiniDfs::with_features(&features);
         let client = Client::default();
 
         test_file_info(&client).await?;
