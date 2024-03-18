@@ -270,7 +270,6 @@ fn parse_string(reader: &mut impl Buf, length: i32) -> io::Result<String> {
 #[allow(dead_code)]
 fn parse_int_string(reader: &mut impl Buf) -> io::Result<Option<String>> {
     let length = reader.get_i32();
-    println!("String length {}", length);
     let value = if length == -1 {
         None
     } else {
@@ -282,7 +281,6 @@ fn parse_int_string(reader: &mut impl Buf) -> io::Result<Option<String>> {
 /// Parse a string prefixed with the length as a vint
 fn parse_vint_string(reader: &mut impl Buf) -> io::Result<String> {
     let length = parse_vint(reader);
-    println!("String length {}", length);
     parse_string(reader, length)
 }
 
