@@ -32,9 +32,8 @@ use {
     crate::proto::{
         common::TokenProto,
         hdfs::{
-            data_transfer_encryptor_message_proto::DataTransferEncryptorStatus, CipherOptionProto,
-            CipherSuiteProto, DataTransferEncryptorMessageProto, DatanodeIdProto,
-            HandshakeSecretProto,
+            data_transfer_encryptor_message_proto::DataTransferEncryptorStatus,
+            DataTransferEncryptorMessageProto, DatanodeIdProto, HandshakeSecretProto,
         },
     },
     tokio::io::{AsyncBufReadExt, BufStream},
@@ -613,10 +612,6 @@ impl SaslDatanodeConnection {
         let message = DataTransferEncryptorMessageProto {
             status: DataTransferEncryptorStatus::Success as i32,
             payload: Some(payload),
-            cipher_option: vec![CipherOptionProto {
-                suite: CipherSuiteProto::AesCtrNopadding as i32,
-                ..Default::default()
-            }],
             ..Default::default()
         };
 
