@@ -19,7 +19,7 @@ mod test {
     #[serial]
     #[cfg(feature = "kerberos")]
     async fn test_security_kerberos() {
-        test_with_features(&HashSet::from([DfsFeatures::SECURITY]))
+        test_with_features(&HashSet::from([DfsFeatures::Security]))
             .await
             .unwrap();
     }
@@ -28,7 +28,7 @@ mod test {
     #[serial]
     #[cfg(feature = "token")]
     async fn test_security_token() {
-        test_with_features(&HashSet::from([DfsFeatures::SECURITY, DfsFeatures::TOKEN]))
+        test_with_features(&HashSet::from([DfsFeatures::Security, DfsFeatures::Token]))
             .await
             .unwrap();
     }
@@ -39,9 +39,9 @@ mod test {
     #[cfg(feature = "token")]
     async fn test_privacy_token() {
         test_with_features(&HashSet::from([
-            DfsFeatures::SECURITY,
-            DfsFeatures::TOKEN,
-            DfsFeatures::PRIVACY,
+            DfsFeatures::Security,
+            DfsFeatures::Token,
+            DfsFeatures::Privacy,
         ]))
         .await
         .unwrap();
@@ -52,8 +52,8 @@ mod test {
     #[cfg(feature = "kerberos")]
     async fn test_privacy_kerberos() {
         test_with_features(&HashSet::from([
-            DfsFeatures::SECURITY,
-            DfsFeatures::PRIVACY,
+            DfsFeatures::Security,
+            DfsFeatures::Privacy,
         ]))
         .await
         .unwrap();
@@ -72,8 +72,8 @@ mod test {
     #[cfg(feature = "kerberos")]
     async fn test_security_privacy_ha() {
         test_with_features(&HashSet::from([
-            DfsFeatures::SECURITY,
-            DfsFeatures::PRIVACY,
+            DfsFeatures::Security,
+            DfsFeatures::Privacy,
             DfsFeatures::HA,
         ]))
         .await
@@ -85,8 +85,8 @@ mod test {
     #[cfg(feature = "token")]
     async fn test_security_token_ha() {
         test_with_features(&HashSet::from([
-            DfsFeatures::SECURITY,
-            DfsFeatures::TOKEN,
+            DfsFeatures::Security,
+            DfsFeatures::Token,
             DfsFeatures::HA,
         ]))
         .await
@@ -104,7 +104,7 @@ mod test {
     pub async fn test_with_features(features: &HashSet<DfsFeatures>) -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let _dfs = setup(features);
+        let _dfs = setup(&features);
         let client = Client::default();
 
         test_file_info(&client).await?;

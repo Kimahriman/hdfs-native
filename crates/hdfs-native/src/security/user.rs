@@ -44,31 +44,46 @@ impl BlockTokenIdentifier {
         let block_pool_id = parse_int_string(reader)?.unwrap();
         let block_id = parse_vlong(reader) as u64;
 
-        // Modes
         let mut modes: Vec<i32> = Vec::new();
-        for _ in 0..parse_vint(reader) {
-            if let Some(mode) = AccessModeProto::from_str_name(&parse_vint_string(reader)?) {
-                modes.push(mode as i32);
-            }
-        }
-
-        // Storage Types
         let mut storage_types: Vec<i32> = Vec::new();
-        for _ in 0..parse_vint(reader) {
-            if let Some(storage_type) = StorageTypeProto::from_str_name(&parse_vint_string(reader)?)
-            {
-                storage_types.push(storage_type as i32);
+        let mut storage_ids: Vec<String> = Vec::new();
+
+        // The rest of the fields may or may not be present depending on HDFS version
+        if reader.has_remaining() {
+            // Modes
+            for _ in 0..parse_vint(reader) {
+                if let Some(mode) = AccessModeProto::from_str_name(&parse_vint_string(reader)?) {
+                    modes.push(mode as i32);
+                }
             }
         }
 
-        // Storage IDs
-        let mut storage_ids: Vec<String> = Vec::new();
-        for _ in 0..parse_vint(reader) {
-            storage_ids.push(parse_vint_string(reader)?);
+        if reader.has_remaining() {
+            // Storage Types
+            for _ in 0..parse_vint(reader) {
+                if let Some(storage_type) =
+                    StorageTypeProto::from_str_name(&parse_vint_string(reader)?)
+                {
+                    storage_types.push(storage_type as i32);
+                }
+            }
         }
 
-        let handshake_secret_len = parse_vint(reader) as usize;
-        let handshake_secret = reader.copy_to_bytes(handshake_secret_len).to_vec();
+        if reader.has_remaining() {
+            // Storage IDs
+            for _ in 0..parse_vint(reader) {
+                if let Some(storage_id) = parse_int_string(reader)? {
+                    storage_ids.push(storage_id);
+                }
+            }
+        }
+
+        let handshake_secret = if reader.has_remaining() {
+            let handshake_secret_len = parse_vint(reader) as usize;
+            reader.copy_to_bytes(handshake_secret_len).to_vec()
+        } else {
+            vec![]
+        };
 
         Ok(BlockTokenIdentifier {
             expiry_date,
@@ -76,9 +91,9 @@ impl BlockTokenIdentifier {
             user_id,
             block_pool_id,
             block_id,
-            modes: Vec::new(),
-            storage_types: Vec::new(),
-            storage_ids: Vec::new(),
+            modes,
+            storage_types,
+            storage_ids,
             handshake_secret,
         })
     }
@@ -412,16 +427,28 @@ mod tests {
     #[test]
     fn test_load_token_identifier() {
         let token = [
-            138u8, 1, 142, 42, 218, 197, 169, 140, 95, 6, 248, 166, 0, 0, 0, 4, 104, 100, 102, 115,
-            0, 0, 0, 38, 66, 80, 45, 49, 50, 52, 55, 56, 51, 54, 56, 53, 49, 45, 49, 48, 46, 49,
-            48, 46, 48, 46, 51, 55, 45, 49, 55, 49, 48, 48, 55, 57, 57, 53, 56, 52, 53, 48, 140,
-            64, 0, 0, 3, 1, 5, 87, 82, 73, 84, 69, 1, 4, 68, 73, 83, 75, 1, 0, 0, 0, 39, 68, 83,
-            45, 51, 101, 50, 99, 102, 98, 102, 99, 45, 56, 54, 101, 52, 45, 52, 102, 53, 53, 45,
-            57, 101, 100, 50, 45, 53, 102, 102, 53, 50, 56, 54, 52, 56, 57, 51, 101,
+            138u8, 1, 142, 89, 190, 30, 189, 140, 100, 197, 210, 104, 0, 0, 0, 4, 104, 100, 102,
+            115, 0, 0, 0, 40, 66, 80, 45, 57, 55, 51, 52, 55, 55, 51, 54, 48, 45, 49, 57, 50, 46,
+            49, 54, 56, 46, 49, 46, 49, 56, 52, 45, 49, 55, 49, 48, 56, 54, 54, 54, 49, 49, 51, 50,
+            53, 128, 127, 255, 255, 255, 255, 255, 255, 239, 1, 4, 82, 69, 65, 68, 3, 4, 68, 73,
+            83, 75, 4, 68, 73, 83, 75, 4, 68, 73, 83, 75, 3, 0, 0, 0, 39, 68, 83, 45, 97, 50, 100,
+            51, 55, 50, 98, 101, 45, 101, 99, 98, 55, 45, 52, 101, 101, 49, 45, 98, 48, 99, 51, 45,
+            48, 57, 102, 49, 51, 100, 52, 49, 57, 101, 52, 102, 0, 0, 0, 39, 68, 83, 45, 53, 56,
+            54, 55, 50, 99, 50, 50, 45, 51, 49, 57, 99, 45, 52, 99, 50, 53, 45, 56, 55, 50, 98, 45,
+            97, 56, 48, 49, 98, 57, 99, 100, 53, 102, 51, 49, 0, 0, 0, 39, 68, 83, 45, 102, 49,
+            102, 57, 57, 97, 52, 49, 45, 56, 54, 102, 51, 45, 52, 57, 102, 56, 45, 57, 48, 50, 55,
+            45, 98, 101, 102, 102, 54, 100, 100, 52, 53, 54, 54, 100,
         ];
 
         let token_identifier = BlockTokenIdentifier::from_identifier(&token).unwrap();
+        println!("{:?}", token_identifier);
         assert_eq!(token_identifier.user_id, "hdfs");
-        assert_eq!(token_identifier.block_id, 1073741827);
+        assert_eq!(
+            token_identifier.block_pool_id,
+            "BP-973477360-192.168.1.184-1710866611325"
+        );
+        assert_eq!(token_identifier.block_id, 9223372036854775824);
+        assert_eq!(token_identifier.key_id, 1690686056);
+        assert!(token_identifier.handshake_secret.is_empty());
     }
 }

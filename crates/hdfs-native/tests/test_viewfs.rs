@@ -23,7 +23,7 @@ mod test {
     #[tokio::test]
     #[serial]
     async fn test_viewfs() {
-        let features = HashSet::from([DfsFeatures::VIEWFS]);
+        let features = HashSet::from([DfsFeatures::ViewFS]);
         let _ = env_logger::builder().is_test(true).try_init();
 
         // VIEWFS feature creates one mount with a fallback

@@ -61,7 +61,7 @@ public class Main {
             conf.set(DFS_DATANODE_KERBEROS_PRINCIPAL_KEY, "hdfs/localhost@" + kdc.getRealm());
             conf.set(DFSConfigKeys.DFS_BLOCK_ACCESS_TOKEN_ENABLE_KEY, "true");
             conf.set(DFSConfigKeys.IGNORE_SECURE_PORTS_FOR_TESTING_KEY, "true");
-            if (flags.contains("token")) {
+            if (flags.contains("data_transfer_security")) {
                 conf.set(DFS_DATA_TRANSFER_PROTECTION_KEY, "authentication");
             }
         }

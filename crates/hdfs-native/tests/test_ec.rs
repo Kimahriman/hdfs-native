@@ -76,9 +76,7 @@ mod test {
 
         let mut dfs_features = HashSet::from([DfsFeatures::EC]);
         #[cfg(feature = "kerberos")]
-        dfs_features.insert(DfsFeatures::SECURITY);
-        #[cfg(feature = "token")]
-        dfs_features.insert(DfsFeatures::TOKEN);
+        dfs_features.insert(DfsFeatures::Security);
 
         let dfs = MiniDfs::with_features(&dfs_features);
         let client = Client::default();
@@ -122,9 +120,7 @@ mod test {
 
         let mut dfs_features = HashSet::from([DfsFeatures::EC]);
         #[cfg(feature = "kerberos")]
-        dfs_features.insert(DfsFeatures::SECURITY);
-        #[cfg(feature = "token")]
-        dfs_features.insert(DfsFeatures::TOKEN);
+        dfs_features.insert(DfsFeatures::Security);
 
         let _dfs = MiniDfs::with_features(&dfs_features);
         let client = Client::default();

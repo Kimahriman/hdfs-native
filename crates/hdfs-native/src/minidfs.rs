@@ -9,11 +9,12 @@ use which::which;
 
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub enum DfsFeatures {
-    SECURITY,
-    TOKEN,
-    PRIVACY,
+    Security,
+    DataTransferSecurity,
+    Token,
+    Privacy,
     HA,
-    VIEWFS,
+    ViewFS,
     EC,
     RBF,
 }
@@ -23,10 +24,11 @@ impl DfsFeatures {
         match self {
             DfsFeatures::EC => "ec",
             DfsFeatures::HA => "ha",
-            DfsFeatures::VIEWFS => "viewfs",
-            DfsFeatures::PRIVACY => "privacy",
-            DfsFeatures::SECURITY => "security",
-            DfsFeatures::TOKEN => "token",
+            DfsFeatures::ViewFS => "viewfs",
+            DfsFeatures::Privacy => "privacy",
+            DfsFeatures::Security => "security",
+            DfsFeatures::DataTransferSecurity => "data_transfer_security",
+            DfsFeatures::Token => "token",
             DfsFeatures::RBF => "rbf",
         }
     }
@@ -35,9 +37,9 @@ impl DfsFeatures {
         match value {
             "ec" => Some(DfsFeatures::EC),
             "ha" => Some(DfsFeatures::HA),
-            "privacy" => Some(DfsFeatures::PRIVACY),
-            "security" => Some(DfsFeatures::SECURITY),
-            "token" => Some(DfsFeatures::TOKEN),
+            "privacy" => Some(DfsFeatures::Privacy),
+            "security" => Some(DfsFeatures::Security),
+            "token" => Some(DfsFeatures::Token),
             _ => None,
         }
     }
@@ -56,6 +58,12 @@ impl MiniDfs {
         for feature in features.iter() {
             feature_args.push(feature.as_str());
         }
+        // If the `token` feature is enabled, we need to force the data transfer protection
+        #[cfg(feature = "token")]
+        if !features.contains(&DfsFeatures::DataTransferSecurity) {
+            feature_args.push(DfsFeatures::DataTransferSecurity.as_str());
+        }
+
         let mut child = Command::new(mvn_exec)
             .args([
                 "-f",
@@ -86,7 +94,7 @@ impl MiniDfs {
         // Make sure this doesn't care over from a token test to a non-token test
         env::remove_var("HADOOP_TOKEN_FILE_LOCATION");
 
-        if features.contains(&DfsFeatures::SECURITY) {
+        if features.contains(&DfsFeatures::Security) {
             let krb_conf = output.next().unwrap().unwrap();
             let kdestroy_exec = which("kdestroy").expect("Failed to find kdestroy executable");
             Command::new(kdestroy_exec).spawn().unwrap().wait().unwrap();
@@ -106,7 +114,7 @@ impl MiniDfs {
             );
 
             // If we testing token auth, set the path to the file and make sure we don't have an old kinit, otherwise kinit
-            if features.contains(&DfsFeatures::TOKEN) {
+            if features.contains(&DfsFeatures::Token) {
                 env::set_var("HADOOP_TOKEN_FILE_LOCATION", "target/test/delegation_token");
             } else {
                 let kinit_exec = which("kinit").expect("Failed to find kinit executable");
@@ -120,7 +128,7 @@ impl MiniDfs {
             }
         }
 
-        let url = if features.contains(&DfsFeatures::VIEWFS) {
+        let url = if features.contains(&DfsFeatures::ViewFS) {
             "viewfs://minidfs-viewfs"
         } else if features.contains(&DfsFeatures::RBF) {
             "hdfs://fed"
