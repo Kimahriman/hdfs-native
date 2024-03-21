@@ -41,6 +41,9 @@ public class Main {
         }
         MiniKdc kdc = null;
 
+        // If an existing token exists, make sure to delete it
+        new File("target/test/delegation_token").delete();
+
         Configuration conf = new Configuration();
         if (flags.contains("security")) {
             kdc = new MiniKdc(MiniKdc.createConf(), new File("target/test/kdc"));
@@ -157,8 +160,6 @@ public class Main {
                 DataOutputStream os = new DataOutputStream(new FileOutputStream("target/test/delegation_token"));
                 creds.writeTokenStorageToStream(os, SerializedFormat.WRITABLE);
                 os.close();
-            } else {
-                new File("target/test/delegation_token").delete();
             }
         }
 
