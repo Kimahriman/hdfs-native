@@ -41,6 +41,9 @@ public class Main {
         }
         MiniKdc kdc = null;
 
+        // If an existing token exists, make sure to delete it
+        new File("target/test/delegation_token").delete();
+
         Configuration conf = new Configuration();
         if (flags.contains("security")) {
             kdc = new MiniKdc(MiniKdc.createConf(), new File("target/test/kdc"));
@@ -60,8 +63,10 @@ public class Main {
             conf.set(DFSConfigKeys.DFS_DATANODE_KEYTAB_FILE_KEY, "target/test/hdfs.keytab");
             conf.set(DFS_DATANODE_KERBEROS_PRINCIPAL_KEY, "hdfs/localhost@" + kdc.getRealm());
             conf.set(DFSConfigKeys.DFS_BLOCK_ACCESS_TOKEN_ENABLE_KEY, "true");
-            // conf.set(DFS_DATA_TRANSFER_PROTECTION_KEY, "authentication");
             conf.set(DFSConfigKeys.IGNORE_SECURE_PORTS_FOR_TESTING_KEY, "true");
+            if (flags.contains("data_transfer_security")) {
+                conf.set(DFS_DATA_TRANSFER_PROTECTION_KEY, "authentication");
+            }
         }
 
         HdfsConfiguration hdfsConf = new HdfsConfiguration(conf);
@@ -155,8 +160,6 @@ public class Main {
                 DataOutputStream os = new DataOutputStream(new FileOutputStream("target/test/delegation_token"));
                 creds.writeTokenStorageToStream(os, SerializedFormat.WRITABLE);
                 os.close();
-            } else {
-                new File("target/test/delegation_token").delete();
             }
         }
 

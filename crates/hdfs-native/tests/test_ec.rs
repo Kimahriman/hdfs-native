@@ -74,10 +74,11 @@ mod test {
     async fn test_erasure_coded_read() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
+        let mut dfs_features = HashSet::from([DfsFeatures::EC]);
         #[cfg(feature = "kerberos")]
-        let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC, DfsFeatures::SECURITY]));
-        #[cfg(not(feature = "kerberos"))]
-        let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC]));
+        dfs_features.insert(DfsFeatures::Security);
+
+        let dfs = MiniDfs::with_features(&dfs_features);
         let client = Client::default();
 
         // Test each of Hadoop's built-in RS policies
@@ -117,10 +118,11 @@ mod test {
     async fn test_erasure_coded_write() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
+        let mut dfs_features = HashSet::from([DfsFeatures::EC]);
         #[cfg(feature = "kerberos")]
-        let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC, DfsFeatures::SECURITY]));
-        #[cfg(not(feature = "kerberos"))]
-        let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC]));
+        dfs_features.insert(DfsFeatures::Security);
+
+        let _dfs = MiniDfs::with_features(&dfs_features);
         let client = Client::default();
 
         // Test each of Hadoop's built-in RS policies

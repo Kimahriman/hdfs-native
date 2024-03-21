@@ -100,9 +100,7 @@ impl ReplicatedBlockWriter {
         server_defaults: hdfs::FsServerDefaultsProto,
     ) -> Result<Self> {
         let datanode = &block.locs[0].id;
-        let mut connection =
-            DatanodeConnection::connect(&format!("{}:{}", datanode.ip_addr, datanode.xfer_port))
-                .await?;
+        let mut connection = DatanodeConnection::connect(datanode, &block.block_token).await?;
 
         let checksum = hdfs::ChecksumProto {
             r#type: hdfs::ChecksumTypeProto::ChecksumCrc32c as i32,

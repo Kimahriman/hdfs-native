@@ -37,7 +37,7 @@ pub(crate) fn get_block_stream(
 
 /// Connects to a DataNode to do a read, attempting to used cached connections.
 async fn connect_and_send(
-    url: &str,
+    datanode_id: &hdfs::DatanodeIdProto,
     block: &hdfs::ExtendedBlockProto,
     token: common::TokenProto,
     offset: u64,
@@ -45,7 +45,7 @@ async fn connect_and_send(
 ) -> Result<(DatanodeConnection, BlockOpResponseProto)> {
     let mut remaining_attempts = 2;
     while remaining_attempts > 0 {
-        if let Some(mut conn) = DATANODE_CACHE.get(url) {
+        if let Some(mut conn) = DATANODE_CACHE.get(datanode_id) {
             let message = hdfs::OpReadBlockProto {
                 header: conn.build_header(block, Some(token.clone())),
                 offset,
@@ -68,7 +68,7 @@ async fn connect_and_send(
         }
         remaining_attempts -= 1;
     }
-    let mut conn = DatanodeConnection::connect(url).await?;
+    let mut conn = DatanodeConnection::connect(datanode_id, &token).await?;
 
     let message = hdfs::OpReadBlockProto {
         header: conn.build_header(block, Some(token)),
@@ -117,10 +117,9 @@ impl ReplicatedBlockStream {
         }
 
         let datanode = &self.block.locs[self.current_replica].id;
-        let datanode_url = format!("{}:{}", datanode.ip_addr, datanode.xfer_port);
 
         let (connection, response) = connect_and_send(
-            &datanode_url,
+            datanode,
             &self.block.b,
             self.block.block_token.clone(),
             self.offset as u64,
@@ -389,15 +388,8 @@ impl StripedBlockStream {
             return Ok(());
         }
 
-        let datanode_url = format!("{}:{}", datanode.ip_addr, datanode.xfer_port);
-        let (mut connection, response) = connect_and_send(
-            &datanode_url,
-            block,
-            token.clone(),
-            offset as u64,
-            len as u64,
-        )
-        .await?;
+        let (mut connection, response) =
+            connect_and_send(datanode, block, token.clone(), offset as u64, len as u64).await?;
 
         if response.status() != hdfs::Status::Success {
             return Err(HdfsError::DataTransferError(response.message().to_string()));

@@ -15,10 +15,11 @@ use crate::proto::common::rpc_sasl_proto::{SaslAuth, SaslState};
 use crate::proto::common::{
     RpcKindProto, RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto,
 };
+
 use crate::{HdfsError, Result};
 #[cfg(feature = "token")]
 use {
-    super::user::Token,
+    super::user::{BlockTokenIdentifier, Token},
     base64::{engine::general_purpose, Engine as _},
     gsasl_sys as gsasl,
     libc::{c_char, c_void, memcpy},
@@ -26,12 +27,25 @@ use {
     std::ptr,
     std::sync::atomic::AtomicPtr,
 };
+#[cfg(feature = "token")]
+use {
+    crate::proto::{
+        common::TokenProto,
+        hdfs::{
+            data_transfer_encryptor_message_proto::DataTransferEncryptorStatus,
+            DataTransferEncryptorMessageProto, DatanodeIdProto, HandshakeSecretProto,
+        },
+    },
+    tokio::io::{AsyncBufReadExt, BufStream},
+};
 
 #[cfg(feature = "kerberos")]
 use super::gssapi::GssapiSession;
 use super::user::{User, UserInfo};
 
 const SASL_CALL_ID: i32 = -33;
+#[cfg(feature = "token")]
+const SASL_TRANSFER_MAGIC_NUMBER: i32 = 0xDEADBEEFu32 as i32;
 const HDFS_DELEGATION_TOKEN: &str = "HDFS_DELEGATION_TOKEN";
 
 pub(crate) enum AuthMethod {
@@ -309,17 +323,6 @@ impl SaslReader {
     }
 }
 
-// TODO: Can we implement this?
-// impl AsyncRead for SaslReader {
-//     fn poll_read(
-//         self: Pin<&mut Self>,
-//         cx: &mut task::Context<'_>,
-//         buf: &mut ReadBuf<'_>,
-//     ) -> Poll<io::Result<()>> {
-//         todo!()
-//     }
-// }
-
 pub(crate) struct SaslWriter {
     stream: OwnedWriteHalf,
     session: Option<Arc<Mutex<Box<dyn SaslSession>>>>,
@@ -545,5 +548,105 @@ impl Drop for GSASLSession {
             gsasl::gsasl_finish(self.conn.load(std::sync::atomic::Ordering::SeqCst));
             gsasl::gsasl_done(self.ctx.load(std::sync::atomic::Ordering::SeqCst))
         }
+    }
+}
+
+#[cfg(feature = "token")]
+pub(crate) struct SaslDatanodeConnection {
+    stream: BufStream<TcpStream>,
+}
+
+#[cfg(feature = "token")]
+impl SaslDatanodeConnection {
+    pub fn create(stream: TcpStream) -> Self {
+        Self {
+            stream: BufStream::new(stream),
+        }
+    }
+
+    pub(crate) async fn negotiate(
+        mut self,
+        datanode_id: &DatanodeIdProto,
+        token: &TokenProto,
+    ) -> Result<TcpStream> {
+        // If it's a privileged port, don't do SASL negotation
+        if datanode_id.xfer_port <= 1024 {
+            return Ok(self.stream.into_inner());
+        }
+
+        self.stream.write_i32(SASL_TRANSFER_MAGIC_NUMBER).await?;
+        self.stream.flush().await?;
+
+        let mut session = GSASLSession::new("hdfs", "0", &token.clone().into())?;
+
+        let token_identifier = BlockTokenIdentifier::from_identifier(&token.identifier)?;
+
+        let handshake_secret = if !token_identifier.handshake_secret.is_empty() {
+            Some(HandshakeSecretProto {
+                bpid: token_identifier.block_pool_id.clone(),
+                secret: token_identifier.handshake_secret.clone(),
+            })
+        } else {
+            None
+        };
+
+        let message = DataTransferEncryptorMessageProto {
+            handshake_secret,
+            status: DataTransferEncryptorStatus::Success as i32,
+            ..Default::default()
+        };
+
+        debug!("Sending data transfer encryptor message: {:?}", message);
+
+        self.stream
+            .write_all(&message.encode_length_delimited_to_vec())
+            .await?;
+        self.stream.flush().await?;
+
+        let response = self.read_sasl_response().await?;
+        debug!("Data transfer encryptor response: {:?}", response);
+
+        let (payload, finished) = session.step(response.payload.as_ref().map(|p| &p[..]))?;
+        assert!(!finished);
+
+        let message = DataTransferEncryptorMessageProto {
+            status: DataTransferEncryptorStatus::Success as i32,
+            payload: Some(payload),
+            ..Default::default()
+        };
+
+        debug!("Sending data transfer encryptor message: {:?}", message);
+
+        self.stream
+            .write_all(&message.encode_length_delimited_to_vec())
+            .await?;
+        self.stream.flush().await?;
+
+        let response = self.read_sasl_response().await?;
+        debug!("Data transfer encryptor response: {:?}", response);
+
+        let (_, finished) = session.step(response.payload.as_ref().map(|p| &p[..]))?;
+
+        assert!(finished);
+
+        Ok(self.stream.into_inner())
+    }
+
+    async fn read_sasl_response(&mut self) -> Result<DataTransferEncryptorMessageProto> {
+        self.stream.fill_buf().await?;
+
+        let buf = self.stream.fill_buf().await?;
+        if buf.is_empty() {
+            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))?;
+        }
+        let msg_length = prost::decode_length_delimiter(buf)?;
+        let total_size = msg_length + prost::length_delimiter_len(msg_length);
+
+        let mut response_buf = BytesMut::zeroed(total_size);
+        self.stream.read_exact(&mut response_buf).await?;
+
+        Ok(DataTransferEncryptorMessageProto::decode_length_delimited(
+            response_buf.freeze(),
+        )?)
     }
 }
