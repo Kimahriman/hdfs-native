@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fmt::{Display, Formatter},
+};
 
 use base64::{engine::general_purpose, Engine as _};
 use md5::Digest;
@@ -15,6 +18,69 @@ use super::{
 
 static CHALLENGE_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#",?([a-zA-Z0-9]+)=("([^"]+)"|([^,]+)),?"#).unwrap());
+static RESPONSE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new("rspauth=([a-f0-9]{32})").unwrap());
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[repr(u8)]
+enum Qop {
+    Auth = 0,
+    AuthInt = 1,
+    AuthConf = 2,
+}
+
+impl TryFrom<&str> for Qop {
+    type Error = HdfsError;
+
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+        match value {
+            "auth" => Ok(Self::Auth),
+            "auth-int" => Ok(Self::AuthInt),
+            "auth-conf" => Ok(Self::AuthConf),
+            v => Err(HdfsError::SASLError(format!("Unknown qop value: {}", v))),
+        }
+    }
+}
+
+impl From<Qop> for String {
+    fn from(value: Qop) -> Self {
+        match value {
+            Qop::Auth => "auth",
+            Qop::AuthInt => "auth-int",
+            Qop::AuthConf => "auth-conf",
+        }
+        .to_string()
+    }
+}
+
+impl Display for Qop {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Qop::Auth => "auth",
+            Qop::AuthInt => "auth-int",
+            Qop::AuthConf => "auth-conf",
+        };
+
+        write!(f, "{}", s)
+    }
+}
+
+impl Qop {
+    fn has_security_layer(&self) -> bool {
+        !matches!(self, Qop::Auth)
+    }
+}
+
+static SUPPORTED_QOPS: [Qop; 1] = [Qop::Auth];
+
+fn choose_qop(options: Vec<Qop>) -> Result<Qop> {
+    options
+        .into_iter()
+        .filter(|qop| SUPPORTED_QOPS.contains(qop))
+        .max_by(|x, y| x.cmp(y))
+        .ok_or(HdfsError::SASLError(
+            "No valid QOP found for negotiation".to_string(),
+        ))
+}
 
 fn h(s: impl AsRef<[u8]>) -> Digest {
     md5::compute(s.as_ref())
@@ -30,14 +96,12 @@ fn gen_nonce() -> String {
     general_purpose::STANDARD.encode(cnonce_bytes)
 }
 
-// fn nonce() -> String {}
-
 #[derive(Debug)]
 #[allow(unused)]
 pub(super) struct Challenge {
     realm: String,
     nonce: String,
-    qop: Vec<String>,
+    qop: Vec<Qop>,
     maxbuf: u32,
     cipher: Option<Vec<String>>,
 }
@@ -58,7 +122,6 @@ impl TryFrom<Vec<u8>> for Challenge {
         println!("Parsing {}", decoded);
         let mut options: HashMap<String, String> = HashMap::new();
         for capture in CHALLENGE_PATTERN.captures_iter(&decoded) {
-            println!("{:?}", capture);
             let key = capture.get(1).unwrap().as_str().to_string();
             // Third group is quoted value, fourth is non-quoted value
             let value = capture
@@ -82,9 +145,8 @@ impl TryFrom<Vec<u8>> for Challenge {
                 "No qop supplied in DIGEST challenge".to_string(),
             ))?
             .split(',')
-            .map(|s| s.to_string())
-            .clone()
-            .collect();
+            .map(|s| s.try_into())
+            .collect::<Result<Vec<Qop>>>()?;
         let maxbuf: u32 = options
             .get("maxbuf")
             .map(|mb| mb.parse().unwrap())
@@ -107,7 +169,7 @@ struct DigestContext {
     nonce: String,
     cnonce: String,
     realm: String,
-    qop: String,
+    qop: Qop,
 }
 
 enum DigestState {
@@ -169,10 +231,10 @@ impl DigestSaslSession {
         .concat()
     }
 
-    fn a2(&self, initial: bool, qop: &str) -> String {
+    fn a2(&self, initial: bool, qop: &Qop) -> String {
         let digest_uri = format!("{}/{}", self.service, self.hostname);
         let authenticate = if initial { "AUTHENTICATE" } else { "" };
-        let tail = if qop != "auth" {
+        let tail = if qop.has_security_layer() {
             ":00000000000000000000000000000000"
         } else {
             ""
@@ -187,23 +249,26 @@ impl SaslSession for DigestSaslSession {
             DigestState::Pending => {
                 // First step, token is a challenge
                 let challenge: Challenge = token.unwrap().try_into().unwrap();
+
+                let qop = choose_qop(challenge.qop)?;
+
                 let ctx = DigestContext {
                     nonce: challenge.nonce.clone(),
                     cnonce: gen_nonce(),
                     realm: challenge.realm.clone(),
-                    qop: challenge.qop[0].clone(),
+                    qop: qop.clone(),
                 };
 
                 let response = self.compute(&ctx, true);
 
                 let message = format!(
-                    r#"username="{}", realm="{}", nonce="{}", cnonce="{}", nc={:08x}, qop={}, digest-uri="{}/{}", response={}, charset=utf-8"#,
+                    r#"username="{}",realm="{}",nonce="{}",cnonce="{}",nc={:08x},qop={},digest-uri="{}/{}",response={},charset=utf-8,cipher="3des""#,
                     self.auth_id,
                     challenge.realm,
                     ctx.nonce,
                     ctx.cnonce,
                     1,
-                    challenge.qop[0],
+                    qop,
                     self.service,
                     self.hostname,
                     response
@@ -213,15 +278,20 @@ impl SaslSession for DigestSaslSession {
                 Ok((message.as_bytes().to_vec(), false))
             }
             DigestState::Stepped(ctx) => {
-                let rspauth = String::from_utf8(token.unwrap().to_vec()).unwrap();
-
-                let mut rspauth_split = rspauth.split('=');
-                if rspauth_split.next().unwrap() != "rspauth" {
-                    panic!("not rspauth");
-                }
-
-                if rspauth_split.next().unwrap() != self.compute(&ctx, false) {
-                    panic!("rspauth didn't match");
+                let token_str = String::from_utf8(token.unwrap().to_vec()).map_err(|_| {
+                    HdfsError::SASLError("Failed to parse token as UTF-8 string".to_string())
+                })?;
+                if let Some(captures) = RESPONSE_PATTERN.captures(&token_str) {
+                    let rspauth = captures.get(1).unwrap();
+                    if rspauth.as_str() != self.compute(&ctx, false) {
+                        return Err(HdfsError::SASLError(
+                            "rspauth from server did not match".to_string(),
+                        ));
+                    }
+                } else {
+                    return Err(HdfsError::SASLError(
+                        "Message from server did not contain rspauth".to_string(),
+                    ));
                 }
 
                 self.state = DigestState::Completed(ctx);
@@ -237,7 +307,10 @@ impl SaslSession for DigestSaslSession {
     }
 
     fn has_security_layer(&self) -> bool {
-        false
+        match &self.state {
+            DigestState::Completed(ctx) => ctx.qop.has_security_layer(),
+            _ => false,
+        }
     }
 
     fn encode(&mut self, _buf: &[u8]) -> crate::Result<Vec<u8>> {
@@ -260,7 +333,7 @@ impl SaslSession for DigestSaslSession {
 #[cfg(test)]
 mod test {
     use crate::security::{
-        digest::{Challenge, DigestContext},
+        digest::{Challenge, DigestContext, Qop},
         user::Token,
     };
 
@@ -281,7 +354,7 @@ mod test {
 
         let challenge: Challenge = token.try_into().unwrap();
         assert_eq!(challenge.realm, "default");
-        assert_eq!(challenge.qop, vec!["auth-conf", "auth"]);
+        assert_eq!(challenge.qop, vec![Qop::AuthConf, Qop::Auth]);
         assert_eq!(
             challenge
                 .cipher
@@ -313,7 +386,7 @@ mod test {
             nonce: "A+DoU3+eajz9Ei11Ib0S9CUKLyLPh0qFJbwn1/OZ".to_string(),
             cnonce: "UGP4ejVb7M54KO4yqDwCsA==".to_string(),
             realm: "default".to_string(),
-            qop: "auth".to_string(),
+            qop: Qop::Auth,
         };
         assert_eq!(
             &session.compute(&ctx, true),
@@ -344,7 +417,7 @@ mod test {
             nonce: "tm3kclm9F0JMECFNJi5xk/NaGgQ75ZOqb9/vCHt5".to_string(),
             cnonce: "kp49R9SjR4de6ynNgMwNwQ==".to_string(),
             realm: "default".to_string(),
-            qop: "auth-conf".to_string(),
+            qop: Qop::Auth,
         };
         assert_eq!(
             &session.compute(&ctx, true),
