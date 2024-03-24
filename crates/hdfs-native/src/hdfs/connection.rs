@@ -707,8 +707,10 @@ impl DatanodeWriter {
     }
 }
 
+type DatanodeConnectionCacheEntry = VecDeque<(DateTime<Utc>, DatanodeConnection)>;
+
 pub(crate) struct DatanodeConnectionCache {
-    cache: Mutex<HashMap<String, VecDeque<(DateTime<Utc>, DatanodeConnection)>>>,
+    cache: Mutex<HashMap<String, DatanodeConnectionCacheEntry>>,
 }
 
 impl DatanodeConnectionCache {

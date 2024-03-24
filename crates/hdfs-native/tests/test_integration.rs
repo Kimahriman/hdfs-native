@@ -101,7 +101,7 @@ mod test {
     pub async fn test_with_features(features: &HashSet<DfsFeatures>) -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let _dfs = setup(&features);
+        let _dfs = setup(features);
         let client = Client::default();
 
         test_file_info(&client).await?;

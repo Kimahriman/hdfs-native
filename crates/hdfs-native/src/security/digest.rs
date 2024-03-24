@@ -33,6 +33,7 @@ fn gen_nonce() -> String {
 // fn nonce() -> String {}
 
 #[derive(Debug)]
+#[allow(unused)]
 pub(super) struct Challenge {
     realm: String,
     nonce: String,
@@ -80,7 +81,7 @@ impl TryFrom<Vec<u8>> for Challenge {
             .ok_or(HdfsError::SASLError(
                 "No qop supplied in DIGEST challenge".to_string(),
             ))?
-            .split(",")
+            .split(',')
             .map(|s| s.to_string())
             .clone()
             .collect();
@@ -90,7 +91,7 @@ impl TryFrom<Vec<u8>> for Challenge {
             .unwrap_or(65536);
         let cipher = options
             .remove("cipher")
-            .map(|c| c.split(",").map(|s| s.to_string()).collect());
+            .map(|c| c.split(',').map(|s| s.to_string()).collect());
 
         Ok(Self {
             realm,
@@ -223,14 +224,15 @@ impl SaslSession for DigestSaslSession {
                     panic!("rspauth didn't match");
                 }
 
+                self.state = DigestState::Completed(ctx);
                 Ok((Vec::new(), true))
             }
-            DigestState::Completed(ctx) => {
-                todo!()
-            }
-            DigestState::Errored => {
-                todo!()
-            }
+            DigestState::Completed(_) => Err(HdfsError::SASLError(
+                "Failed to step, DIGEST-MD5 handshake already complete".to_string(),
+            )),
+            DigestState::Errored => Err(HdfsError::SASLError(
+                "Failed to step, DIGEST-MD5 authentication failed".to_string(),
+            )),
         }
     }
 
@@ -238,11 +240,11 @@ impl SaslSession for DigestSaslSession {
         false
     }
 
-    fn encode(&mut self, buf: &[u8]) -> crate::Result<Vec<u8>> {
+    fn encode(&mut self, _buf: &[u8]) -> crate::Result<Vec<u8>> {
         todo!()
     }
 
-    fn decode(&mut self, buf: &[u8]) -> crate::Result<Vec<u8>> {
+    fn decode(&mut self, _buf: &[u8]) -> crate::Result<Vec<u8>> {
         todo!()
     }
 
