@@ -3,48 +3,32 @@ use log::{debug, warn};
 use prost::Message;
 use std::io;
 use std::sync::{Arc, Mutex};
-use tokio::net::tcp::OwnedWriteHalf;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::tcp::OwnedReadHalf,
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufStream},
+    net::tcp::{OwnedReadHalf, OwnedWriteHalf},
     net::TcpStream,
 };
 
-use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
-use crate::proto::common::rpc_sasl_proto::{SaslAuth, SaslState};
-use crate::proto::common::{
-    RpcKindProto, RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto,
-};
-
-use crate::{HdfsError, Result};
-#[cfg(feature = "token")]
-use {
-    super::user::{BlockTokenIdentifier, Token},
-    base64::{engine::general_purpose, Engine as _},
-    gsasl_sys as gsasl,
-    libc::{c_char, c_void, memcpy},
-    std::ffi::CString,
-    std::ptr,
-    std::sync::atomic::AtomicPtr,
-};
-#[cfg(feature = "token")]
-use {
-    crate::proto::{
-        common::TokenProto,
-        hdfs::{
-            data_transfer_encryptor_message_proto::DataTransferEncryptorStatus,
-            DataTransferEncryptorMessageProto, DatanodeIdProto, HandshakeSecretProto,
-        },
+use super::user::BlockTokenIdentifier;
+use crate::proto::{
+    common::{
+        rpc_response_header_proto::RpcStatusProto,
+        rpc_sasl_proto::{SaslAuth, SaslState},
+        RpcKindProto, RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto, TokenProto,
     },
-    tokio::io::{AsyncBufReadExt, BufStream},
+    hdfs::{
+        data_transfer_encryptor_message_proto::DataTransferEncryptorStatus,
+        DataTransferEncryptorMessageProto, DatanodeIdProto, HandshakeSecretProto,
+    },
 };
+use crate::security::digest::DigestSaslSession;
+use crate::{HdfsError, Result};
 
 #[cfg(feature = "kerberos")]
 use super::gssapi::GssapiSession;
 use super::user::{User, UserInfo};
 
 const SASL_CALL_ID: i32 = -33;
-#[cfg(feature = "token")]
 const SASL_TRANSFER_MAGIC_NUMBER: i32 = 0xDEADBEEFu32 as i32;
 const HDFS_DELEGATION_TOKEN: &str = "HDFS_DELEGATION_TOKEN";
 
@@ -206,10 +190,13 @@ impl SaslRpcClient {
                     let session = GssapiSession::new(auth.protocol(), auth.server_id())?;
                     return Ok((auth.clone(), Some(Box::new(session))));
                 }
-                #[cfg(feature = "token")]
                 (Some(AuthMethod::Token), Some(token)) => {
-                    debug!("Using token {:?}", token);
-                    let session = GSASLSession::new(auth.protocol(), auth.server_id(), token)?;
+                    let session = DigestSaslSession::new(
+                        auth.protocol().to_string(),
+                        auth.server_id().to_string(),
+                        token,
+                    );
+                    // let session = GSASLSession::new(auth.protocol(), auth.server_id(), token)?;
 
                     return Ok((auth.clone(), Some(Box::new(session))));
                 }
@@ -400,163 +387,10 @@ impl std::fmt::Debug for SaslWriter {
     }
 }
 
-#[cfg(feature = "token")]
-struct GSASLSession {
-    ctx: AtomicPtr<gsasl::Gsasl>,
-    conn: AtomicPtr<gsasl::Gsasl_session>,
-}
-
-#[cfg(feature = "token")]
-impl GSASLSession {
-    fn new(service: &str, hostname: &str, token: &Token) -> Result<Self> {
-        let mut ctx = ptr::null_mut::<gsasl::Gsasl>();
-
-        let ret = unsafe { gsasl::gsasl_init(&mut ctx) };
-        if ret != gsasl::Gsasl_rc::GSASL_OK as i32 {
-            return Err(HdfsError::SASLError(
-                "Failed to initialize SASL".to_string(),
-            ));
-        }
-
-        let mut conn = ptr::null_mut::<gsasl::Gsasl_session>();
-        let mechanism = CString::new("DIGEST-MD5").unwrap();
-
-        let ret = unsafe { gsasl::gsasl_client_start(ctx, mechanism.as_ptr(), &mut conn) };
-        if ret != gsasl::Gsasl_rc::GSASL_OK as i32 {
-            return Err(HdfsError::SASLError(
-                "Failed to create new SASL client".to_string(),
-            ));
-        }
-
-        debug!("Started SASL: {:?}, {:?}", conn, mechanism);
-
-        if ret != gsasl::Gsasl_rc::GSASL_OK as i32 {
-            return Err(HdfsError::SASLError(format!(
-                "Failed to start SASL client: {}",
-                ret
-            )));
-        }
-
-        let service_c = CString::new(service).unwrap();
-        let hostname_c = CString::new(hostname).unwrap();
-
-        unsafe {
-            gsasl::gsasl_property_set(
-                conn,
-                gsasl::Gsasl_property::GSASL_SERVICE,
-                service_c.as_ptr(),
-            );
-            gsasl::gsasl_property_set(
-                conn,
-                gsasl::Gsasl_property::GSASL_HOSTNAME,
-                hostname_c.as_ptr(),
-            );
-            let identifier =
-                CString::new(general_purpose::STANDARD.encode(&token.identifier)).unwrap();
-            let password = CString::new(general_purpose::STANDARD.encode(&token.password)).unwrap();
-
-            gsasl::gsasl_property_set(
-                conn,
-                gsasl::Gsasl_property::GSASL_AUTHID,
-                identifier.as_ptr(),
-            );
-            gsasl::gsasl_property_set(
-                conn,
-                gsasl::Gsasl_property::GSASL_PASSWORD,
-                password.as_ptr(),
-            );
-        }
-
-        Ok(Self {
-            ctx: AtomicPtr::new(ctx),
-            conn: AtomicPtr::new(conn),
-        })
-    }
-}
-
-#[cfg(feature = "token")]
-impl SaslSession for GSASLSession {
-    fn step(&mut self, token: Option<&[u8]>) -> Result<(Vec<u8>, bool)> {
-        let mut clientout = ptr::null_mut::<c_char>();
-        let mut clientoutlen: u64 = 0;
-
-        // The type is different depending on the OS
-        // #[cfg(target_os = "macos")]
-        let token_ptr = token.map(|t| t.as_ptr()).unwrap_or(ptr::null_mut()) as *const c_char;
-        // #[cfg(not(target_os = "macos"))]
-        // let token_ptr = token.map(|t| t.as_ptr()).unwrap_or(ptr::null_mut()) as *const u8;
-
-        let ret = unsafe {
-            gsasl::gsasl_step(
-                self.conn.load(std::sync::atomic::Ordering::SeqCst),
-                token_ptr,
-                token.map(|t| t.len()).unwrap_or(0) as u64,
-                &mut clientout,
-                &mut clientoutlen,
-            )
-        };
-
-        debug!("SASL step response: {}", ret);
-
-        if ret != gsasl::Gsasl_rc::GSASL_OK as i32
-            && ret != gsasl::Gsasl_rc::GSASL_NEEDS_MORE as i32
-        {
-            return Err(HdfsError::SASLError(format!(
-                "Failed to make SASL client step: {}",
-                ret
-            )));
-        }
-
-        let vec = unsafe {
-            let mut vec = vec![0u8; clientoutlen as usize];
-            memcpy(
-                vec.as_mut_ptr() as *mut c_void,
-                clientout as *const c_void,
-                vec.len(),
-            );
-            vec
-        };
-
-        Ok((vec, ret == gsasl::Gsasl_rc::GSASL_OK as i32))
-    }
-
-    fn has_security_layer(&self) -> bool {
-        false
-    }
-
-    fn encode(&mut self, _buf: &[u8]) -> Result<Vec<u8>> {
-        todo!()
-    }
-
-    fn decode(&mut self, _buf: &[u8]) -> Result<Vec<u8>> {
-        todo!()
-    }
-
-    fn get_user_info(&self) -> Result<UserInfo> {
-        // The token has all the info
-        Ok(UserInfo {
-            real_user: None,
-            effective_user: None,
-        })
-    }
-}
-
-#[cfg(feature = "token")]
-impl Drop for GSASLSession {
-    fn drop(&mut self) {
-        unsafe {
-            gsasl::gsasl_finish(self.conn.load(std::sync::atomic::Ordering::SeqCst));
-            gsasl::gsasl_done(self.ctx.load(std::sync::atomic::Ordering::SeqCst))
-        }
-    }
-}
-
-#[cfg(feature = "token")]
 pub(crate) struct SaslDatanodeConnection {
     stream: BufStream<TcpStream>,
 }
 
-#[cfg(feature = "token")]
 impl SaslDatanodeConnection {
     pub fn create(stream: TcpStream) -> Self {
         Self {
@@ -577,7 +411,8 @@ impl SaslDatanodeConnection {
         self.stream.write_i32(SASL_TRANSFER_MAGIC_NUMBER).await?;
         self.stream.flush().await?;
 
-        let mut session = GSASLSession::new("hdfs", "0", &token.clone().into())?;
+        let mut session =
+            DigestSaslSession::new("hdfs".to_string(), "0".to_string(), &token.clone().into());
 
         let token_identifier = BlockTokenIdentifier::from_identifier(&token.identifier)?;
 

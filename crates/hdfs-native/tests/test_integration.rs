@@ -26,7 +26,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "token")]
     async fn test_security_token() {
         test_with_features(&HashSet::from([DfsFeatures::Security, DfsFeatures::Token]))
             .await
@@ -36,7 +35,6 @@ mod test {
     #[tokio::test]
     #[ignore]
     #[serial]
-    #[cfg(feature = "token")]
     async fn test_privacy_token() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,
@@ -82,7 +80,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "token")]
     async fn test_security_token_ha() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,

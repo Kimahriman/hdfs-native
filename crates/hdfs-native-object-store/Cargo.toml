@@ -29,6 +29,5 @@ which = "4"
 
 [features]
 kerberos = ["hdfs-native/kerberos"]
-token = ["hdfs-native/token"]
 
 integration-test = ["hdfs-native/integration-test"]

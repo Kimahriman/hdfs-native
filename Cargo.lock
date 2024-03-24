@@ -628,12 +628,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 
 [[package]]
-name = "gsasl-sys"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd377f206007e661591b4c6a6ba9907a75ae24e2a9ef40f3d0750a1db6bd5dbd"
-
-[[package]]
 name = "h2"
 version = "0.3.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -681,16 +675,18 @@ dependencies = [
  "fs-hdfs3",
  "futures",
  "g2p",
- "gsasl-sys",
  "libc",
  "libgssapi",
  "log",
+ "md5",
  "num-traits",
  "once_cell",
  "prost",
  "prost-build",
  "prost-types",
  "protobuf-src",
+ "rand",
+ "regex",
  "roxmltree",
  "serial_test",
  "socket2",
@@ -1013,6 +1009,12 @@ name = "log"
 version = "0.4.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
+
+[[package]]
+name = "md5"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 
 [[package]]
 name = "memchr"

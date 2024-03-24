@@ -28,12 +28,10 @@ use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
 use crate::proto::common::TokenProto;
 use crate::proto::hdfs::DatanodeIdProto;
 use crate::proto::{common, hdfs};
+use crate::security::sasl::SaslDatanodeConnection;
 use crate::security::sasl::{SaslReader, SaslRpcClient, SaslWriter};
 use crate::security::user::UserInfo;
 use crate::{HdfsError, Result};
-
-#[cfg(feature = "token")]
-use crate::security::sasl::SaslDatanodeConnection;
 
 const PROTOCOL: &str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
 const DATA_TRANSFER_VERSION: u16 = 28;
@@ -531,7 +529,6 @@ impl DatanodeConnection {
         let stream = connect(&url).await?;
 
         // If the token has an identifier, we can do SASL negotation
-        #[cfg(feature = "token")]
         let stream = if token.identifier.is_empty() {
             stream
         } else {
