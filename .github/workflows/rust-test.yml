@@ -44,7 +44,7 @@ jobs:
         run: sudo apt-get install -y libkrb5-dev libgsasl-dev
 
       - name: build and lint with clippy
-        run: cargo clippy --tests --features kerberos,token,integration-test
+        run: cargo clippy --tests --features kerberos,integration-test
 
       - name: Check docs
         run: cargo doc
@@ -55,11 +55,8 @@ jobs:
       - name: Check kerberos
         run: cargo check --features kerberos
 
-      - name: Check token
-        run: cargo check --features token
-
       - name: Check all features
-        run: cargo check --features kerberos,token,integration-test
+        run: cargo check --features kerberos,integration-test
 
   test:
     strategy:
@@ -102,4 +99,4 @@ jobs:
           echo "$GITHUB_WORKSPACE/hadoop-3.3.6/bin" >> $GITHUB_PATH
 
       - name: Run tests
-        run: cargo test --features kerberos,token,integration-test
+        run: cargo test --features kerberos,integration-test

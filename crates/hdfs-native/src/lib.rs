@@ -25,8 +25,6 @@
 //!
 //! # Optional cargo package features
 //! - `kerberos` - include support for Kerberos authentication. Uses the libgssapi package. Supports all RPC authentication and encryption methods.
-//! - `token` - include support for Token authentication. Uses the gsasl native library. Only
-//!   supports authentication, not integrity or privacy modes.
 
 pub mod client;
 pub(crate) mod common;
