@@ -102,4 +102,4 @@ jobs:
           echo "$GITHUB_WORKSPACE/hadoop-3.3.6/bin" >> $GITHUB_PATH
 
       - name: Run tests
-        run: cargo test --features kerberos,token,integration-test
+        run: cargo test --features kerberos,token,integration-test test_erasure_coded
