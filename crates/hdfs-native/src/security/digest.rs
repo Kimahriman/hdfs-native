@@ -124,7 +124,6 @@ impl TryFrom<Vec<u8>> for Challenge {
 
     fn try_from(value: Vec<u8>) -> core::result::Result<Self, Self::Error> {
         let decoded = String::from_utf8(value).unwrap();
-        println!("Parsing {}", decoded);
         let mut options: HashMap<String, String> = HashMap::new();
         for capture in CHALLENGE_PATTERN.captures_iter(&decoded) {
             let key = capture.get(1).unwrap().as_str().to_string();
