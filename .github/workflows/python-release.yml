@@ -40,7 +40,7 @@ jobs:
           container: quay.io/pypa/manylinux2014_${{ matrix.target }}:latest
           docker-options: -e LD_LIBRARY_PATH=/opt/rh/llvm-toolset-7.0/root/usr/lib64 -e LLVM_CONFIG_PATH=/opt/rh/llvm-toolset-7.0/root/usr/bin/llvm-config
           before-script-linux: |
-            yum install -y epel-release && yum install -y krb5-devel libgsasl-devel llvm-toolset-7.0-clang llvm-toolset-7.0-llvm-devel
+            yum install -y epel-release && yum install -y krb5-devel llvm-toolset-7.0-clang llvm-toolset-7.0-llvm-devel
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
@@ -56,7 +56,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install native libs
         run:
-          brew install krb5 gsasl
+          brew install krb5
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:

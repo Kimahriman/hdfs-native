@@ -43,21 +43,20 @@ All other settings are generally assumed to be the defaults currently. For insta
 
 ### Mac
 ```
-brew install gsasl krb5
+brew install krb5
 # You might need these env vars on newer Macs
 export BINDGEN_EXTRA_CLANG_ARGS="-I/opt/homebrew/include"
 export LIBRARY_PATH=/opt/homebrew/lib
-cargo build --features token,kerberos
+cargo build --features kerberos
 ```
 
 ### Ubuntu
 ```
-apt-get install clang libkrb5-dev libgsasl-dev
-cargo build --features token,kerberos
+apt-get install clang libkrb5-dev
+cargo build --features kerberos
 ```
 
 ## Crate features
-- `token` - enables token based DIGEST-MD5 authentication support. This uses the `gsasl` native library and only supports authentication, not integrity or confidentiality
 - `kerberos` - enables kerberos GSSAPI authentication support. This uses the `libgssapi` crate and supports integrity as well as confidentiality
 
 ## Object store implementation
@@ -67,7 +66,7 @@ An object_store implementation for HDFS is provided in the [hdfs-native-object-s
 The tests are mostly integration tests that utilize a small Java application in `rust/mindifs/` that runs a custom `MiniDFSCluster`. To run the tests, you need to have Java, Maven, Hadoop binaries, and Kerberos tools available and on your path. Any Java version between 8 and 17 should work.
 
 ```bash
-cargo test -p hdfs-native --features token,kerberos,intergation-test
+cargo test -p hdfs-native --features kerberos,intergation-test
 ```
 
 ### Python tests
