@@ -99,4 +99,4 @@ jobs:
           echo "$GITHUB_WORKSPACE/hadoop-3.3.6/bin" >> $GITHUB_PATH
 
       - name: Run tests
-        run: cargo test --features integration-test test_erasure_coded -- --nocapture
+        run: cargo test -p hdfs-native --features integration-test test_erasure_coded -- --nocapture
