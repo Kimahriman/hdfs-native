@@ -55,6 +55,8 @@ public class Main {
             conf.set(HADOOP_SECURITY_AUTHORIZATION, "true");
             if (flags.contains("privacy")) {
                 conf.set(HADOOP_RPC_PROTECTION, "privacy");
+            } else if (flags.contains("integrity")) {
+                conf.set(HADOOP_RPC_PROTECTION, "integrity");
             } else {
                 conf.set(HADOOP_RPC_PROTECTION, "authentication");
             }
