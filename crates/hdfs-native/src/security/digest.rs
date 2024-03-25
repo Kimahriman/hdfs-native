@@ -23,11 +23,12 @@ static CHALLENGE_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#",?([a-zA-Z0-9]+)=("([^"]+)"|([^,]+)),?"#).unwrap());
 static RESPONSE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new("rspauth=([a-f0-9]{32})").unwrap());
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[repr(u8)]
 enum Qop {
-    Auth,
-    AuthInt,
-    AuthConf,
+    Auth = 0,
+    AuthInt = 1,
+    AuthConf = 2,
 }
 
 impl TryFrom<&str> for Qop {
@@ -67,14 +68,6 @@ impl Display for Qop {
 }
 
 impl Qop {
-    fn security_level(&self) -> u8 {
-        match self {
-            Self::Auth => 0,
-            Self::AuthInt => 1,
-            Self::AuthConf => 2,
-        }
-    }
-
     fn has_security_layer(&self) -> bool {
         !matches!(self, Qop::Auth)
     }
@@ -86,7 +79,7 @@ fn choose_qop(options: Vec<Qop>) -> Result<Qop> {
     options
         .into_iter()
         .filter(|qop| SUPPORTED_QOPS.contains(qop))
-        .max_by(|x, y| x.security_level().cmp(&y.security_level()))
+        .max_by(|x, y| x.cmp(y))
         .ok_or(HdfsError::SASLError(
             "No valid QOP found for negotiation".to_string(),
         ))
