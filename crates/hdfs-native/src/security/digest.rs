@@ -4,7 +4,8 @@ use std::{
 };
 
 use base64::{engine::general_purpose, Engine as _};
-use md5::Digest;
+use hmac::{Hmac, Mac};
+use md5::{Digest, Md5};
 use once_cell::sync::Lazy;
 use rand::Rng;
 use regex::Regex;
@@ -16,16 +17,17 @@ use super::{
     user::{Token, UserInfo},
 };
 
+type HmacMD5 = Hmac<Md5>;
+
 static CHALLENGE_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#",?([a-zA-Z0-9]+)=("([^"]+)"|([^,]+)),?"#).unwrap());
 static RESPONSE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new("rspauth=([a-f0-9]{32})").unwrap());
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-#[repr(u8)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 enum Qop {
-    Auth = 0,
-    AuthInt = 1,
-    AuthConf = 2,
+    Auth,
+    AuthInt,
+    AuthConf,
 }
 
 impl TryFrom<&str> for Qop {
@@ -65,28 +67,38 @@ impl Display for Qop {
 }
 
 impl Qop {
+    fn security_level(&self) -> u8 {
+        match self {
+            Self::Auth => 0,
+            Self::AuthInt => 1,
+            Self::AuthConf => 2,
+        }
+    }
+
     fn has_security_layer(&self) -> bool {
         !matches!(self, Qop::Auth)
     }
 }
 
-static SUPPORTED_QOPS: [Qop; 1] = [Qop::Auth];
+static SUPPORTED_QOPS: [Qop; 2] = [Qop::Auth, Qop::AuthInt];
 
 fn choose_qop(options: Vec<Qop>) -> Result<Qop> {
     options
         .into_iter()
         .filter(|qop| SUPPORTED_QOPS.contains(qop))
-        .max_by(|x, y| x.cmp(y))
+        .max_by(|x, y| x.security_level().cmp(&y.security_level()))
         .ok_or(HdfsError::SASLError(
             "No valid QOP found for negotiation".to_string(),
         ))
 }
 
-fn h(s: impl AsRef<[u8]>) -> Digest {
-    md5::compute(s.as_ref())
+fn h(b: impl AsRef<[u8]>) -> Vec<u8> {
+    let mut hasher = Md5::new();
+    hasher.update(b.as_ref());
+    hasher.finalize().to_vec()
 }
 
-fn kd(k: impl AsRef<[u8]>, v: impl AsRef<[u8]>) -> Digest {
+fn kd(k: impl AsRef<[u8]>, v: impl AsRef<[u8]>) -> Vec<u8> {
     h([k.as_ref(), b":", v.as_ref()].concat())
 }
 
@@ -172,10 +184,20 @@ struct DigestContext {
     qop: Qop,
 }
 
+struct IntegrityContext {
+    kic: Vec<u8>,
+    kis: Vec<u8>,
+    seq_num: u32,
+}
+
+enum SecurityContext {
+    Integrity(IntegrityContext),
+}
+
 enum DigestState {
     Pending,
     Stepped(DigestContext),
-    Completed(DigestContext),
+    Completed(Option<SecurityContext>),
     Errored,
 }
 
@@ -199,17 +221,17 @@ impl DigestSaslSession {
     }
 
     fn compute(&self, ctx: &DigestContext, initial: bool) -> String {
-        let x = format!("{:x}", h(self.a1(ctx)));
+        let x = hex::encode(h(self.a1(ctx)));
         let y = format!(
-            "{}:{:08x}:{}:{}:{:x}",
+            "{}:{:08x}:{}:{}:{}",
             ctx.nonce,
             1,
             ctx.cnonce,
             ctx.qop,
-            h(self.a2(initial, &ctx.qop))
+            hex::encode(h(self.a2(initial, &ctx.qop)))
         );
 
-        format!("{:x}", kd(x, y))
+        hex::encode(kd(x, y))
     }
 
     fn a1(&self, ctx: &DigestContext) -> Vec<u8> {
@@ -294,7 +316,18 @@ impl SaslSession for DigestSaslSession {
                     ));
                 }
 
-                self.state = DigestState::Completed(ctx);
+                self.state = match ctx.qop {
+                    Qop::Auth => DigestState::Completed(None),
+                    Qop::AuthInt => {
+                        let int_ctx = IntegrityContext {
+                            kic: h([&h(self.a1(&ctx))[..], b"Digest session key to client-to-server signing key magic constant"].concat()),
+                            kis: h([&h(self.a1(&ctx))[..], b"Digest session key to server-to-client signing key magic constant"].concat()),
+                            seq_num: 0
+                        };
+                        DigestState::Completed(Some(SecurityContext::Integrity(int_ctx)))
+                    }
+                    _ => todo!(),
+                };
                 Ok((Vec::new(), true))
             }
             DigestState::Completed(_) => Err(HdfsError::SASLError(
@@ -308,17 +341,64 @@ impl SaslSession for DigestSaslSession {
 
     fn has_security_layer(&self) -> bool {
         match &self.state {
-            DigestState::Completed(ctx) => ctx.qop.has_security_layer(),
+            DigestState::Completed(ctx) => ctx.is_some(),
             _ => false,
         }
     }
 
-    fn encode(&mut self, _buf: &[u8]) -> crate::Result<Vec<u8>> {
-        todo!()
+    fn encode(&mut self, buf: &[u8]) -> crate::Result<Vec<u8>> {
+        match &mut self.state {
+            DigestState::Completed(ctx) => match ctx {
+                Some(SecurityContext::Integrity(int_ctx)) => {
+                    let mut mac = HmacMD5::new_from_slice(&int_ctx.kic).unwrap();
+                    mac.update(&int_ctx.seq_num.to_be_bytes());
+                    mac.update(buf);
+                    let result = mac.finalize().into_bytes();
+
+                    let message =
+                        [buf, &result[0..10], &[0, 1], &int_ctx.seq_num.to_be_bytes()].concat();
+
+                    int_ctx.seq_num += 1;
+                    Ok(message)
+                }
+                None => Err(HdfsError::SASLError(
+                    "QOP doesn't support security layer".to_string(),
+                )),
+            },
+            _ => Err(HdfsError::SASLError(
+                "SASL negotiation not complete, can't encode message".to_string(),
+            )),
+        }
     }
 
-    fn decode(&mut self, _buf: &[u8]) -> crate::Result<Vec<u8>> {
-        todo!()
+    fn decode(&mut self, buf: &[u8]) -> crate::Result<Vec<u8>> {
+        match &self.state {
+            DigestState::Completed(ctx) => match ctx {
+                Some(SecurityContext::Integrity(int_ctx)) => {
+                    let message = &buf[0..buf.len() - 16];
+                    let hmac = &buf[buf.len() - 16..buf.len() - 6];
+                    let mut seq_num_bytes = [0u8; 4];
+                    seq_num_bytes.copy_from_slice(&buf[buf.len() - 4..]);
+                    let seq_num = u32::from_be_bytes(seq_num_bytes);
+
+                    let mut mac = HmacMD5::new_from_slice(&int_ctx.kis).unwrap();
+                    mac.update(&seq_num.to_be_bytes());
+                    mac.update(message);
+
+                    mac.verify_truncated_left(hmac).map_err(|_| {
+                        HdfsError::SASLError("Integrity HMAC check failed".to_string())
+                    })?;
+
+                    Ok(message.to_vec())
+                }
+                None => Err(HdfsError::SASLError(
+                    "QOP doesn't support security layer".to_string(),
+                )),
+            },
+            _ => Err(HdfsError::SASLError(
+                "SASL negotiation not complete, can't decode message".to_string(),
+            )),
+        }
     }
 
     fn get_user_info(&self) -> crate::Result<super::user::UserInfo> {
