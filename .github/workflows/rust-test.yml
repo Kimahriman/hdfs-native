@@ -89,8 +89,8 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Install native libs
-        run: sudo apt-get install -y libkrb5-dev krb5-user
+      # - name: Install native libs
+      #   run: sudo apt-get install -y libkrb5-dev krb5-user
 
       - name: Download Hadoop
         run: |
