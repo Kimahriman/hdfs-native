@@ -11,6 +11,7 @@ use which::which;
 pub enum DfsFeatures {
     Security,
     Token,
+    Integrity,
     Privacy,
     HA,
     ViewFS,
@@ -26,6 +27,7 @@ impl DfsFeatures {
             DfsFeatures::ViewFS => "viewfs",
             DfsFeatures::Privacy => "privacy",
             DfsFeatures::Security => "security",
+            DfsFeatures::Integrity => "integrity",
             DfsFeatures::Token => "token",
             DfsFeatures::RBF => "rbf",
         }

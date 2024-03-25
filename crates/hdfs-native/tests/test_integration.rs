@@ -36,15 +36,25 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    async fn test_privacy_token() {
-        let err = test_with_features(&HashSet::from([
+    async fn test_integrity_kerberos() {
+        test_with_features(&HashSet::from([
+            DfsFeatures::Security,
+            DfsFeatures::Integrity,
+        ]))
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_integrity_token() {
+        test_with_features(&HashSet::from([
             DfsFeatures::Security,
             DfsFeatures::Token,
-            DfsFeatures::Privacy,
+            DfsFeatures::Integrity,
         ]))
-        .await;
-
-        assert!(err.is_err_and(|e| matches!(e, HdfsError::SASLError(_))))
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -57,6 +67,19 @@ mod test {
         ]))
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_privacy_token() {
+        let err = test_with_features(&HashSet::from([
+            DfsFeatures::Security,
+            DfsFeatures::Token,
+            DfsFeatures::Privacy,
+        ]))
+        .await;
+
+        assert!(err.is_err_and(|e| matches!(e, HdfsError::SASLError(_))))
     }
 
     #[tokio::test]

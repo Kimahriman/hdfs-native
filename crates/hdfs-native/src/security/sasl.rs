@@ -292,8 +292,7 @@ impl SaslReader {
                         .unwrap()
                         .lock()
                         .unwrap()
-                        .decode(response.token())
-                        .unwrap_or_else(|_| todo!());
+                        .decode(response.token())?;
                     self.buffer = Bytes::from(decoded)
                 }
                 let copy_len = usize::min(bytes_remaining, self.buffer.remaining());
