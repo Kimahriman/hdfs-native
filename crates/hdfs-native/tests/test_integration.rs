@@ -5,7 +5,9 @@ mod common;
 mod test {
     use crate::common::{assert_bufs_equal, setup, TEST_FILE_INTS};
     use bytes::{BufMut, BytesMut};
-    use hdfs_native::{client::FileStatus, minidfs::DfsFeatures, Client, Result, WriteOptions};
+    use hdfs_native::{
+        client::FileStatus, minidfs::DfsFeatures, Client, HdfsError, Result, WriteOptions,
+    };
     use serial_test::serial;
     use std::collections::HashSet;
 
@@ -26,7 +28,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "token")]
     async fn test_security_token() {
         test_with_features(&HashSet::from([DfsFeatures::Security, DfsFeatures::Token]))
             .await
@@ -34,17 +35,16 @@ mod test {
     }
 
     #[tokio::test]
-    #[ignore]
     #[serial]
-    #[cfg(feature = "token")]
     async fn test_privacy_token() {
-        test_with_features(&HashSet::from([
+        let err = test_with_features(&HashSet::from([
             DfsFeatures::Security,
             DfsFeatures::Token,
             DfsFeatures::Privacy,
         ]))
-        .await
-        .unwrap();
+        .await;
+
+        assert!(err.is_err_and(|e| matches!(e, HdfsError::SASLError(_))))
     }
 
     #[tokio::test]
@@ -82,7 +82,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "token")]
     async fn test_security_token_ha() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,
@@ -104,7 +103,7 @@ mod test {
     pub async fn test_with_features(features: &HashSet<DfsFeatures>) -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let _dfs = setup(&features);
+        let _dfs = setup(features);
         let client = Client::default();
 
         test_file_info(&client).await?;

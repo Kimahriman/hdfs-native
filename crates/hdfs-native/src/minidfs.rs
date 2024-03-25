@@ -10,7 +10,6 @@ use which::which;
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub enum DfsFeatures {
     Security,
-    DataTransferSecurity,
     Token,
     Privacy,
     HA,
@@ -27,7 +26,6 @@ impl DfsFeatures {
             DfsFeatures::ViewFS => "viewfs",
             DfsFeatures::Privacy => "privacy",
             DfsFeatures::Security => "security",
-            DfsFeatures::DataTransferSecurity => "data_transfer_security",
             DfsFeatures::Token => "token",
             DfsFeatures::RBF => "rbf",
         }
@@ -57,11 +55,6 @@ impl MiniDfs {
         let mut feature_args: Vec<&str> = Vec::new();
         for feature in features.iter() {
             feature_args.push(feature.as_str());
-        }
-        // If the `token` feature is enabled, we need to force the data transfer protection
-        #[cfg(feature = "token")]
-        if !features.contains(&DfsFeatures::DataTransferSecurity) {
-            feature_args.push(DfsFeatures::DataTransferSecurity.as_str());
         }
 
         let mut child = Command::new(mvn_exec)
