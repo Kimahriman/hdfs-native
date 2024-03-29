@@ -23,7 +23,7 @@ Here is a list of currently supported and unsupported but possible future featur
 
 ### Security Features
 - [x] Kerberos authentication (GSSAPI SASL support)
-- [x] Token authentication (DIGEST-MD5 SASL support, no encryption support)
+- [x] Token authentication (DIGEST-MD5 SASL support)
 - [x] NameNode SASL connection
 - [x] DataNode SASL connection
 - [ ] DataNode data transfer encryption
