@@ -72,14 +72,13 @@ mod test {
     #[tokio::test]
     #[serial]
     async fn test_privacy_token() {
-        let err = test_with_features(&HashSet::from([
+        test_with_features(&HashSet::from([
             DfsFeatures::Security,
             DfsFeatures::Token,
             DfsFeatures::Privacy,
         ]))
-        .await;
-
-        assert!(err.is_err_and(|e| matches!(e, HdfsError::SASLError(_))))
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

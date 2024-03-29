@@ -4,6 +4,8 @@ use std::{
 };
 
 use base64::{engine::general_purpose, Engine as _};
+use cbc::cipher::{BlockEncryptMut, KeyIvInit};
+use cipher::BlockDecryptMut;
 use hmac::{Hmac, Mac};
 use md5::{Digest, Md5};
 use once_cell::sync::Lazy;
@@ -18,12 +20,14 @@ use super::{
 };
 
 type HmacMD5 = Hmac<Md5>;
+type TdesCBCEnc = cbc::Encryptor<des::TdesEde2>;
+type TdesCBCDec = cbc::Decryptor<des::TdesEde2>;
 
 static CHALLENGE_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#",?([a-zA-Z0-9]+)=("([^"]+)"|([^,]+)),?"#).unwrap());
 static RESPONSE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new("rspauth=([a-f0-9]{32})").unwrap());
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[repr(u8)]
 enum Qop {
     Auth = 0,
@@ -73,16 +77,50 @@ impl Qop {
     }
 }
 
-static SUPPORTED_QOPS: [Qop; 2] = [Qop::Auth, Qop::AuthInt];
-
 fn choose_qop(options: Vec<Qop>) -> Result<Qop> {
     options
         .into_iter()
-        .filter(|qop| SUPPORTED_QOPS.contains(qop))
         .max_by(|x, y| x.cmp(y))
         .ok_or(HdfsError::SASLError(
             "No valid QOP found for negotiation".to_string(),
         ))
+}
+
+fn choose_cipher(options: &[String]) -> Result<String> {
+    // Only allow 3DES
+    options
+        .iter()
+        .find(|o| *o == "3des")
+        .cloned()
+        .ok_or(HdfsError::SASLError(
+            "No valid cipher found, only 3DES is supported".to_string(),
+        ))
+}
+
+// We need to take 7 bytes of key and turn it into 8 odd-parity bytes
+fn construct_des_key(key: &[u8]) -> Vec<u8> {
+    assert_eq!(key.len(), 14);
+    let mut output = Vec::with_capacity(16);
+
+    let mut bytes = [0u8; 8];
+    for byte_range in [0..7, 7..14] {
+        key[byte_range]
+            .iter()
+            .zip(bytes.iter_mut())
+            .for_each(|(k, b)| *b = *k);
+        let bits = u64::from_be_bytes(bytes);
+
+        for i in 0..8 {
+            let mut byte = (bits >> ((8 - i) * 7)) as u8 & 0xFE;
+            let ones = byte.count_ones();
+            if ones % 2 == 1 {
+                // Set odd parity bit
+                byte |= 0x01;
+            }
+            output.push(byte);
+        }
+    }
+    output
 }
 
 fn h(b: impl AsRef<[u8]>) -> Vec<u8> {
@@ -176,16 +214,44 @@ struct DigestContext {
     qop: Qop,
 }
 
-struct IntegrityContext {
-    kic: Vec<u8>,
-    kis: Vec<u8>,
+struct KeyPair {
+    client: Vec<u8>,
+    server: Vec<u8>,
+}
+
+struct SecurityContext {
+    integrity_keys: KeyPair,
+    encryptor: Option<TdesCBCEnc>,
+    decryptor: Option<TdesCBCDec>,
     seq_num: u32,
 }
 
-enum SecurityContext {
-    Integrity(IntegrityContext),
+impl SecurityContext {
+    fn new(integrity_keys: KeyPair, encryption_keys: Option<KeyPair>) -> Self {
+        let encryptor = encryption_keys.as_ref().map(|enc_keys| {
+            TdesCBCEnc::new_from_slices(
+                &construct_des_key(&enc_keys.client[..14]),
+                &enc_keys.client[8..],
+            )
+            .unwrap()
+        });
+        let decryptor = encryption_keys.as_ref().map(|enc_keys| {
+            TdesCBCDec::new_from_slices(
+                &construct_des_key(&enc_keys.server[..14]),
+                &enc_keys.server[8..],
+            )
+            .unwrap()
+        });
+        SecurityContext {
+            integrity_keys,
+            encryptor,
+            decryptor,
+            seq_num: 0,
+        }
+    }
 }
 
+#[allow(clippy::large_enum_variant)]
 enum DigestState {
     Pending,
     Stepped(DigestContext),
@@ -255,6 +321,42 @@ impl DigestSaslSession {
         };
         format!("{}:{}{}", authenticate, digest_uri, tail)
     }
+
+    fn integrity_keys(&self, ctx: &DigestContext) -> KeyPair {
+        let kic = h([
+            &h(self.a1(ctx))[..],
+            b"Digest session key to client-to-server signing key magic constant",
+        ]
+        .concat());
+        let kis = h([
+            &h(self.a1(ctx))[..],
+            b"Digest session key to server-to-client signing key magic constant",
+        ]
+        .concat());
+
+        KeyPair {
+            client: kic,
+            server: kis,
+        }
+    }
+
+    fn confidentiality_keys(&self, ctx: &DigestContext) -> KeyPair {
+        let kic = h([
+            &h(self.a1(ctx))[..],
+            b"Digest H(A1) to client-to-server sealing key magic constant",
+        ]
+        .concat());
+        let kis = h([
+            &h(self.a1(ctx))[..],
+            b"Digest H(A1) to server-to-client sealing key magic constant",
+        ]
+        .concat());
+
+        KeyPair {
+            client: kic,
+            server: kis,
+        }
+    }
 }
 
 impl SaslSession for DigestSaslSession {
@@ -265,18 +367,27 @@ impl SaslSession for DigestSaslSession {
                 let challenge: Challenge = token.unwrap().try_into().unwrap();
 
                 let qop = choose_qop(challenge.qop)?;
+                let cipher = match (qop, &challenge.cipher) {
+                    (Qop::AuthConf, Some(cipher)) => Some(choose_cipher(cipher)?),
+                    (Qop::AuthConf, None) => {
+                        return Err(HdfsError::SASLError(
+                            "Confidentiality was chosen, but no cipher was provided".to_string(),
+                        ))
+                    }
+                    _ => None,
+                };
 
                 let ctx = DigestContext {
                     nonce: challenge.nonce.clone(),
                     cnonce: gen_nonce(),
                     realm: challenge.realm.clone(),
-                    qop: qop.clone(),
+                    qop,
                 };
 
                 let response = self.compute(&ctx, true);
 
-                let message = format!(
-                    r#"username="{}",realm="{}",nonce="{}",cnonce="{}",nc={:08x},qop={},digest-uri="{}/{}",response={},charset=utf-8,cipher="3des""#,
+                let mut message = format!(
+                    r#"username="{}",realm="{}",nonce="{}",cnonce="{}",nc={:08x},qop={},digest-uri="{}/{}",response={},charset=utf-8"#,
                     self.auth_id,
                     challenge.realm,
                     ctx.nonce,
@@ -287,6 +398,9 @@ impl SaslSession for DigestSaslSession {
                     self.hostname,
                     response
                 );
+                if let Some(c) = cipher {
+                    message.push_str(&format!(r#",cipher="{}""#, c));
+                }
 
                 self.state = DigestState::Stepped(ctx);
                 Ok((message.as_bytes().to_vec(), false))
@@ -310,15 +424,14 @@ impl SaslSession for DigestSaslSession {
 
                 self.state = match ctx.qop {
                     Qop::Auth => DigestState::Completed(None),
-                    Qop::AuthInt => {
-                        let int_ctx = IntegrityContext {
-                            kic: h([&h(self.a1(&ctx))[..], b"Digest session key to client-to-server signing key magic constant"].concat()),
-                            kis: h([&h(self.a1(&ctx))[..], b"Digest session key to server-to-client signing key magic constant"].concat()),
-                            seq_num: 0
-                        };
-                        DigestState::Completed(Some(SecurityContext::Integrity(int_ctx)))
-                    }
-                    _ => todo!(),
+                    Qop::AuthInt => DigestState::Completed(Some(SecurityContext::new(
+                        self.integrity_keys(&ctx),
+                        None,
+                    ))),
+                    Qop::AuthConf => DigestState::Completed(Some(SecurityContext::new(
+                        self.integrity_keys(&ctx),
+                        Some(self.confidentiality_keys(&ctx)),
+                    ))),
                 };
                 Ok((Vec::new(), true))
             }
@@ -340,23 +453,40 @@ impl SaslSession for DigestSaslSession {
 
     fn encode(&mut self, buf: &[u8]) -> crate::Result<Vec<u8>> {
         match &mut self.state {
-            DigestState::Completed(ctx) => match ctx {
-                Some(SecurityContext::Integrity(int_ctx)) => {
-                    let mut mac = HmacMD5::new_from_slice(&int_ctx.kic).unwrap();
-                    mac.update(&int_ctx.seq_num.to_be_bytes());
-                    mac.update(buf);
-                    let result = mac.finalize().into_bytes();
+            DigestState::Completed(Some(ctx)) => {
+                let mut mac = HmacMD5::new_from_slice(&ctx.integrity_keys.client).unwrap();
+                mac.update(&ctx.seq_num.to_be_bytes());
+                mac.update(buf);
+                let hmac = mac.finalize().into_bytes();
 
-                    let message =
-                        [buf, &result[0..10], &[0, 1], &int_ctx.seq_num.to_be_bytes()].concat();
+                let mut message = if let Some(encryptor) = &mut ctx.encryptor {
+                    // 10 bytes of HMAC, 8 byte block size
+                    let padding_len = 8 - (buf.len() + 10) % 8;
+                    let mut message =
+                        [buf, &vec![padding_len as u8; padding_len], &hmac[..10]].concat();
 
-                    int_ctx.seq_num += 1;
-                    Ok(message)
-                }
-                None => Err(HdfsError::SASLError(
-                    "QOP doesn't support security layer".to_string(),
-                )),
-            },
+                    let enc_block: &mut [u8] = message.as_mut();
+                    let mut enc_bytes = 0;
+                    while enc_bytes < enc_block.len() {
+                        encryptor
+                            .encrypt_block_mut((&mut enc_block[enc_bytes..enc_bytes + 8]).into());
+                        enc_bytes += 8;
+                    }
+                    message
+                } else {
+                    [buf, &hmac[..10]].concat()
+                };
+
+                // let message = [&message, &[0, 1], &ctx.seq_num.to_be_bytes()].concat();
+                message.extend(&[0, 1]);
+                message.extend(ctx.seq_num.to_be_bytes());
+
+                ctx.seq_num += 1;
+                Ok(message)
+            }
+            DigestState::Completed(None) => Err(HdfsError::SASLError(
+                "QOP doesn't support security layer".to_string(),
+            )),
             _ => Err(HdfsError::SASLError(
                 "SASL negotiation not complete, can't encode message".to_string(),
             )),
@@ -364,29 +494,43 @@ impl SaslSession for DigestSaslSession {
     }
 
     fn decode(&mut self, buf: &[u8]) -> crate::Result<Vec<u8>> {
-        match &self.state {
-            DigestState::Completed(ctx) => match ctx {
-                Some(SecurityContext::Integrity(int_ctx)) => {
-                    let message = &buf[0..buf.len() - 16];
-                    let hmac = &buf[buf.len() - 16..buf.len() - 6];
-                    let mut seq_num_bytes = [0u8; 4];
-                    seq_num_bytes.copy_from_slice(&buf[buf.len() - 4..]);
-                    let seq_num = u32::from_be_bytes(seq_num_bytes);
+        match &mut self.state {
+            DigestState::Completed(Some(ctx)) => {
+                let (message, hmac) = if let Some(decryptor) = &mut ctx.decryptor {
+                    // All but last 6 bytes are encrypted
+                    let mut message = buf[..buf.len() - 6].to_vec();
+                    let mut dec_bytes = 0;
+                    while dec_bytes < message.len() {
+                        decryptor
+                            .decrypt_block_mut((&mut message[dec_bytes..dec_bytes + 8]).into());
+                        dec_bytes += 8;
+                    }
 
-                    let mut mac = HmacMD5::new_from_slice(&int_ctx.kis).unwrap();
-                    mac.update(&seq_num.to_be_bytes());
-                    mac.update(message);
+                    // Split HMAC off
+                    let hmac = message.split_off(message.len() - 10);
+                    // Remove padding at the end of the message
+                    let _ = message.split_off(message.len() - *message.last().unwrap() as usize);
 
-                    mac.verify_truncated_left(hmac).map_err(|_| {
-                        HdfsError::SASLError("Integrity HMAC check failed".to_string())
-                    })?;
+                    (message, hmac)
+                } else {
+                    // Not encrypted, last 16 bytes are 10 bytes of HMAC, 2 bytes of type, and 4 bytes of seqno
+                    let mut message = buf[..buf.len() - 6].to_vec();
+                    let hmac = message.split_off(message.len() - 10);
+                    (message, hmac)
+                };
 
-                    Ok(message.to_vec())
-                }
-                None => Err(HdfsError::SASLError(
-                    "QOP doesn't support security layer".to_string(),
-                )),
-            },
+                let mut mac = HmacMD5::new_from_slice(&ctx.integrity_keys.server).unwrap();
+                mac.update(&buf[buf.len() - 4..]);
+                mac.update(&message);
+
+                mac.verify_truncated_left(&hmac)
+                    .map_err(|_| HdfsError::SASLError("Integrity HMAC check failed".to_string()))?;
+
+                Ok(message.to_vec())
+            }
+            DigestState::Completed(None) => Err(HdfsError::SASLError(
+                "QOP doesn't support security layer".to_string(),
+            )),
             _ => Err(HdfsError::SASLError(
                 "SASL negotiation not complete, can't decode message".to_string(),
             )),
