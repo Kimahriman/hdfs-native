@@ -5,9 +5,7 @@ mod common;
 mod test {
     use crate::common::{assert_bufs_equal, setup, TEST_FILE_INTS};
     use bytes::{BufMut, BytesMut};
-    use hdfs_native::{
-        client::FileStatus, minidfs::DfsFeatures, Client, HdfsError, Result, WriteOptions,
-    };
+    use hdfs_native::{client::FileStatus, minidfs::DfsFeatures, Client, Result, WriteOptions};
     use serial_test::serial;
     use std::collections::HashSet;
 
