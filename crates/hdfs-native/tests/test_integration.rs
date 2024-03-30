@@ -5,9 +5,7 @@ mod common;
 mod test {
     use crate::common::{assert_bufs_equal, setup, TEST_FILE_INTS};
     use bytes::{BufMut, BytesMut};
-    use hdfs_native::{
-        client::FileStatus, minidfs::DfsFeatures, Client, HdfsError, Result, WriteOptions,
-    };
+    use hdfs_native::{client::FileStatus, minidfs::DfsFeatures, Client, Result, WriteOptions};
     use serial_test::serial;
     use std::collections::HashSet;
 
@@ -72,14 +70,13 @@ mod test {
     #[tokio::test]
     #[serial]
     async fn test_privacy_token() {
-        let err = test_with_features(&HashSet::from([
+        test_with_features(&HashSet::from([
             DfsFeatures::Security,
             DfsFeatures::Token,
             DfsFeatures::Privacy,
         ]))
-        .await;
-
-        assert!(err.is_err_and(|e| matches!(e, HdfsError::SASLError(_))))
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
