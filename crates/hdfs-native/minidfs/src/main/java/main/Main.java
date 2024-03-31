@@ -55,10 +55,17 @@ public class Main {
             conf.set(HADOOP_SECURITY_AUTHORIZATION, "true");
             if (flags.contains("privacy")) {
                 conf.set(HADOOP_RPC_PROTECTION, "privacy");
+                conf.set(DFS_DATA_TRANSFER_PROTECTION_KEY, "privacy");
+                if (flags.contains("data_transfer_encryption")) {
+                    conf.set(DFSConfigKeys.DFS_ENCRYPT_DATA_TRANSFER_KEY, "true");
+                    conf.set(DFS_ENCRYPT_DATA_TRANSFER_CIPHER_SUITES_KEY, "AES/CTR/NoPadding");
+                }
             } else if (flags.contains("integrity")) {
                 conf.set(HADOOP_RPC_PROTECTION, "integrity");
+                conf.set(DFS_DATA_TRANSFER_PROTECTION_KEY, "integrity");
             } else {
                 conf.set(HADOOP_RPC_PROTECTION, "authentication");
+                conf.set(DFS_DATA_TRANSFER_PROTECTION_KEY, "authentication");
             }
             conf.set(DFSConfigKeys.DFS_NAMENODE_KEYTAB_FILE_KEY, "target/test/hdfs.keytab");
             conf.set(DFS_NAMENODE_KERBEROS_PRINCIPAL_KEY, "hdfs/localhost@" + kdc.getRealm());
@@ -66,7 +73,6 @@ public class Main {
             conf.set(DFS_DATANODE_KERBEROS_PRINCIPAL_KEY, "hdfs/localhost@" + kdc.getRealm());
             conf.set(DFSConfigKeys.DFS_BLOCK_ACCESS_TOKEN_ENABLE_KEY, "true");
             conf.set(DFSConfigKeys.IGNORE_SECURE_PORTS_FOR_TESTING_KEY, "true");
-            conf.set(DFS_DATA_TRANSFER_PROTECTION_KEY, "authentication");
         }
 
         HdfsConfiguration hdfsConf = new HdfsConfiguration(conf);

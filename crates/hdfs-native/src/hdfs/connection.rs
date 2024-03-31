@@ -12,14 +12,10 @@ use log::{debug, warn};
 use once_cell::sync::Lazy;
 use prost::Message;
 use socket2::SockRef;
-use tokio::io::BufStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpStream,
-    },
+    io::AsyncWriteExt,
+    net::TcpStream,
     task::{self, JoinHandle},
 };
 use uuid::Uuid;
@@ -28,7 +24,7 @@ use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
 use crate::proto::common::TokenProto;
 use crate::proto::hdfs::DatanodeIdProto;
 use crate::proto::{common, hdfs};
-use crate::security::sasl::SaslDatanodeConnection;
+use crate::security::sasl::{SaslDatanodeConnection, SaslDatanodeReader, SaslDatanodeWriter};
 use crate::security::sasl::{SaslReader, SaslRpcClient, SaslWriter};
 use crate::security::user::UserInfo;
 use crate::{HdfsError, Result};
@@ -182,7 +178,7 @@ impl RpcConnection {
     fn start_sender(&mut self, mut rx: mpsc::Receiver<Vec<u8>>, mut writer: SaslWriter) {
         task::spawn(async move {
             while let Some(msg) = rx.recv().await {
-                match writer.write(&msg).await {
+                match writer.write_all(&msg).await {
                     Ok(_) => (),
                     Err(_) => break,
                 }
@@ -515,10 +511,10 @@ impl Packet {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct DatanodeConnection {
     client_name: String,
-    stream: BufStream<TcpStream>,
+    reader: SaslDatanodeReader,
+    writer: SaslDatanodeWriter,
     url: String,
 }
 
@@ -528,18 +524,13 @@ impl DatanodeConnection {
         let url = format!("{}:{}", datanode_id.ip_addr, datanode_id.xfer_port);
         let stream = connect(&url).await?;
 
-        // If the token has an identifier, we can do SASL negotation
-        let stream = if token.identifier.is_empty() {
-            stream
-        } else {
-            debug!("{:?}", token);
-            let sasl_connection = SaslDatanodeConnection::create(stream);
-            sasl_connection.negotiate(datanode_id, token).await?
-        };
+        let sasl_connection = SaslDatanodeConnection::create(stream);
+        let (reader, writer) = sasl_connection.negotiate(datanode_id, token).await?;
 
         let conn = DatanodeConnection {
             client_name: Uuid::new_v4().to_string(),
-            stream: BufStream::new(stream),
+            reader,
+            writer,
             url: url.to_string(),
         };
         Ok(conn)
@@ -550,26 +541,21 @@ impl DatanodeConnection {
         op: Op,
         message: &impl Message,
     ) -> Result<hdfs::BlockOpResponseProto> {
-        self.stream
+        self.writer
             .write_all(&DATA_TRANSFER_VERSION.to_be_bytes())
             .await?;
-        self.stream.write_all(&[op.value()]).await?;
-        self.stream
+        self.writer.write_all(&[op.value()]).await?;
+        self.writer
             .write_all(&message.encode_length_delimited_to_vec())
             .await?;
-        self.stream.flush().await?;
+        self.writer.flush().await?;
 
-        let buf = self.stream.fill_buf().await?;
-        if buf.is_empty() {
-            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))?;
-        }
-        let msg_length = prost::decode_length_delimiter(buf)?;
-        let total_size = msg_length + prost::length_delimiter_len(msg_length);
+        let msg_length = self.reader.read_length_delimiter().await?;
 
-        let mut response_buf = BytesMut::zeroed(total_size);
-        self.stream.read_exact(&mut response_buf).await?;
+        let mut response_buf = BytesMut::zeroed(msg_length);
+        self.reader.read_exact(&mut response_buf).await?;
 
-        let response = hdfs::BlockOpResponseProto::decode_length_delimited(response_buf.freeze())?;
+        let response = hdfs::BlockOpResponseProto::decode(response_buf.freeze())?;
         Ok(response)
     }
 
@@ -593,14 +579,14 @@ impl DatanodeConnection {
     pub(crate) async fn read_packet(&mut self) -> Result<Packet> {
         let mut payload_len_buf = [0u8; 4];
         let mut header_len_buf = [0u8; 2];
-        self.stream.read_exact(&mut payload_len_buf).await?;
-        self.stream.read_exact(&mut header_len_buf).await?;
+        self.reader.read_exact(&mut payload_len_buf).await?;
+        self.reader.read_exact(&mut header_len_buf).await?;
 
         let payload_length = u32::from_be_bytes(payload_len_buf) as usize;
         let header_length = u16::from_be_bytes(header_len_buf) as usize;
 
         let mut remaining_buf = BytesMut::zeroed(payload_length - 4 + header_length);
-        self.stream.read_exact(&mut remaining_buf).await?;
+        self.reader.read_exact(&mut remaining_buf).await?;
 
         let header =
             hdfs::PacketHeaderProto::decode(remaining_buf.split_to(header_length).freeze())?;
@@ -617,75 +603,46 @@ impl DatanodeConnection {
             status: hdfs::Status::ChecksumOk as i32,
         };
 
-        self.stream
+        self.writer
             .write_all(&client_read_status.encode_length_delimited_to_vec())
             .await?;
-        self.stream.flush().await?;
+        self.writer.flush().await?;
 
         Ok(())
     }
 
     pub(crate) fn split(self) -> (DatanodeReader, DatanodeWriter) {
-        let (reader, writer) = self.stream.into_inner().into_split();
         let reader = DatanodeReader {
-            client_name: self.client_name.clone(),
-            reader: BufReader::new(reader),
-            url: self.url,
+            reader: self.reader,
         };
         let writer = DatanodeWriter {
-            client_name: self.client_name,
-            writer,
+            writer: self.writer,
         };
         (reader, writer)
-    }
-
-    // For future use where we cache datanode connections
-    #[allow(dead_code)]
-    pub(crate) fn reunite(reader: DatanodeReader, writer: DatanodeWriter) -> Self {
-        assert_eq!(reader.client_name, writer.client_name);
-        let stream = BufStream::new(reader.reader.into_inner().reunite(writer.writer).unwrap());
-        Self {
-            client_name: reader.client_name,
-            stream,
-            url: reader.url,
-        }
     }
 }
 
 /// A reader half of a Datanode connection used for reading acks during
 /// write operations.
 pub(crate) struct DatanodeReader {
-    client_name: String,
-    reader: BufReader<OwnedReadHalf>,
-    url: String,
+    reader: SaslDatanodeReader,
 }
 
 impl DatanodeReader {
     pub(crate) async fn read_ack(&mut self) -> Result<hdfs::PipelineAckProto> {
-        let buf = self.reader.fill_buf().await?;
+        let ack_length = self.reader.read_length_delimiter().await?;
 
-        if buf.is_empty() {
-            // The stream has been closed
-            return Err(HdfsError::DataTransferError(
-                "Datanode connection closed while waiting for ack".to_string(),
-            ));
-        }
-
-        let ack_length = prost::decode_length_delimiter(buf)?;
-        let total_size = ack_length + prost::length_delimiter_len(ack_length);
-
-        let mut response_buf = BytesMut::zeroed(total_size);
+        let mut response_buf = BytesMut::zeroed(ack_length);
         self.reader.read_exact(&mut response_buf).await?;
 
-        let response = hdfs::PipelineAckProto::decode_length_delimited(response_buf.freeze())?;
+        let response = hdfs::PipelineAckProto::decode(response_buf.freeze())?;
         Ok(response)
     }
 }
 
 /// A write half of a Datanode connection used for writing packets.
 pub(crate) struct DatanodeWriter {
-    client_name: String,
-    writer: OwnedWriteHalf,
+    writer: SaslDatanodeWriter,
 }
 
 impl DatanodeWriter {
@@ -696,8 +653,10 @@ impl DatanodeWriter {
         let payload_len = (checksum.len() + data.len() + 4) as u32;
         let header_encoded = header.encode_to_vec();
 
-        self.writer.write_u32(payload_len).await?;
-        self.writer.write_u16(header_encoded.len() as u16).await?;
+        self.writer.write_all(&payload_len.to_be_bytes()).await?;
+        self.writer
+            .write_all(&(header_encoded.len() as u16).to_be_bytes())
+            .await?;
         self.writer.write_all(&header.encode_to_vec()).await?;
         self.writer.write_all(&checksum).await?;
         self.writer.write_all(&data).await?;
