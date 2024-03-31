@@ -3,6 +3,7 @@ use log::{debug, warn};
 use prost::Message;
 use std::io;
 use std::sync::{Arc, Mutex};
+use tokio::io::BufReader;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufStream},
     net::tcp::{OwnedReadHalf, OwnedWriteHalf},
@@ -10,6 +11,7 @@ use tokio::{
 };
 
 use super::user::BlockTokenIdentifier;
+// use crate::proto::hdfs::{CipherOptionProto, CipherSuiteProto};
 use crate::proto::{
     common::{
         rpc_response_header_proto::RpcStatusProto,
@@ -351,7 +353,7 @@ impl SaslWriter {
         Ok(())
     }
 
-    pub(crate) async fn write(&mut self, buf: &[u8]) -> io::Result<()> {
+    pub(crate) async fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
         if self.session.is_some() {
             let mut rpc_sasl = RpcSaslProto {
                 state: SaslState::Wrap as i32,
@@ -386,6 +388,124 @@ impl std::fmt::Debug for SaslWriter {
     }
 }
 
+pub(crate) struct SaslDatanodeReader {
+    stream: BufReader<OwnedReadHalf>,
+    session: Option<Arc<Mutex<DigestSaslSession>>>,
+    size_buffer: [u8; 4],
+    response_buffer: Vec<u8>,
+    data_buffer: Bytes,
+}
+
+impl SaslDatanodeReader {
+    fn new(stream: OwnedReadHalf, session: Option<Arc<Mutex<DigestSaslSession>>>) -> Self {
+        Self {
+            stream: BufReader::new(stream),
+            session,
+            size_buffer: [0u8; 4],
+            response_buffer: Vec::with_capacity(65536),
+            data_buffer: Bytes::new(),
+        }
+    }
+
+    async fn read_more_data(&mut self) -> Result<()> {
+        self.stream.read_exact(&mut self.size_buffer).await?;
+        let msg_length = u32::from_be_bytes(self.size_buffer) as usize;
+
+        // Resize our internal buffer if the message is larger
+        if msg_length > self.response_buffer.len() {
+            self.response_buffer.resize(msg_length, 0);
+        }
+
+        self.stream
+            .read_exact(&mut self.response_buffer[..msg_length])
+            .await?;
+
+        self.data_buffer = self
+            .session
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .decode(&self.response_buffer[..msg_length])?
+            .into();
+
+        Ok(())
+    }
+
+    pub(crate) async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
+        if self.session.is_some() {
+            let read_len = buf.len();
+            let mut bytes_remaining = read_len;
+            while bytes_remaining > 0 {
+                if !self.data_buffer.has_remaining() {
+                    self.read_more_data().await?;
+                }
+                let copy_len = usize::min(bytes_remaining, self.data_buffer.remaining());
+                let copy_start = read_len - bytes_remaining;
+                self.data_buffer
+                    .copy_to_slice(&mut buf[copy_start..(copy_start + copy_len)]);
+                bytes_remaining -= copy_len;
+            }
+
+            Ok(read_len)
+        } else {
+            Ok(self.stream.read_exact(buf).await?)
+        }
+    }
+
+    /// Reads a length delimiter from the stream without advancing the position of the stream
+    pub(crate) async fn read_length_delimiter(&mut self) -> Result<usize> {
+        if self.session.is_some() {
+            // assumption is we'll have the whole length in a single message
+            if !self.data_buffer.has_remaining() {
+                self.read_more_data().await?;
+            }
+            let decoded_len = prost::decode_length_delimiter(&mut self.data_buffer)?;
+            Ok(decoded_len)
+        } else {
+            let mut buf = self.stream.fill_buf().await?;
+            if buf.is_empty() {
+                // The stream has been closed
+                return Err(HdfsError::DataTransferError(
+                    "Datanode connection closed while waiting for ack".to_string(),
+                ));
+            }
+
+            let decoded_len = prost::decode_length_delimiter(&mut buf)?;
+            self.stream
+                .consume(prost::length_delimiter_len(decoded_len));
+
+            Ok(decoded_len)
+        }
+    }
+}
+
+pub(crate) struct SaslDatanodeWriter {
+    stream: OwnedWriteHalf,
+    session: Option<Arc<Mutex<DigestSaslSession>>>,
+}
+
+impl SaslDatanodeWriter {
+    fn new(stream: OwnedWriteHalf, session: Option<Arc<Mutex<DigestSaslSession>>>) -> Self {
+        Self { stream, session }
+    }
+
+    pub(crate) async fn write_all(&mut self, buf: &[u8]) -> Result<()> {
+        if let Some(session) = self.session.as_ref() {
+            let wrapped = session.lock().unwrap().encode(buf)?;
+            self.stream.write_u32(wrapped.len() as u32).await?;
+            self.stream.write_all(&wrapped).await?;
+        } else {
+            self.stream.write_all(buf).await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn flush(&mut self) -> Result<()> {
+        Ok(self.stream.flush().await?)
+    }
+}
+
 pub(crate) struct SaslDatanodeConnection {
     stream: BufStream<TcpStream>,
 }
@@ -401,10 +521,10 @@ impl SaslDatanodeConnection {
         mut self,
         datanode_id: &DatanodeIdProto,
         token: &TokenProto,
-    ) -> Result<TcpStream> {
-        // If it's a privileged port, don't do SASL negotation
-        if datanode_id.xfer_port <= 1024 {
-            return Ok(self.stream.into_inner());
+    ) -> Result<(SaslDatanodeReader, SaslDatanodeWriter)> {
+        // If there's no token identifier or it's a privileged port, don't do SASL negotation
+        if token.identifier.is_empty() || datanode_id.xfer_port <= 1024 {
+            return Ok(self.split(None));
         }
 
         self.stream.write_i32(SASL_TRANSFER_MAGIC_NUMBER).await?;
@@ -443,9 +563,19 @@ impl SaslDatanodeConnection {
         let (payload, finished) = session.step(response.payload.as_ref().map(|p| &p[..]))?;
         assert!(!finished);
 
+        // let cipher_option = if session.supports_encryption() {
+        //     vec![CipherOptionProto {
+        //         suite: CipherSuiteProto::AesCtrNopadding as i32,
+        //         ..Default::default()
+        //     }]
+        // } else {
+        //     vec![]
+        // };
+
         let message = DataTransferEncryptorMessageProto {
             status: DataTransferEncryptorStatus::Success as i32,
             payload: Some(payload),
+            // cipher_option,
             ..Default::default()
         };
 
@@ -463,7 +593,11 @@ impl SaslDatanodeConnection {
 
         assert!(finished);
 
-        Ok(self.stream.into_inner())
+        if session.has_security_layer() {
+            Ok(self.split(Some(session)))
+        } else {
+            Ok(self.split(None))
+        }
     }
 
     async fn read_sasl_response(&mut self) -> Result<DataTransferEncryptorMessageProto> {
@@ -482,5 +616,16 @@ impl SaslDatanodeConnection {
         Ok(DataTransferEncryptorMessageProto::decode_length_delimited(
             response_buf.freeze(),
         )?)
+    }
+
+    fn split(self, session: Option<DigestSaslSession>) -> (SaslDatanodeReader, SaslDatanodeWriter) {
+        let reader_session = session.map(|s| Arc::new(Mutex::new(s)));
+        let writer_session = reader_session.clone();
+
+        let (stream_reader, stream_writer) = self.stream.into_inner().into_split();
+
+        let reader = SaslDatanodeReader::new(stream_reader, reader_session);
+        let writer = SaslDatanodeWriter::new(stream_writer, writer_session);
+        (reader, writer)
     }
 }
