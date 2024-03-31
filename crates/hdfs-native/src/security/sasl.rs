@@ -620,7 +620,7 @@ impl SaslDatanodeConnection {
 
     fn split(self, session: Option<DigestSaslSession>) -> (SaslDatanodeReader, SaslDatanodeWriter) {
         let reader_session = session.map(|s| Arc::new(Mutex::new(s)));
-        let writer_session = reader_session.as_ref().map(Arc::clone);
+        let writer_session = reader_session.clone();
 
         let (stream_reader, stream_writer) = self.stream.into_inner().into_split();
 
