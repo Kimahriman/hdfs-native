@@ -9,6 +9,8 @@ resolver = "2"
 bytes = "1"
 chrono = "0.4"
 futures = "0.3"
+log = "0.4"
+thiserror = "1"
 tokio = "1"
 
 [profile.bench]
