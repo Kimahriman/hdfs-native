@@ -68,6 +68,7 @@ jobs:
           sccache: 'true'
           container: 'off'
           working-directory: ./python
+          args: --features kerberos
       
       - name: Install dev dependencies and run tests
         run: |

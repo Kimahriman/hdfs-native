@@ -35,7 +35,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
+          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml --features kerberos
           sccache: 'true'
           container: quay.io/pypa/manylinux2014_${{ matrix.target }}:latest
           docker-options: -e LD_LIBRARY_PATH=/opt/rh/llvm-toolset-7.0/root/usr/lib64 -e LLVM_CONFIG_PATH=/opt/rh/llvm-toolset-7.0/root/usr/bin/llvm-config
@@ -61,7 +61,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
+          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml --features kerberos
           sccache: 'true'
         env:
           BINDGEN_EXTRA_CLANG_ARGS: "-I/usr/local/include"
@@ -80,7 +80,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
-          args: --out dist --manifest-path python/Cargo.toml
+          args: --out dist --manifest-path python/Cargo.toml --features kerberos
       - name: Upload sdist
         uses: actions/upload-artifact@v3
         with:
