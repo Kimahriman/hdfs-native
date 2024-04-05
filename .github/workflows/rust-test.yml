@@ -89,8 +89,8 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-      # - name: Install native libs
-      #   run: sudo apt-get install -y libkrb5-dev krb5-user
+      - name: Install native libs
+        run: sudo apt-get install -y libkrb5-dev krb5-user
 
       - name: Download Hadoop
         run: |
@@ -99,4 +99,4 @@ jobs:
           echo "$GITHUB_WORKSPACE/hadoop-3.3.6/bin" >> $GITHUB_PATH
 
       - name: Run tests
-        run: cargo test -p hdfs-native --features integration-test test_erasure_coded_write -- --nocapture
+        run: cargo test --features kerberos,integration-test
