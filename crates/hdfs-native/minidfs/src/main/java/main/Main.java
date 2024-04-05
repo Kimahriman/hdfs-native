@@ -57,7 +57,10 @@ public class Main {
                 conf.set(HADOOP_RPC_PROTECTION, "privacy");
                 conf.set(DFS_DATA_TRANSFER_PROTECTION_KEY, "privacy");
                 if (flags.contains("data_transfer_encryption")) {
+                    // Force encryption for all connections
                     conf.set(DFSConfigKeys.DFS_ENCRYPT_DATA_TRANSFER_KEY, "true");
+                }
+                if (flags.contains("aes")) {
                     conf.set(DFS_ENCRYPT_DATA_TRANSFER_CIPHER_SUITES_KEY, "AES/CTR/NoPadding");
                 }
             } else if (flags.contains("integrity")) {

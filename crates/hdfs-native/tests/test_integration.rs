@@ -81,6 +81,18 @@ mod test {
 
     #[tokio::test]
     #[serial]
+    async fn test_aes() {
+        test_with_features(&HashSet::from([
+            DfsFeatures::Security,
+            DfsFeatures::Privacy,
+            DfsFeatures::AES,
+        ]))
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn test_basic_ha() {
         test_with_features(&HashSet::from([DfsFeatures::HA]))
             .await

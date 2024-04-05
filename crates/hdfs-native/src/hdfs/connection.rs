@@ -550,12 +550,9 @@ impl DatanodeConnection {
             .await?;
         self.writer.flush().await?;
 
-        let msg_length = self.reader.read_length_delimiter().await?;
+        let message = self.reader.read_proto().await?;
 
-        let mut response_buf = BytesMut::zeroed(msg_length);
-        self.reader.read_exact(&mut response_buf).await?;
-
-        let response = hdfs::BlockOpResponseProto::decode(response_buf.freeze())?;
+        let response = hdfs::BlockOpResponseProto::decode(message)?;
         Ok(response)
     }
 
@@ -630,12 +627,9 @@ pub(crate) struct DatanodeReader {
 
 impl DatanodeReader {
     pub(crate) async fn read_ack(&mut self) -> Result<hdfs::PipelineAckProto> {
-        let ack_length = self.reader.read_length_delimiter().await?;
+        let message = self.reader.read_proto().await?;
 
-        let mut response_buf = BytesMut::zeroed(ack_length);
-        self.reader.read_exact(&mut response_buf).await?;
-
-        let response = hdfs::PipelineAckProto::decode(response_buf.freeze())?;
+        let response = hdfs::PipelineAckProto::decode(message)?;
         Ok(response)
     }
 }

@@ -357,6 +357,14 @@ impl DigestSaslSession {
             server: kis,
         }
     }
+
+    pub(crate) fn supports_encryption(&self) -> bool {
+        match &self.state {
+            DigestState::Stepped(ctx) => matches!(ctx.qop, Qop::AuthConf),
+            DigestState::Completed(ctx) => ctx.as_ref().is_some_and(|c| c.encryptor.is_some()),
+            _ => false,
+        }
+    }
 }
 
 impl SaslSession for DigestSaslSession {
