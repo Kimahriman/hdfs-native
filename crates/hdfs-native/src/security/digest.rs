@@ -12,7 +12,7 @@ use once_cell::sync::Lazy;
 use rand::Rng;
 use regex::Regex;
 
-use crate::{HdfsError, Result};
+use crate::{proto::hdfs::DataEncryptionKeyProto, HdfsError, Result};
 
 use super::{
     sasl::SaslSession,
@@ -268,10 +268,29 @@ pub(super) struct DigestSaslSession {
 }
 
 impl DigestSaslSession {
-    pub(super) fn new(service: String, hostname: String, token: &Token) -> Self {
+    pub(super) fn from_token(service: String, hostname: String, token: &Token) -> Self {
         Self {
             auth_id: general_purpose::STANDARD.encode(&token.identifier),
             password: general_purpose::STANDARD.encode(&token.password),
+            service,
+            hostname,
+            state: DigestState::Pending,
+        }
+    }
+
+    pub(super) fn from_encryption_key(
+        service: String,
+        hostname: String,
+        encryption_key: &DataEncryptionKeyProto,
+    ) -> Self {
+        Self {
+            auth_id: format!(
+                "{} {} {}",
+                encryption_key.key_id,
+                encryption_key.block_pool_id,
+                general_purpose::STANDARD.encode(&encryption_key.nonce)
+            ),
+            password: general_purpose::STANDARD.encode(&encryption_key.encryption_key),
             service,
             hostname,
             state: DigestState::Pending,
@@ -605,7 +624,7 @@ mod test {
             service: "127.0.0.1:9000".to_string(),
         };
 
-        let session = DigestSaslSession::new("".to_string(), "default".to_string(), &token);
+        let session = DigestSaslSession::from_token("".to_string(), "default".to_string(), &token);
         let ctx = DigestContext {
             nonce: "A+DoU3+eajz9Ei11Ib0S9CUKLyLPh0qFJbwn1/OZ".to_string(),
             cnonce: "UGP4ejVb7M54KO4yqDwCsA==".to_string(),
@@ -636,7 +655,7 @@ mod test {
             service: "127.0.0.1:9000".to_string(),
         };
 
-        let session = DigestSaslSession::new("".to_string(), "default".to_string(), &token);
+        let session = DigestSaslSession::from_token("".to_string(), "default".to_string(), &token);
         let ctx = DigestContext {
             nonce: "tm3kclm9F0JMECFNJi5xk/NaGgQ75ZOqb9/vCHt5".to_string(),
             cnonce: "kp49R9SjR4de6ynNgMwNwQ==".to_string(),

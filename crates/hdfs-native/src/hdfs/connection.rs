@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
 use crate::proto::common::TokenProto;
-use crate::proto::hdfs::DatanodeIdProto;
+use crate::proto::hdfs::{DataEncryptionKeyProto, DatanodeIdProto};
 use crate::proto::{common, hdfs};
 use crate::security::sasl::{SaslDatanodeConnection, SaslDatanodeReader, SaslDatanodeWriter};
 use crate::security::sasl::{SaslReader, SaslRpcClient, SaslWriter};
@@ -390,7 +390,6 @@ const CHECKSUM_BYTES: usize = 4;
 
 pub(crate) struct Packet {
     pub header: hdfs::PacketHeaderProto,
-    #[allow(dead_code)]
     checksum: BytesMut,
     data: BytesMut,
     bytes_per_checksum: usize,
@@ -519,13 +518,18 @@ pub(crate) struct DatanodeConnection {
 }
 
 impl DatanodeConnection {
-    #[allow(unused_variables)]
-    pub(crate) async fn connect(datanode_id: &DatanodeIdProto, token: &TokenProto) -> Result<Self> {
+    pub(crate) async fn connect(
+        datanode_id: &DatanodeIdProto,
+        token: &TokenProto,
+        encryption_key: Option<DataEncryptionKeyProto>,
+    ) -> Result<Self> {
         let url = format!("{}:{}", datanode_id.ip_addr, datanode_id.xfer_port);
         let stream = connect(&url).await?;
 
         let sasl_connection = SaslDatanodeConnection::create(stream);
-        let (reader, writer) = sasl_connection.negotiate(datanode_id, token).await?;
+        let (reader, writer) = sasl_connection
+            .negotiate(datanode_id, token, encryption_key.as_ref())
+            .await?;
 
         let conn = DatanodeConnection {
             client_name: Uuid::new_v4().to_string(),

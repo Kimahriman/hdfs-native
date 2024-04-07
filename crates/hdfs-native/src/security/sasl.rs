@@ -12,7 +12,7 @@ use tokio::{
 };
 
 use super::user::BlockTokenIdentifier;
-use crate::proto::hdfs::{CipherOptionProto, CipherSuiteProto};
+use crate::proto::hdfs::{CipherOptionProto, CipherSuiteProto, DataEncryptionKeyProto};
 use crate::proto::{
     common::{
         rpc_response_header_proto::RpcStatusProto,
@@ -198,7 +198,7 @@ impl SaslRpcClient {
                     return Ok((auth.clone(), Some(Box::new(session))));
                 }
                 (Some(AuthMethod::Token), Some(token)) => {
-                    let session = DigestSaslSession::new(
+                    let session = DigestSaslSession::from_token(
                         auth.protocol().to_string(),
                         auth.server_id().to_string(),
                         token,
@@ -614,21 +614,37 @@ impl SaslDatanodeConnection {
         }
     }
 
+    /// There are a few different paths for negotiating a connection with a DataNode:
+    ///
+    /// 1. If `dfs.encrypt.data.transfer` is set on the NameNode, always encrypt the session
+    ///    and use an encryption key from the NameNode for the negotiation. This will happen
+    ///    if `encryption_key` is defined.
+    /// 2. If there is no block token or the DataNode transfer port is privileged (<= 1024), we
+    ///    skip the SASL handshake and assume it is trusted.
+    /// 3. Otherwise, we do a SAL handshake using the provided block token.
+    ///
+    /// For cases 1 and 3, we optionally negotiate a cipher to use for encryption instead of
+    /// SASL protection mechanisms.
     pub(crate) async fn negotiate(
         mut self,
         datanode_id: &DatanodeIdProto,
         token: &TokenProto,
+        encryption_key: Option<&DataEncryptionKeyProto>,
     ) -> Result<(SaslDatanodeReader, SaslDatanodeWriter)> {
-        // If there's no token identifier or it's a privileged port, don't do SASL negotation
-        if token.identifier.is_empty() || datanode_id.xfer_port <= 1024 {
+        let mut session = if let Some(key) = encryption_key {
+            DigestSaslSession::from_encryption_key("hdfs".to_string(), "0".to_string(), key)
+        } else if token.identifier.is_empty() || datanode_id.xfer_port <= 1024 {
             return self.split(None, None);
-        }
+        } else {
+            DigestSaslSession::from_token(
+                "hdfs".to_string(),
+                "0".to_string(),
+                &token.clone().into(),
+            )
+        };
 
         self.stream.write_i32(SASL_TRANSFER_MAGIC_NUMBER).await?;
         self.stream.flush().await?;
-
-        let mut session =
-            DigestSaslSession::new("hdfs".to_string(), "0".to_string(), &token.clone().into());
 
         let token_identifier = BlockTokenIdentifier::from_identifier(&token.identifier)?;
 

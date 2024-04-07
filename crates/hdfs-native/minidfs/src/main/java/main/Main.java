@@ -56,10 +56,6 @@ public class Main {
             if (flags.contains("privacy")) {
                 conf.set(HADOOP_RPC_PROTECTION, "privacy");
                 conf.set(DFS_DATA_TRANSFER_PROTECTION_KEY, "privacy");
-                if (flags.contains("data_transfer_encryption")) {
-                    // Force encryption for all connections
-                    conf.set(DFSConfigKeys.DFS_ENCRYPT_DATA_TRANSFER_KEY, "true");
-                }
                 if (flags.contains("aes")) {
                     conf.set(DFS_ENCRYPT_DATA_TRANSFER_CIPHER_SUITES_KEY, "AES/CTR/NoPadding");
                 }
@@ -69,6 +65,10 @@ public class Main {
             } else {
                 conf.set(HADOOP_RPC_PROTECTION, "authentication");
                 conf.set(DFS_DATA_TRANSFER_PROTECTION_KEY, "authentication");
+            }
+            if (flags.contains("data_transfer_encryption")) {
+                // Force encryption for all connections, legacy method before SASL connections were a thing
+                conf.set(DFSConfigKeys.DFS_ENCRYPT_DATA_TRANSFER_KEY, "true");
             }
             conf.set(DFSConfigKeys.DFS_NAMENODE_KEYTAB_FILE_KEY, "target/test/hdfs.keytab");
             conf.set(DFS_NAMENODE_KERBEROS_PRINCIPAL_KEY, "hdfs/localhost@" + kdc.getRealm());

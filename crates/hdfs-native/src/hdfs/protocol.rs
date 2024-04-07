@@ -2,12 +2,15 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
+use chrono::Utc;
 use log::{debug, warn};
 use prost::Message;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use crate::proto::hdfs;
+use crate::proto::hdfs::{
+    self, DataEncryptionKeyProto, FsServerDefaultsProto, GetDataEncryptionKeyResponseProto,
+};
 use crate::Result;
 
 use super::proxy::NameServiceProxy;
@@ -27,6 +30,9 @@ pub(crate) struct NamenodeProtocol {
     // Stores files currently opened for writing for lease renewal purposes
     open_files: Arc<Mutex<HashSet<LeasedFile>>>,
     lease_renewer: Mutex<Option<JoinHandle<()>>>,
+    // We need a sync mutex for these
+    server_defaults: tokio::sync::Mutex<Option<FsServerDefaultsProto>>,
+    encryption_key: tokio::sync::Mutex<Option<DataEncryptionKeyProto>>,
 }
 
 impl NamenodeProtocol {
@@ -37,6 +43,8 @@ impl NamenodeProtocol {
             client_name,
             open_files: Arc::new(Mutex::new(HashSet::new())),
             lease_renewer: Mutex::new(None),
+            server_defaults: tokio::sync::Mutex::new(None),
+            encryption_key: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -119,20 +127,75 @@ impl NamenodeProtocol {
         Ok(decoded)
     }
 
+    pub(crate) async fn get_cached_server_defaults(&self) -> Result<FsServerDefaultsProto> {
+        let mut server_defaults = self.server_defaults.lock().await;
+        if let Some(defaults) = server_defaults.as_ref() {
+            Ok(defaults.clone())
+        } else {
+            let defaults = self.get_server_defaults().await?.server_defaults;
+            *server_defaults = Some(defaults.clone());
+            Ok(defaults)
+        }
+    }
+
+    pub(crate) async fn get_data_encryption_key(
+        &self,
+    ) -> Result<GetDataEncryptionKeyResponseProto> {
+        let message = hdfs::GetDataEncryptionKeyRequestProto::default();
+
+        let response = self
+            .proxy
+            .call(
+                "getDataEncryptionKey",
+                message.encode_length_delimited_to_vec(),
+            )
+            .await?;
+
+        let decoded = hdfs::GetDataEncryptionKeyResponseProto::decode_length_delimited(response)?;
+        debug!("get_data_encryption_key response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
+    pub(crate) async fn get_cached_data_encryption_key(
+        &self,
+    ) -> Result<Option<DataEncryptionKeyProto>> {
+        let server_defaults = self.get_cached_server_defaults().await?;
+        if server_defaults.encrypt_data_transfer() {
+            let mut encryption_key = self.encryption_key.lock().await;
+            // Check if we have an encryption key and that it's not expired (with a 10 second buffer)
+            if encryption_key
+                .as_ref()
+                .is_some_and(|key| (key.expiry_date as i64) > Utc::now().timestamp_millis() + 10000)
+            {
+                Ok(encryption_key.clone())
+            } else {
+                let key = self.get_data_encryption_key().await?.data_encryption_key;
+                *encryption_key = key.clone();
+                Ok(key)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
     pub(crate) async fn create(
         &self,
         src: &str,
         permission: u32,
         overwrite: bool,
         create_parent: bool,
-        replication: u32,
-        block_size: u64,
+        replication: Option<u32>,
+        block_size: Option<u64>,
     ) -> Result<hdfs::CreateResponseProto> {
         let masked = hdfs::FsPermissionProto { perm: permission };
         let mut create_flag = hdfs::CreateFlagProto::Create as u32;
         if overwrite {
             create_flag |= hdfs::CreateFlagProto::Overwrite as u32;
         }
+
+        let server_defaults = self.get_cached_server_defaults().await?;
+        let replication = replication.unwrap_or(server_defaults.replication);
+        let block_size = block_size.unwrap_or(server_defaults.block_size);
 
         let message = hdfs::CreateRequestProto {
             src: src.to_string(),
