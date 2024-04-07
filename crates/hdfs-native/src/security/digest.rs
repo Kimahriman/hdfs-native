@@ -638,7 +638,6 @@ mod test {
     }
 
     #[test]
-    #[ignore]
     fn test_digest_step_privacy() {
         let token = Token {
             alias: "127.0.0.1:9000".to_string(),
@@ -664,7 +663,7 @@ mod test {
         };
         assert_eq!(
             &session.compute(&ctx, true),
-            "621c0b2210a1d648983abd6bb43ff507"
+            "260f34cc6e484ede6277cb9c37672d07"
         );
     }
 }
