@@ -17,6 +17,7 @@ const COMPLETE_RETRY_DELAY_MS: u64 = 500;
 const COMPLETE_RETRIES: u32 = 5;
 
 pub struct FileReader {
+    protocol: Arc<NamenodeProtocol>,
     status: hdfs::HdfsFileStatusProto,
     located_blocks: hdfs::LocatedBlocksProto,
     ec_schema: Option<EcSchema>,
@@ -25,11 +26,13 @@ pub struct FileReader {
 
 impl FileReader {
     pub(crate) fn new(
+        protocol: Arc<NamenodeProtocol>,
         status: hdfs::HdfsFileStatusProto,
         located_blocks: hdfs::LocatedBlocksProto,
         ec_schema: Option<EcSchema>,
     ) -> Self {
         Self {
+            protocol,
             status,
             located_blocks,
             ec_schema,
@@ -125,6 +128,7 @@ impl FileReader {
                     let block_start = offset - usize::min(offset, block_file_start);
                     let block_end = usize::min(offset + len, block_file_end) - block_file_start;
                     Some(get_block_stream(
+                        Arc::clone(&self.protocol),
                         block.clone(),
                         block_start,
                         block_end - block_start,
@@ -145,7 +149,6 @@ pub struct FileWriter {
     src: String,
     protocol: Arc<NamenodeProtocol>,
     status: hdfs::HdfsFileStatusProto,
-    server_defaults: hdfs::FsServerDefaultsProto,
     block_writer: Option<BlockWriter>,
     last_block: Option<hdfs::LocatedBlockProto>,
     closed: bool,
@@ -159,14 +162,12 @@ impl FileWriter {
         status: hdfs::HdfsFileStatusProto,
         // Some for append, None for create
         last_block: Option<hdfs::LocatedBlockProto>,
-        server_defaults: hdfs::FsServerDefaultsProto,
     ) -> Self {
         protocol.add_file_lease(status.file_id(), status.namespace.clone());
         Self {
             protocol,
             src,
             status,
-            server_defaults,
             block_writer: None,
             last_block,
             closed: false,
@@ -206,9 +207,10 @@ impl FileWriter {
         };
 
         let block_writer = BlockWriter::new(
+            Arc::clone(&self.protocol),
             new_block,
             self.status.blocksize() as usize,
-            self.server_defaults.clone(),
+            self.protocol.get_cached_server_defaults().await?,
             self.status
                 .ec_policy
                 .as_ref()

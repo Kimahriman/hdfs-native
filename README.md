@@ -26,7 +26,7 @@ Here is a list of currently supported and unsupported but possible future featur
 - [x] Token authentication (DIGEST-MD5 SASL support)
 - [x] NameNode SASL connection
 - [x] DataNode SASL connection
-- [ ] DataNode data transfer encryption
+- [x] DataNode data transfer encryption
 - [ ] Encryption at rest (KMS support)
 
 ## Supported HDFS Settings

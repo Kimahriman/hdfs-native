@@ -14,6 +14,7 @@ pub enum DfsFeatures {
     Integrity,
     Privacy,
     AES,
+    DataTransferEncryption,
     HA,
     ViewFS,
     EC,
@@ -30,6 +31,7 @@ impl DfsFeatures {
             DfsFeatures::Security => "security",
             DfsFeatures::Integrity => "integrity",
             DfsFeatures::AES => "aes",
+            DfsFeatures::DataTransferEncryption => "data_transfer_encryption",
             DfsFeatures::Token => "token",
             DfsFeatures::RBF => "rbf",
         }

@@ -11,14 +11,48 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    async fn test_write() {
+    async fn test_write_simple() {
+        test_write(&HashSet::from([DfsFeatures::HA])).await.unwrap();
+    }
+
+    // These tests take a long time, so don't run by default
+    #[tokio::test]
+    #[serial]
+    #[ignore]
+    async fn test_write_sasl_encryption() {
+        test_write(&HashSet::from([
+            DfsFeatures::HA,
+            DfsFeatures::Security,
+            DfsFeatures::Privacy,
+        ]))
+        .await
+        .unwrap();
+    }
+
+    // These tests take a long time, so don't run by default
+    #[tokio::test]
+    #[serial]
+    #[ignore]
+    async fn test_write_cipher_encryption() {
+        test_write(&HashSet::from([
+            DfsFeatures::HA,
+            DfsFeatures::Security,
+            DfsFeatures::Privacy,
+            DfsFeatures::AES,
+        ]))
+        .await
+        .unwrap();
+    }
+
+    async fn test_write(features: &HashSet<DfsFeatures>) -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let _dfs = setup(&HashSet::from([DfsFeatures::HA]));
+        let _dfs = setup(features);
         let client = Client::default();
 
-        test_create(&client).await.unwrap();
-        test_append(&client).await.unwrap();
+        test_create(&client).await?;
+        test_append(&client).await?;
+        Ok(())
     }
 
     async fn test_create(client: &Client) -> Result<()> {

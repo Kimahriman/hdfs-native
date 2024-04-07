@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::future::join_all;
@@ -11,6 +11,8 @@ use crate::{
     proto::hdfs,
     HdfsError, Result,
 };
+
+use super::protocol::NamenodeProtocol;
 
 const HEART_BEAT_SEQNO: i64 = -1;
 const UNKNOWN_SEQNO: i64 = -2;
@@ -26,6 +28,7 @@ pub(crate) enum BlockWriter {
 
 impl BlockWriter {
     pub(crate) async fn new(
+        protocol: Arc<NamenodeProtocol>,
         block: hdfs::LocatedBlockProto,
         block_size: usize,
         server_defaults: hdfs::FsServerDefaultsProto,
@@ -33,13 +36,16 @@ impl BlockWriter {
     ) -> Result<Self> {
         let block_writer = if let Some(ec_schema) = ec_schema {
             Self::Striped(StripedBlockWriter::new(
+                protocol,
                 block,
                 ec_schema,
                 block_size,
                 server_defaults,
             ))
         } else {
-            Self::Replicated(ReplicatedBlockWriter::new(block, block_size, server_defaults).await?)
+            Self::Replicated(
+                ReplicatedBlockWriter::new(&protocol, block, block_size, server_defaults).await?,
+            )
         };
         Ok(block_writer)
     }
@@ -95,12 +101,18 @@ pub(crate) struct ReplicatedBlockWriter {
 
 impl ReplicatedBlockWriter {
     async fn new(
+        protocol: &Arc<NamenodeProtocol>,
         block: hdfs::LocatedBlockProto,
         block_size: usize,
         server_defaults: hdfs::FsServerDefaultsProto,
     ) -> Result<Self> {
         let datanode = &block.locs[0].id;
-        let mut connection = DatanodeConnection::connect(datanode, &block.block_token).await?;
+        let mut connection = DatanodeConnection::connect(
+            datanode,
+            &block.block_token,
+            protocol.get_cached_data_encryption_key().await?,
+        )
+        .await?;
 
         let checksum = hdfs::ChecksumProto {
             r#type: hdfs::ChecksumTypeProto::ChecksumCrc32c as i32,
@@ -462,6 +474,7 @@ impl CellBuffer {
 
 // Writer for erasure coded blocks.
 pub(crate) struct StripedBlockWriter {
+    protocol: Arc<NamenodeProtocol>,
     block: hdfs::LocatedBlockProto,
     server_defaults: hdfs::FsServerDefaultsProto,
     block_size: usize,
@@ -473,6 +486,7 @@ pub(crate) struct StripedBlockWriter {
 
 impl StripedBlockWriter {
     fn new(
+        protocol: Arc<NamenodeProtocol>,
         block: hdfs::LocatedBlockProto,
         ec_schema: &EcSchema,
         block_size: usize,
@@ -481,6 +495,7 @@ impl StripedBlockWriter {
         let block_writers = (0..block.block_indices().len()).map(|_| None).collect();
 
         Self {
+            protocol,
             block,
             block_size,
             server_defaults,
@@ -519,6 +534,7 @@ impl StripedBlockWriter {
 
                 *writer = Some(
                     ReplicatedBlockWriter::new(
+                        &self.protocol,
                         cloned,
                         self.block_size,
                         self.server_defaults.clone(),

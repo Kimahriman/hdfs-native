@@ -286,7 +286,12 @@ impl Client {
                 }
 
                 if let Some(locations) = status.locations.take() {
-                    Ok(FileReader::new(status, locations, ec_schema))
+                    Ok(FileReader::new(
+                        Arc::clone(&link.protocol),
+                        status,
+                        locations,
+                        ec_schema,
+                    ))
                 } else {
                     Err(HdfsError::BlocksNotFound(path.to_string()))
                 }
@@ -305,14 +310,6 @@ impl Client {
         let write_options = write_options.as_ref();
 
         let (link, resolved_path) = self.mount_table.resolve(src);
-        let server_defaults = link.protocol.get_server_defaults().await?.server_defaults;
-
-        let block_size = write_options
-            .block_size
-            .unwrap_or(server_defaults.block_size);
-        let replication = write_options
-            .replication
-            .unwrap_or(server_defaults.replication);
 
         let create_response = link
             .protocol
@@ -321,8 +318,8 @@ impl Client {
                 write_options.permission,
                 write_options.overwrite,
                 write_options.create_parent,
-                replication,
-                block_size,
+                write_options.replication,
+                write_options.block_size,
             )
             .await?;
 
@@ -338,7 +335,6 @@ impl Client {
                     resolved_path,
                     status,
                     None,
-                    server_defaults,
                 ))
             }
             None => Err(HdfsError::FileNotFound(src.to_string())),
@@ -354,7 +350,6 @@ impl Client {
     /// coded, a new block will be created.
     pub async fn append(&self, src: &str) -> Result<FileWriter> {
         let (link, resolved_path) = self.mount_table.resolve(src);
-        let server_defaults = link.protocol.get_server_defaults().await?.server_defaults;
 
         // Assume the file is replicated and try to append to the current block. If the file is
         // erasure coded, then try again by appending to a new block.
@@ -380,7 +375,6 @@ impl Client {
                     resolved_path,
                     status,
                     append_response.block,
-                    server_defaults,
                 ))
             }
             None => Err(HdfsError::FileNotFound(src.to_string())),

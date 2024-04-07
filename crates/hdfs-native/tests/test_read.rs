@@ -11,10 +11,43 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    async fn test_read() -> Result<()> {
+    async fn test_read_simple() {
+        test_read(&HashSet::from([DfsFeatures::HA])).await.unwrap();
+    }
+
+    // These tests take a long time, so don't run by default
+    #[tokio::test]
+    #[serial]
+    #[ignore]
+    async fn test_read_sasl_encryption() {
+        test_read(&HashSet::from([
+            DfsFeatures::HA,
+            DfsFeatures::Security,
+            DfsFeatures::Privacy,
+        ]))
+        .await
+        .unwrap();
+    }
+
+    // These tests take a long time, so don't run by default
+    #[tokio::test]
+    #[serial]
+    #[ignore]
+    async fn test_read_cipher_encryption() {
+        test_read(&HashSet::from([
+            DfsFeatures::HA,
+            DfsFeatures::Security,
+            DfsFeatures::Privacy,
+            DfsFeatures::AES,
+        ]))
+        .await
+        .unwrap();
+    }
+
+    async fn test_read(features: &HashSet<DfsFeatures>) -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let _dfs = setup(&HashSet::from([DfsFeatures::HA]));
+        let _dfs = setup(features);
         let client = Client::default();
 
         // Read the whole file

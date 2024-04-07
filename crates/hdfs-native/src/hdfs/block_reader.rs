@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures::{
@@ -18,18 +18,21 @@ use crate::{
     HdfsError, Result,
 };
 
+use super::protocol::NamenodeProtocol;
+
 pub(crate) fn get_block_stream(
+    protocol: Arc<NamenodeProtocol>,
     block: hdfs::LocatedBlockProto,
     offset: usize,
     len: usize,
     ec_schema: Option<EcSchema>,
 ) -> BoxStream<'static, Result<Bytes>> {
     if let Some(ec_schema) = ec_schema {
-        StripedBlockStream::new(block, offset, len, ec_schema)
+        StripedBlockStream::new(protocol, block, offset, len, ec_schema)
             .into_stream()
             .boxed()
     } else {
-        ReplicatedBlockStream::new(block, offset, len)
+        ReplicatedBlockStream::new(protocol, block, offset, len)
             .into_stream()
             .boxed()
     }
@@ -37,6 +40,7 @@ pub(crate) fn get_block_stream(
 
 /// Connects to a DataNode to do a read, attempting to used cached connections.
 async fn connect_and_send(
+    protocol: &Arc<NamenodeProtocol>,
     datanode_id: &hdfs::DatanodeIdProto,
     block: &hdfs::ExtendedBlockProto,
     token: common::TokenProto,
@@ -68,7 +72,12 @@ async fn connect_and_send(
         }
         remaining_attempts -= 1;
     }
-    let mut conn = DatanodeConnection::connect(datanode_id, &token).await?;
+    let mut conn = DatanodeConnection::connect(
+        datanode_id,
+        &token,
+        protocol.get_cached_data_encryption_key().await?,
+    )
+    .await?;
 
     let message = hdfs::OpReadBlockProto {
         header: conn.build_header(block, Some(token)),
@@ -85,6 +94,7 @@ async fn connect_and_send(
 }
 
 struct ReplicatedBlockStream {
+    protocol: Arc<NamenodeProtocol>,
     block: hdfs::LocatedBlockProto,
     offset: usize,
     len: usize,
@@ -95,8 +105,14 @@ struct ReplicatedBlockStream {
 }
 
 impl ReplicatedBlockStream {
-    fn new(block: hdfs::LocatedBlockProto, offset: usize, len: usize) -> Self {
+    fn new(
+        protocol: Arc<NamenodeProtocol>,
+        block: hdfs::LocatedBlockProto,
+        offset: usize,
+        len: usize,
+    ) -> Self {
         Self {
+            protocol,
             block,
             offset,
             len,
@@ -119,6 +135,7 @@ impl ReplicatedBlockStream {
         let datanode = &self.block.locs[self.current_replica].id;
 
         let (connection, response) = connect_and_send(
+            &self.protocol,
             datanode,
             &self.block.b,
             self.block.block_token.clone(),
@@ -182,6 +199,7 @@ impl ReplicatedBlockStream {
 }
 
 struct StripedBlockStream {
+    protocol: Arc<NamenodeProtocol>,
     block: hdfs::LocatedBlockProto,
     offset: usize,
     len: usize,
@@ -189,8 +207,15 @@ struct StripedBlockStream {
 }
 
 impl StripedBlockStream {
-    fn new(block: hdfs::LocatedBlockProto, offset: usize, len: usize, ec_schema: EcSchema) -> Self {
+    fn new(
+        protocol: Arc<NamenodeProtocol>,
+        block: hdfs::LocatedBlockProto,
+        offset: usize,
+        len: usize,
+        ec_schema: EcSchema,
+    ) -> Self {
         Self {
+            protocol,
             block,
             offset,
             len,
@@ -399,8 +424,15 @@ impl StripedBlockStream {
             return Ok(());
         }
 
-        let (mut connection, response) =
-            connect_and_send(datanode, block, token.clone(), offset as u64, len as u64).await?;
+        let (mut connection, response) = connect_and_send(
+            &self.protocol,
+            datanode,
+            block,
+            token.clone(),
+            offset as u64,
+            len as u64,
+        )
+        .await?;
 
         if response.status() != hdfs::Status::Success {
             return Err(HdfsError::DataTransferError(response.message().to_string()));

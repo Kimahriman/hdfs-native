@@ -93,6 +93,43 @@ mod test {
 
     #[tokio::test]
     #[serial]
+    async fn test_forced_data_transfer_encryption() {
+        // DataTransferEncryption enabled but privacy isn't, still force encryption
+        test_with_features(&HashSet::from([
+            DfsFeatures::Security,
+            DfsFeatures::DataTransferEncryption,
+        ]))
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_data_transfer_encryption() {
+        test_with_features(&HashSet::from([
+            DfsFeatures::Security,
+            DfsFeatures::Privacy,
+            DfsFeatures::DataTransferEncryption,
+        ]))
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_data_transfer_encryption_aes() {
+        test_with_features(&HashSet::from([
+            DfsFeatures::Security,
+            DfsFeatures::Privacy,
+            DfsFeatures::DataTransferEncryption,
+            DfsFeatures::AES,
+        ]))
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn test_basic_ha() {
         test_with_features(&HashSet::from([DfsFeatures::HA]))
             .await
