@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use chrono::{prelude::*, TimeDelta};
-use crc::{Crc, Slice16, CRC_32_CKSUM, CRC_32_ISCSI};
+use crc::{Crc, Table, CRC_32_CKSUM, CRC_32_ISCSI};
 use log::{debug, warn};
 use once_cell::sync::Lazy;
 use prost::Message;
@@ -34,8 +34,8 @@ const DATA_TRANSFER_VERSION: u16 = 28;
 const MAX_PACKET_HEADER_SIZE: usize = 33;
 const DATANODE_CACHE_EXPIRY: TimeDelta = TimeDelta::seconds(3);
 
-const CRC32: Crc<Slice16<u32>> = Crc::<Slice16<u32>>::new(&CRC_32_CKSUM);
-const CRC32C: Crc<Slice16<u32>> = Crc::<Slice16<u32>>::new(&CRC_32_ISCSI);
+const CRC32: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_CKSUM);
+const CRC32C: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_ISCSI);
 
 pub(crate) static DATANODE_CACHE: Lazy<DatanodeConnectionCache> =
     Lazy::new(DatanodeConnectionCache::new);

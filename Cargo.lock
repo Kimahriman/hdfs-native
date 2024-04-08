@@ -358,9 +358,9 @@ dependencies = [
 
 [[package]]
 name = "crc"
-version = "3.1.0-beta.1"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a02c6ee9f6aa3049d991777025b73fbecc46696f3b3946c4eae4a0fbedec65ab"
+checksum = "c2b432c56615136f8dba245fed7ec3d5518c500a31108661067e61e72fe7e6bc"
 dependencies = [
  "crc-catalog",
 ]
@@ -770,7 +770,7 @@ checksum = "290f1a1d9242c78d09ce40a5e87e7554ee637af1351968159f4952f028f75604"
 
 [[package]]
 name = "hdfs-native"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "aes",
  "base64",
@@ -814,7 +814,7 @@ dependencies = [
 
 [[package]]
 name = "hdfs-native-object-store"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "hdfs-native-python"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "bytes",
  "env_logger",
