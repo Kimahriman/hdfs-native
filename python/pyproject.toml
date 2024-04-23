@@ -12,6 +12,9 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
+dependencies = [
+    "typing-extensions"
+]
 
 [project.urls]
 repository = "https://github.com/Kimahriman/hdfs-native"
