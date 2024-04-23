@@ -32,7 +32,7 @@ use object_store::{
     multipart::{PartId, PutPart, WriteMultiPart},
     path::Path,
     GetOptions, GetRange, GetResult, GetResultPayload, ListResult, MultipartId, ObjectMeta,
-    ObjectStore, PutMode, PutOptions, PutResult, Result,
+    ObjectStore, PutMode, PutMultipartOpts, PutOptions, PutResult, Result,
 };
 use tokio::io::AsyncWrite;
 
@@ -157,9 +157,10 @@ impl ObjectStore for HdfsObjectStore {
 
     /// Uses the [PutPart] trait to implement an asynchronous writer. We can't actually upload
     /// multiple parts at once, so we simply set a limit of one part at a time.
-    async fn put_multipart(
+    async fn put_multipart_opts(
         &self,
         location: &Path,
+        opts: PutMultipartOpts,
     ) -> Result<(MultipartId, Box<dyn AsyncWrite + Unpin + Send>)> {
         let final_file_path = make_absolute_file(location);
         let path_buf = PathBuf::from(&final_file_path);
