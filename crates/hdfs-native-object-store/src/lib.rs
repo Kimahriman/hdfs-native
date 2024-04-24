@@ -17,24 +17,18 @@ use std::{
     fmt::{Display, Formatter},
     future,
     path::PathBuf,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::{atomic::AtomicUsize, Arc},
 };
 
 use async_trait::async_trait;
-use bytes::Bytes;
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use futures::stream::{BoxStream, StreamExt};
 use hdfs_native::{client::FileStatus, file::FileWriter, Client, HdfsError, WriteOptions};
 use object_store::{
-    multipart::{PartId, PutPart, WriteMultiPart},
-    path::Path,
-    GetOptions, GetRange, GetResult, GetResultPayload, ListResult, MultipartId, ObjectMeta,
-    ObjectStore, PutMode, PutMultipartOpts, PutOptions, PutResult, Result,
+    path::Path, GetOptions, GetRange, GetResult, GetResultPayload, ListResult, MultipartUpload,
+    ObjectMeta, ObjectStore, PutMode, PutMultipartOpts, PutOptions, PutPayload, PutResult, Result,
+    UploadPart,
 };
-use tokio::io::AsyncWrite;
 
 #[derive(Debug)]
 pub struct HdfsObjectStore {
@@ -101,7 +95,12 @@ impl ObjectStore for HdfsObjectStore {
     ///
     /// To make the operation atomic, we write to a temporary file ".{filename}.tmp" and rename
     /// on a successful write.
-    async fn put_opts(&self, location: &Path, bytes: Bytes, opts: PutOptions) -> Result<PutResult> {
+    async fn put_opts(
+        &self,
+        location: &Path,
+        payload: PutPayload,
+        opts: PutOptions,
+    ) -> Result<PutResult> {
         let overwrite = match opts.mode {
             PutMode::Create => false,
             PutMode::Overwrite => true,
@@ -141,7 +140,10 @@ impl ObjectStore for HdfsObjectStore {
             .create(&tmp_filename, write_options)
             .await
             .to_object_store_err()?;
-        writer.write(bytes).await.to_object_store_err()?;
+
+        for bytes in payload {
+            writer.write(bytes).await.to_object_store_err()?;
+        }
         writer.close().await.to_object_store_err()?;
 
         self.client
@@ -160,8 +162,8 @@ impl ObjectStore for HdfsObjectStore {
     async fn put_multipart_opts(
         &self,
         location: &Path,
-        opts: PutMultipartOpts,
-    ) -> Result<(MultipartId, Box<dyn AsyncWrite + Unpin + Send>)> {
+        _opts: PutMultipartOpts,
+    ) -> Result<Box<dyn MultipartUpload>> {
         let final_file_path = make_absolute_file(location);
         let path_buf = PathBuf::from(&final_file_path);
 
@@ -199,28 +201,12 @@ impl ObjectStore for HdfsObjectStore {
             .await
             .to_object_store_err()?;
 
-        Ok((
-            tmp_filename.clone(),
-            Box::new(WriteMultiPart::new(
-                HdfsMultipartWriter::new(
-                    Arc::clone(&self.client),
-                    writer,
-                    &tmp_filename,
-                    &final_file_path,
-                ),
-                1,
-            )),
-        ))
-    }
-
-    /// Attempts to delete the temporary file used for multipart uploads.
-    async fn abort_multipart(&self, _location: &Path, multipart_id: &MultipartId) -> Result<()> {
-        // The multipart_id is the resolved temporary file name, so we can just delete it
-        self.client
-            .delete(multipart_id, false)
-            .await
-            .to_object_store_err()?;
-        Ok(())
+        Ok(Box::new(HdfsMultipartWriter::new(
+            Arc::clone(&self.client),
+            writer,
+            &tmp_filename,
+            &final_file_path,
+        )))
     }
 
     async fn get_opts(&self, location: &Path, options: GetOptions) -> Result<GetResult> {
@@ -259,6 +245,7 @@ impl ObjectStore for HdfsObjectStore {
             payload,
             meta,
             range,
+            attributes: Default::default(),
         })
     }
 
@@ -465,46 +452,68 @@ impl HdfsMultipartWriter {
     }
 }
 
+impl std::fmt::Debug for HdfsMultipartWriter {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HdfsMultipartWriter")
+            .field("client", &self.client)
+            .field("tmp_filename", &self.tmp_filename)
+            .field("final_filename", &self.final_filename)
+            .field("next_part", &self.next_part)
+            .finish()
+    }
+}
+
 #[async_trait]
-impl PutPart for HdfsMultipartWriter {
-    /// Upload a single part
-    async fn put_part(&self, buf: Vec<u8>, part_idx: usize) -> Result<PartId> {
-        if part_idx != self.next_part.load(Ordering::SeqCst) {
-            return Err(object_store::Error::NotSupported {
-                source: "Part received out of order".to_string().into(),
-            });
-        }
-
-        self.inner
-            .lock()
-            .await
-            .write(buf.into())
-            .await
-            .to_object_store_err()?;
-
-        self.next_part.fetch_add(1, Ordering::SeqCst);
-
-        Ok(PartId {
-            content_id: part_idx.to_string(),
-        })
+impl MultipartUpload for HdfsMultipartWriter {
+    fn put_part(&mut self, payload: PutPayload) -> UploadPart {
+        todo!()
     }
 
-    /// Complete the upload with the provided parts
-    ///
-    /// `completed_parts` is in order of part number
-    async fn complete(&self, _completed_parts: Vec<PartId>) -> Result<()> {
-        self.inner
-            .lock()
-            .await
-            .close()
-            .await
-            .to_object_store_err()?;
-        self.client
-            .rename(&self.tmp_filename, &self.final_filename, true)
-            .await
-            .to_object_store_err()?;
-        Ok(())
+    async fn complete(&mut self) -> Result<PutResult> {
+        todo!()
     }
+
+    async fn abort(&mut self) -> Result<()> {
+        todo!()
+    }
+    // /// Upload a single part
+    // async fn put_part(&self, buf: Vec<u8>, part_idx: usize) -> Result<PartId> {
+    //     if part_idx != self.next_part.load(Ordering::SeqCst) {
+    //         return Err(object_store::Error::NotSupported {
+    //             source: "Part received out of order".to_string().into(),
+    //         });
+    //     }
+
+    //     self.inner
+    //         .lock()
+    //         .await
+    //         .write(buf.into())
+    //         .await
+    //         .to_object_store_err()?;
+
+    //     self.next_part.fetch_add(1, Ordering::SeqCst);
+
+    //     Ok(PartId {
+    //         content_id: part_idx.to_string(),
+    //     })
+    // }
+
+    // /// Complete the upload with the provided parts
+    // ///
+    // /// `completed_parts` is in order of part number
+    // async fn complete(&self, _completed_parts: Vec<PartId>) -> Result<()> {
+    //     self.inner
+    //         .lock()
+    //         .await
+    //         .close()
+    //         .await
+    //         .to_object_store_err()?;
+    //     self.client
+    //         .rename(&self.tmp_filename, &self.final_filename, true)
+    //         .await
+    //         .to_object_store_err()?;
+    //     Ok(())
+    // }
 }
 
 /// ObjectStore paths always remove the leading slash, so add it back
