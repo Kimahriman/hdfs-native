@@ -29,6 +29,7 @@ use object_store::{
     ObjectMeta, ObjectStore, PutMode, PutMultipartOpts, PutOptions, PutPayload, PutResult, Result,
     UploadPart,
 };
+use tokio::task::JoinHandle;
 
 #[derive(Debug)]
 pub struct HdfsObjectStore {
@@ -422,13 +423,15 @@ impl<T> HdfsErrorConvert<T> for hdfs_native::Result<T> {
     }
 }
 
-// Create a fake multipart writer that assumes only one part will be
-// written at a time. It would be better if we figured out how to implement
-// AsyncWrite for the FileWriter
+// Create a fake multipart writer the creates an uploader to a temp file as a background
+// task, and submits new parts to be uploaded to a queue for this task.
+// A once cell is used to track whether a part has finished writing or not.
+// On completing, rename the file to the actual target.
 struct HdfsMultipartWriter {
     // FileWriter is stateful, but put_part doesn't allow a mutable borrow so we
     // have to wrap in an async mutex
     client: Arc<Client>,
+    writer: JoinHandle<()>,
     inner: Arc<tokio::sync::Mutex<FileWriter>>,
     tmp_filename: String,
     final_filename: String,
@@ -436,7 +439,7 @@ struct HdfsMultipartWriter {
 }
 
 impl HdfsMultipartWriter {
-    fn new(
+    async fn new(
         client: Arc<Client>,
         inner: FileWriter,
         tmp_filename: &str,
