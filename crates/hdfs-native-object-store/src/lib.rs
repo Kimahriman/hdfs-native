@@ -17,19 +17,25 @@ use std::{
     fmt::{Display, Formatter},
     future,
     path::PathBuf,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::Arc,
 };
 
 use async_trait::async_trait;
 use chrono::{NaiveDateTime, TimeZone, Utc};
-use futures::stream::{BoxStream, StreamExt};
+use futures::{
+    stream::{BoxStream, StreamExt},
+    FutureExt,
+};
 use hdfs_native::{client::FileStatus, file::FileWriter, Client, HdfsError, WriteOptions};
 use object_store::{
     path::Path, GetOptions, GetRange, GetResult, GetResultPayload, ListResult, MultipartUpload,
     ObjectMeta, ObjectStore, PutMode, PutMultipartOpts, PutOptions, PutPayload, PutResult, Result,
     UploadPart,
 };
-use tokio::task::JoinHandle;
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::{self, JoinHandle},
+};
 
 #[derive(Debug)]
 pub struct HdfsObjectStore {
@@ -428,40 +434,59 @@ impl<T> HdfsErrorConvert<T> for hdfs_native::Result<T> {
 // A once cell is used to track whether a part has finished writing or not.
 // On completing, rename the file to the actual target.
 struct HdfsMultipartWriter {
-    // FileWriter is stateful, but put_part doesn't allow a mutable borrow so we
-    // have to wrap in an async mutex
     client: Arc<Client>,
-    writer: JoinHandle<()>,
-    inner: Arc<tokio::sync::Mutex<FileWriter>>,
+    writer: Option<JoinHandle<()>>,
+    sender: Option<mpsc::UnboundedSender<(oneshot::Sender<Result<()>>, PutPayload)>>,
     tmp_filename: String,
     final_filename: String,
-    next_part: AtomicUsize,
 }
 
 impl HdfsMultipartWriter {
-    async fn new(
+    fn new(
         client: Arc<Client>,
-        inner: FileWriter,
+        writer: FileWriter,
         tmp_filename: &str,
         final_filename: &str,
     ) -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
+
         Self {
             client,
-            inner: Arc::new(tokio::sync::Mutex::new(inner)),
+            writer: Some(Self::start_writer_task(writer, receiver)),
+            sender: Some(sender),
             tmp_filename: tmp_filename.to_string(),
             final_filename: final_filename.to_string(),
-            next_part: AtomicUsize::new(0),
         }
+    }
+
+    fn start_writer_task(
+        mut writer: FileWriter,
+        mut part_receiver: mpsc::UnboundedReceiver<(oneshot::Sender<Result<()>>, PutPayload)>,
+    ) -> JoinHandle<()> {
+        task::spawn(async move {
+            loop {
+                match part_receiver.recv().await {
+                    Some((sender, part)) => {
+                        for bytes in part {
+                            writer.write(bytes).await.to_object_store_err().unwrap();
+                        }
+                        sender.send(Ok(())).unwrap();
+                    }
+                    None => {
+                        writer.close().await.unwrap();
+                        break;
+                    }
+                }
+            }
+        })
     }
 }
 
 impl std::fmt::Debug for HdfsMultipartWriter {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HdfsMultipartWriter")
-            .field("client", &self.client)
             .field("tmp_filename", &self.tmp_filename)
             .field("final_filename", &self.final_filename)
-            .field("next_part", &self.next_part)
             .finish()
     }
 }
@@ -469,15 +494,49 @@ impl std::fmt::Debug for HdfsMultipartWriter {
 #[async_trait]
 impl MultipartUpload for HdfsMultipartWriter {
     fn put_part(&mut self, payload: PutPayload) -> UploadPart {
-        todo!()
+        let (result_sender, result_receiver) = oneshot::channel();
+
+        if let Some(payload_sender) = self.sender.as_ref() {
+            payload_sender.send((result_sender, payload)).unwrap();
+        } else {
+            todo!()
+        }
+
+        async {
+            result_receiver.await.unwrap().unwrap();
+            Ok(())
+        }
+        .boxed()
     }
 
     async fn complete(&mut self) -> Result<PutResult> {
-        todo!()
+        // Drop the sender so the task knows no more data is coming
+        let _ = self.sender.take();
+
+        // Wait for the writer task to finish
+        self.writer.take().unwrap().await.unwrap();
+
+        self.client
+            .rename(&self.tmp_filename, &self.final_filename, true)
+            .await
+            .to_object_store_err()?;
+
+        Ok(PutResult {
+            e_tag: None,
+            version: None,
+        })
     }
 
     async fn abort(&mut self) -> Result<()> {
-        todo!()
+        let _ = self.sender.take();
+        self.writer.take().unwrap().abort();
+
+        self.client
+            .delete(&self.tmp_filename, false)
+            .await
+            .to_object_store_err()?;
+
+        Ok(())
     }
     // /// Upload a single part
     // async fn put_part(&self, buf: Vec<u8>, part_idx: usize) -> Result<PartId> {
