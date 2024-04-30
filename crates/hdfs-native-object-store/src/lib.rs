@@ -82,6 +82,34 @@ impl HdfsObjectStore {
 
         Ok(())
     }
+
+    async fn open_tmp_file(&self, file_path: &str) -> Result<(FileWriter, String)> {
+        let path_buf = PathBuf::from(file_path);
+
+        let file_name = path_buf
+            .file_name()
+            .ok_or(HdfsError::InvalidPath("path missing filename".to_string()))
+            .to_object_store_err()?
+            .to_str()
+            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
+            .to_object_store_err()?
+            .to_string();
+
+        let tmp_file_path = path_buf
+            .with_file_name(format!(".{}.tmp", file_name))
+            .to_str()
+            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
+            .to_object_store_err()?
+            .to_string();
+
+        let writer = self
+            .client
+            .create(&tmp_file_path, WriteOptions::default())
+            .await
+            .to_object_store_err()?;
+
+        Ok((writer, tmp_file_path))
+    }
 }
 
 impl Display for HdfsObjectStore {
@@ -119,42 +147,23 @@ impl ObjectStore for HdfsObjectStore {
         };
 
         let final_file_path = make_absolute_file(location);
-        let path_buf = PathBuf::from(&final_file_path);
 
-        let file_name = path_buf
-            .file_name()
-            .ok_or(HdfsError::InvalidPath("path missing filename".to_string()))
-            .to_object_store_err()?
-            .to_str()
-            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
-            .to_object_store_err()?
-            .to_string();
+        // If we're not overwriting, do an upfront check to see if the file already
+        // exists. Otherwise we have to write the whole file and try to rename before
+        // finding out.
+        if !overwrite && self.client.get_file_info(&final_file_path).await.is_ok() {
+            return Err(HdfsError::AlreadyExists(final_file_path)).to_object_store_err();
+        }
 
-        let tmp_filename = path_buf
-            .with_file_name(format!(".{}.tmp", file_name))
-            .to_str()
-            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
-            .to_object_store_err()?
-            .to_string();
-
-        let write_options = WriteOptions {
-            overwrite,
-            ..Default::default()
-        };
-
-        let mut writer = self
-            .client
-            .create(&tmp_filename, write_options)
-            .await
-            .to_object_store_err()?;
+        let (mut tmp_file, tmp_file_path) = self.open_tmp_file(&final_file_path).await?;
 
         for bytes in payload {
-            writer.write(bytes).await.to_object_store_err()?;
+            tmp_file.write(bytes).await.to_object_store_err()?;
         }
-        writer.close().await.to_object_store_err()?;
+        tmp_file.close().await.to_object_store_err()?;
 
         self.client
-            .rename(&tmp_filename, &final_file_path, overwrite)
+            .rename(&tmp_file_path, &final_file_path, overwrite)
             .await
             .to_object_store_err()?;
 
@@ -172,46 +181,13 @@ impl ObjectStore for HdfsObjectStore {
         _opts: PutMultipartOpts,
     ) -> Result<Box<dyn MultipartUpload>> {
         let final_file_path = make_absolute_file(location);
-        let path_buf = PathBuf::from(&final_file_path);
 
-        let file_name = path_buf
-            .file_name()
-            .ok_or(HdfsError::InvalidPath("path missing filename".to_string()))
-            .to_object_store_err()?
-            .to_str()
-            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
-            .to_object_store_err()?
-            .to_string();
-
-        let tmp_filename = path_buf
-            .with_file_name(format!(".{}.tmp", file_name))
-            .to_str()
-            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
-            .to_object_store_err()?
-            .to_string();
-
-        // First we need to check if the tmp file exists so we know whether to overwrite
-        let overwrite = match self.client.get_file_info(&tmp_filename).await {
-            Ok(_) => true,
-            Err(HdfsError::FileNotFound(_)) => false,
-            Err(e) => Err(e).to_object_store_err()?,
-        };
-
-        let write_options = WriteOptions {
-            overwrite,
-            ..Default::default()
-        };
-
-        let writer = self
-            .client
-            .create(&tmp_filename, write_options)
-            .await
-            .to_object_store_err()?;
+        let (tmp_file, tmp_file_path) = self.open_tmp_file(&final_file_path).await?;
 
         Ok(Box::new(HdfsMultipartWriter::new(
             Arc::clone(&self.client),
-            writer,
-            &tmp_filename,
+            tmp_file,
+            &tmp_file_path,
             &final_file_path,
         )))
     }
@@ -429,14 +405,15 @@ impl<T> HdfsErrorConvert<T> for hdfs_native::Result<T> {
     }
 }
 
+type PartSender = mpsc::UnboundedSender<(oneshot::Sender<Result<()>>, PutPayload)>;
+
 // Create a fake multipart writer the creates an uploader to a temp file as a background
 // task, and submits new parts to be uploaded to a queue for this task.
 // A once cell is used to track whether a part has finished writing or not.
 // On completing, rename the file to the actual target.
 struct HdfsMultipartWriter {
     client: Arc<Client>,
-    writer: Option<JoinHandle<()>>,
-    sender: Option<mpsc::UnboundedSender<(oneshot::Sender<Result<()>>, PutPayload)>>,
+    sender: Option<(JoinHandle<Result<()>>, PartSender)>,
     tmp_filename: String,
     final_filename: String,
 }
@@ -452,8 +429,7 @@ impl HdfsMultipartWriter {
 
         Self {
             client,
-            writer: Some(Self::start_writer_task(writer, receiver)),
-            sender: Some(sender),
+            sender: Some((Self::start_writer_task(writer, receiver), sender)),
             tmp_filename: tmp_filename.to_string(),
             final_filename: final_filename.to_string(),
         }
@@ -462,22 +438,38 @@ impl HdfsMultipartWriter {
     fn start_writer_task(
         mut writer: FileWriter,
         mut part_receiver: mpsc::UnboundedReceiver<(oneshot::Sender<Result<()>>, PutPayload)>,
-    ) -> JoinHandle<()> {
+    ) -> JoinHandle<Result<()>> {
         task::spawn(async move {
-            loop {
+            'outer: loop {
                 match part_receiver.recv().await {
                     Some((sender, part)) => {
                         for bytes in part {
-                            writer.write(bytes).await.to_object_store_err().unwrap();
+                            if let Err(e) = writer.write(bytes).await.to_object_store_err() {
+                                let _ = sender.send(Err(e));
+                                break 'outer;
+                            }
                         }
-                        sender.send(Ok(())).unwrap();
+                        let _ = sender.send(Ok(()));
                     }
                     None => {
-                        writer.close().await.unwrap();
-                        break;
+                        return writer.close().await.to_object_store_err();
                     }
                 }
             }
+
+            // If we've reached here, a write task failed so just return Err's for all new parts that come in
+            while let Some((sender, _)) = part_receiver.recv().await {
+                let _ = sender.send(
+                    Err(HdfsError::OperationFailed(
+                        "Write failed during one of the parts".to_string(),
+                    ))
+                    .to_object_store_err(),
+                );
+            }
+            Err(HdfsError::OperationFailed(
+                "Write failed during one of the parts".to_string(),
+            ))
+            .to_object_store_err()
         })
     }
 }
@@ -496,47 +488,65 @@ impl MultipartUpload for HdfsMultipartWriter {
     fn put_part(&mut self, payload: PutPayload) -> UploadPart {
         let (result_sender, result_receiver) = oneshot::channel();
 
-        if let Some(payload_sender) = self.sender.as_ref() {
+        if let Some((_, payload_sender)) = self.sender.as_ref() {
             payload_sender.send((result_sender, payload)).unwrap();
         } else {
-            todo!()
+            result_sender
+                .send(
+                    Err(HdfsError::OperationFailed(
+                        "Cannot put part after completing or aborting".to_string(),
+                    ))
+                    .to_object_store_err(),
+                )
+                .unwrap();
         }
 
-        async {
-            result_receiver.await.unwrap().unwrap();
-            Ok(())
-        }
-        .boxed()
+        async { result_receiver.await.unwrap() }.boxed()
     }
 
     async fn complete(&mut self) -> Result<PutResult> {
         // Drop the sender so the task knows no more data is coming
-        let _ = self.sender.take();
+        if let Some((handle, sender)) = self.sender.take() {
+            drop(sender);
 
-        // Wait for the writer task to finish
-        self.writer.take().unwrap().await.unwrap();
+            // Wait for the writer task to finish
+            handle.await??;
 
-        self.client
-            .rename(&self.tmp_filename, &self.final_filename, true)
-            .await
-            .to_object_store_err()?;
+            self.client
+                .rename(&self.tmp_filename, &self.final_filename, true)
+                .await
+                .to_object_store_err()?;
 
-        Ok(PutResult {
-            e_tag: None,
-            version: None,
-        })
+            Ok(PutResult {
+                e_tag: None,
+                version: None,
+            })
+        } else {
+            Err(object_store::Error::NotSupported {
+                source: "Cannot call abort or complete multiple times".into(),
+            })
+        }
     }
 
     async fn abort(&mut self) -> Result<()> {
-        let _ = self.sender.take();
-        self.writer.take().unwrap().abort();
+        // Drop the sender so the task knows no more data is coming
+        if let Some((handle, sender)) = self.sender.take() {
+            drop(sender);
 
-        self.client
-            .delete(&self.tmp_filename, false)
-            .await
-            .to_object_store_err()?;
+            // Wait for the writer task to finish
+            handle.abort();
 
-        Ok(())
+            self.client
+                .delete(&self.tmp_filename, false)
+                .await
+                .to_object_store_err()?;
+
+            Ok(())
+        } else {
+            Err(object_store::Error::NotSupported {
+                source: "Cannot call abort or complete multiple times".into(),
+            })
+        }
     }
     // /// Upload a single part
     // async fn put_part(&self, buf: Vec<u8>, part_idx: usize) -> Result<PartId> {
