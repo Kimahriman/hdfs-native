@@ -1,6 +1,6 @@
 #[cfg(feature = "integration-test")]
 mod test {
-    use bytes::{Buf, BufMut, BytesMut};
+    use bytes::{Buf, BufMut, Bytes, BytesMut};
     use hdfs_native::{
         minidfs::{DfsFeatures, MiniDfs},
         Client, WriteOptions,
@@ -238,6 +238,17 @@ mod test {
         uploader.abort().await?;
         assert!(store.head(&"/.newfile.tmp.1".into()).await.is_err());
         assert!(store.head(&"/newfile".into()).await.is_err());
+
+        // Test multiple uploads to the same destination, default is to overwrite
+        let mut uploader1 = store.put_multipart(&"/newfile".into()).await?;
+        let mut uploader2 = store.put_multipart(&"/newfile".into()).await?;
+        uploader1.put_part(vec![1].into()).await?;
+        uploader2.put_part(vec![2].into()).await?;
+        uploader1.complete().await?;
+        uploader2.complete().await?;
+
+        let result = store.get(&"/newfile".into()).await?;
+        assert!(result.bytes().await?.to_vec() == vec![2]);
 
         Ok(())
     }
