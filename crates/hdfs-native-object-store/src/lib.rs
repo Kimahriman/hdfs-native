@@ -4,12 +4,10 @@
 //! # Usage
 //!
 //! ```rust
-//! use hdfs_native::Client;
 //! use hdfs_native_object_store::HdfsObjectStore;
 //! # use hdfs_native::Result;
 //! # fn main() -> Result<()> {
-//! let client = Client::new("hdfs://localhost:9000")?;
-//! let store = HdfsObjectStore::new(client);
+//! let store = HdfsObjectStore::with_url("hdfs://localhost:9000")?;
 //! # Ok(())
 //! # }
 //! ```
@@ -43,10 +41,14 @@ pub struct HdfsObjectStore {
 }
 
 impl HdfsObjectStore {
-    pub fn new(client: Client) -> Self {
-        Self {
-            client: Arc::new(client),
-        }
+    pub fn new(client: Arc<Client>) -> Self {
+        Self { client }
+    }
+
+    pub fn with_url(url: &str) -> Result<Self> {
+        Ok(Self {
+            client: Arc::new(Client::new(url).to_object_store_err()?),
+        })
     }
 
     async fn internal_copy(&self, from: &Path, to: &Path, overwrite: bool) -> Result<()> {
@@ -123,7 +125,7 @@ impl Display for HdfsObjectStore {
 
 impl From<Client> for HdfsObjectStore {
     fn from(value: Client) -> Self {
-        Self::new(value)
+        Self::new(Arc::new(value))
     }
 }
 

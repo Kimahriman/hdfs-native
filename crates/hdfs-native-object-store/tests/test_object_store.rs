@@ -1,6 +1,6 @@
 #[cfg(feature = "integration-test")]
 mod test {
-    use bytes::{Buf, BufMut, Bytes, BytesMut};
+    use bytes::{Buf, BufMut, BytesMut};
     use hdfs_native::{
         minidfs::{DfsFeatures, MiniDfs},
         Client, WriteOptions,
@@ -8,7 +8,7 @@ mod test {
     use hdfs_native_object_store::{HdfsErrorConvert, HdfsObjectStore};
     use object_store::{PutMode, PutOptions, PutPayload};
     use serial_test::serial;
-    use std::collections::HashSet;
+    use std::{collections::HashSet, sync::Arc};
 
     pub const TEST_FILE_INTS: usize = 64 * 1024 * 1024;
 
@@ -30,7 +30,7 @@ mod test {
         file.write(buf.freeze()).await.unwrap();
         file.close().await.unwrap();
 
-        let store = HdfsObjectStore::new(client);
+        let store = HdfsObjectStore::new(Arc::new(client));
 
         test_object_store_head(&store).await?;
         test_object_store_list(&store).await?;
