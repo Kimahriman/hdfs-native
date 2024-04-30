@@ -234,9 +234,9 @@ mod test {
 
         // Test aborting
         let mut uploader = store.put_multipart(&"/newfile".into()).await?;
-        assert!(store.head(&"/.newfile.tmp".into()).await.is_ok());
+        assert!(store.head(&"/.newfile.tmp.1".into()).await.is_ok());
         uploader.abort().await?;
-        assert!(store.head(&"/.newfile.tmp".into()).await.is_err());
+        assert!(store.head(&"/.newfile.tmp.1".into()).await.is_err());
         assert!(store.head(&"/newfile".into()).await.is_err());
 
         Ok(())

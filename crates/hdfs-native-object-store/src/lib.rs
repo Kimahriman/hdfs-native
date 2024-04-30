@@ -102,13 +102,16 @@ impl HdfsObjectStore {
             .to_object_store_err()?
             .to_string();
 
-        let writer = self
-            .client
-            .create(&tmp_file_path, WriteOptions::default())
-            .await
-            .to_object_store_err()?;
-
-        Ok((writer, tmp_file_path))
+        // Try to create a file with an incrementing index until we find one that doesn't exist yet
+        let mut index = 1;
+        loop {
+            let path = format!("{}.{}", tmp_file_path, index);
+            match self.client.create(&path, WriteOptions::default()).await {
+                Ok(writer) => break Ok((writer, path)),
+                Err(HdfsError::AlreadyExists(_)) => index += 1,
+                Err(e) => break Err(e).to_object_store_err(),
+            }
+        }
     }
 }
 
@@ -128,7 +131,7 @@ impl From<Client> for HdfsObjectStore {
 impl ObjectStore for HdfsObjectStore {
     /// Save the provided bytes to the specified location
     ///
-    /// To make the operation atomic, we write to a temporary file ".{filename}.tmp" and rename
+    /// To make the operation atomic, we write to a temporary file ".{filename}.tmp.{i}" and rename
     /// on a successful write.
     async fn put_opts(
         &self,
@@ -173,8 +176,8 @@ impl ObjectStore for HdfsObjectStore {
         })
     }
 
-    /// Uses the [PutPart] trait to implement an asynchronous writer. We can't actually upload
-    /// multiple parts at once, so we simply set a limit of one part at a time.
+    /// Create a multipart writer that writes to a temporary file in a background task, and renames
+    /// to the final destination on complete.
     async fn put_multipart_opts(
         &self,
         location: &Path,
