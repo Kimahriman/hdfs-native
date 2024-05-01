@@ -553,44 +553,6 @@ impl MultipartUpload for HdfsMultipartWriter {
             })
         }
     }
-    // /// Upload a single part
-    // async fn put_part(&self, buf: Vec<u8>, part_idx: usize) -> Result<PartId> {
-    //     if part_idx != self.next_part.load(Ordering::SeqCst) {
-    //         return Err(object_store::Error::NotSupported {
-    //             source: "Part received out of order".to_string().into(),
-    //         });
-    //     }
-
-    //     self.inner
-    //         .lock()
-    //         .await
-    //         .write(buf.into())
-    //         .await
-    //         .to_object_store_err()?;
-
-    //     self.next_part.fetch_add(1, Ordering::SeqCst);
-
-    //     Ok(PartId {
-    //         content_id: part_idx.to_string(),
-    //     })
-    // }
-
-    // /// Complete the upload with the provided parts
-    // ///
-    // /// `completed_parts` is in order of part number
-    // async fn complete(&self, _completed_parts: Vec<PartId>) -> Result<()> {
-    //     self.inner
-    //         .lock()
-    //         .await
-    //         .close()
-    //         .await
-    //         .to_object_store_err()?;
-    //     self.client
-    //         .rename(&self.tmp_filename, &self.final_filename, true)
-    //         .await
-    //         .to_object_store_err()?;
-    //     Ok(())
-    // }
 }
 
 /// ObjectStore paths always remove the leading slash, so add it back
