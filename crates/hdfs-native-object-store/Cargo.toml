@@ -16,7 +16,7 @@ bytes = { workspace = true }
 chrono = { workspace = true }
 futures = { workspace = true }
 hdfs-native = { path = "../hdfs-native", version = "0.9" }
-object_store = { version = "0.10", features = ["cloud"] }
+object_store = { version = "0.10" }
 thiserror = "1"
 tokio = { workspace = true, features = ["rt", "net", "io-util", "macros", "sync", "time"] }
 
