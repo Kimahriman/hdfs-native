@@ -171,6 +171,9 @@ impl NameServiceProxy {
     fn convert_rpc_error(exception: String, msg: String) -> HdfsError {
         match exception.as_ref() {
             "org.apache.hadoop.fs.FileAlreadyExistsException" => HdfsError::AlreadyExists(msg),
+            "org.apache.hadoop.hdfs.protocol.AlreadyBeingCreatedException" => {
+                HdfsError::AlreadyExists(msg)
+            }
             _ => HdfsError::RPCError(exception, msg),
         }
     }
