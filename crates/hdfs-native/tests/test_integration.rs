@@ -168,7 +168,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[ignore]
     async fn test_rbf() {
         test_with_features(&HashSet::from([DfsFeatures::RBF]))
             .await
