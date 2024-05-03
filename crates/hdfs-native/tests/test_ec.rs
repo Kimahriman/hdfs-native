@@ -74,6 +74,7 @@ mod test {
     async fn test_erasure_coded_read() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
+        #[allow(unused_mut)]
         let mut dfs_features = HashSet::from([DfsFeatures::EC]);
         #[cfg(feature = "kerberos")]
         dfs_features.insert(DfsFeatures::Security);
@@ -118,6 +119,7 @@ mod test {
     async fn test_erasure_coded_write() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
+        #[allow(unused_mut)]
         let mut dfs_features = HashSet::from([DfsFeatures::EC]);
         #[cfg(feature = "kerberos")]
         dfs_features.insert(DfsFeatures::Security);
