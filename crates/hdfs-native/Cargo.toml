@@ -27,7 +27,7 @@ g2p = "1"
 hex = "0.4"
 hmac = "0.12"
 libc = "0.2"
-libgssapi = { version = "0.7", default-features = false, optional = true }
+libgssapi = { version = "0.7", default-features = false, optional = true, git = "https://github.com/Kimahriman/libgssapi.git", branch = "raw-slice-panic" }
 log = { workspace = true }
 md-5 = "0.10"
 num-traits = "0.2"
