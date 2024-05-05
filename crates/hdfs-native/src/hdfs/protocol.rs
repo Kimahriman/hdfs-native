@@ -170,7 +170,7 @@ impl NamenodeProtocol {
                 Ok(encryption_key.clone())
             } else {
                 let key = self.get_data_encryption_key().await?.data_encryption_key;
-                *encryption_key = key.clone();
+                encryption_key.clone_from(&key);
                 Ok(key)
             }
         } else {
