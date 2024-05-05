@@ -94,9 +94,9 @@ jobs:
 
       - name: Download Hadoop
         run: |
-          wget -q https://dlcdn.apache.org/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz
-          tar -xf hadoop-3.3.6.tar.gz -C $GITHUB_WORKSPACE
-          echo "$GITHUB_WORKSPACE/hadoop-3.3.6/bin" >> $GITHUB_PATH
+          wget -q https://dlcdn.apache.org/hadoop/common/hadoop-3.4.0/hadoop-3.4.0.tar.gz
+          tar -xf hadoop-3.4.0.tar.gz -C $GITHUB_WORKSPACE
+          echo "$GITHUB_WORKSPACE/hadoop-3.4.0/bin" >> $GITHUB_PATH
 
       - name: Run tests
         run: cargo test --features kerberos,integration-test
