@@ -2,6 +2,7 @@
 mod test {
 
     use bytes::{Buf, BufMut, Bytes, BytesMut};
+    use hdfs_native::file::FileReader;
     use hdfs_native::WriteOptions;
     use serial_test::serial;
     use std::collections::HashSet;
@@ -13,6 +14,8 @@ mod test {
     use hdfs_native::minidfs::{DfsFeatures, MiniDfs};
     use hdfs_native::test::{EcFaultInjection, EC_FAULT_INJECTOR};
     use hdfs_native::{client::Client, Result};
+
+    const CELL_SIZE: usize = 1024 * 1024;
 
     fn create_file(url: &str, path: &str, size: usize) -> io::Result<()> {
         assert!(size % 4 == 0);
@@ -55,18 +58,38 @@ mod test {
         }
     }
 
+    async fn verify_positioned_read(reader: &FileReader, offset: usize, len: usize) -> Result<()> {
+        assert!(offset % 4 == 0);
+        assert!(len % 4 == 0);
+        let first_int = offset / 4;
+        let num_ints = len / 4;
+
+        let mut data = reader.read_range(offset, len).await?;
+
+        for i in first_int..(first_int + num_ints) {
+            assert_eq!(
+                data.get_u32(),
+                i as u32,
+                "Different values at integer {}",
+                i
+            );
+        }
+
+        Ok(())
+    }
+
     fn sizes_to_test(data_units: usize) -> Vec<usize> {
         vec![
-            16usize,                      // Small
-            1024 * 1024,                  // One cell
-            1024 * 1024 - 4,              // Just smaller than one cell
-            1024 * 1024 + 4,              // Just bigger than one cell
-            1024 * 1024 * data_units * 5, // Five "rows" of cells
-            1024 * 1024 * data_units * 5 - 4,
-            1024 * 1024 * data_units * 5 + 4,
-            128 * 1024 * 1024,
-            128 * 1024 * 1024 - 4,
-            128 * 1024 * 1024 + 4,
+            16usize,                    // Small
+            CELL_SIZE,                  // One cell
+            CELL_SIZE - 4,              // Just smaller than one cell
+            CELL_SIZE + 4,              // Just bigger than one cell
+            CELL_SIZE * data_units * 5, // Five "rows" of cells
+            CELL_SIZE * data_units * 5 - 4,
+            CELL_SIZE * data_units * 5 + 4,
+            128 * CELL_SIZE,
+            128 * CELL_SIZE - 4,
+            128 * CELL_SIZE + 4,
         ]
     }
     #[tokio::test]
@@ -107,6 +130,30 @@ mod test {
 
                 assert!(reader.read_range(0, reader.file_length()).await.is_err());
             }
+
+            // Test positioned reads
+            // Create 3 "rows" of data
+            create_file(&dfs.url, &file, data * 3 * CELL_SIZE)?;
+
+            let reader = client.read(&file).await?;
+
+            // Read the first cell completely
+            verify_positioned_read(&reader, 0, CELL_SIZE).await?;
+
+            // Read part of the first cell from the beginning
+            verify_positioned_read(&reader, 0, 1024).await?;
+
+            // Read part of the first cell in the middle
+            verify_positioned_read(&reader, 1024, 2048).await?;
+
+            // Read the second cell completely
+            verify_positioned_read(&reader, CELL_SIZE, CELL_SIZE).await?;
+
+            // Read part of the second cell from the beginning
+            verify_positioned_read(&reader, CELL_SIZE, CELL_SIZE + 1024).await?;
+
+            // Read part of the second cell in the middle
+            verify_positioned_read(&reader, CELL_SIZE + 1024, CELL_SIZE + 2048).await?;
 
             assert!(client.delete(&file, false).await?);
         }
