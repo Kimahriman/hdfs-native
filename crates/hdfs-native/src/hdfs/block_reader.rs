@@ -346,7 +346,7 @@ impl StripedBlockStream {
         let mut bytes_to_write = self.len;
         for mut cell in decoded_bufs.into_iter() {
             if bytes_to_skip > 0 {
-                if cell.len() > bytes_to_skip {
+                if bytes_to_skip >= cell.len() {
                     bytes_to_skip -= cell.len();
                     continue;
                 } else {
