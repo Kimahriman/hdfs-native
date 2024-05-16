@@ -131,6 +131,12 @@ mod test {
                 assert!(reader.read_range(0, reader.file_length()).await.is_err());
             }
 
+            // Reset fault injector
+            // Fail more than the number of parity shards, read should fail
+            let _ = EC_FAULT_INJECTOR.lock().unwrap().insert(EcFaultInjection {
+                fail_blocks: vec![],
+            });
+
             // Test positioned reads
             // Create 3 "rows" of data
             create_file(&dfs.url, &file, data * 3 * CELL_SIZE)?;
