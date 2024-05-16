@@ -1,5 +1,5 @@
 import io
-from typing import Iterator, Optional
+from typing import Iterator
 from typing_extensions import Buffer
 
 from ._internal import *
