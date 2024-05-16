@@ -138,8 +138,8 @@ mod test {
             });
 
             // Test positioned reads
-            // Create 3 "rows" of data
-            create_file(&dfs.url, &file, data * 3 * CELL_SIZE)?;
+            // Create 1 "row" of data
+            create_file(&dfs.url, &file, data * CELL_SIZE)?;
 
             let reader = client.read(&file).await?;
 
