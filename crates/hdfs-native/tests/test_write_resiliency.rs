@@ -18,7 +18,7 @@ mod test {
         #[cfg(feature = "kerberos")]
         let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::HA, DfsFeatures::Security]));
         #[cfg(not(feature = "kerberos"))]
-        let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::HA, DfsFeatures::RBF]));
+        let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::HA]));
         let client = Client::default();
 
         // Second client for checking lease

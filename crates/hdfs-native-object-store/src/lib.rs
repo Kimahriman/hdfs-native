@@ -4,12 +4,10 @@
 //! # Usage
 //!
 //! ```rust
-//! use hdfs_native::Client;
 //! use hdfs_native_object_store::HdfsObjectStore;
-//! # use hdfs_native::Result;
+//! # use object_store::Result;
 //! # fn main() -> Result<()> {
-//! let client = Client::new("hdfs://localhost:9000")?;
-//! let store = HdfsObjectStore::new(client);
+//! let store = HdfsObjectStore::with_url("hdfs://localhost:9000")?;
 //! # Ok(())
 //! # }
 //! ```
@@ -17,24 +15,25 @@ use std::{
     fmt::{Display, Formatter},
     future,
     path::PathBuf,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::Arc,
 };
 
 use async_trait::async_trait;
-use bytes::Bytes;
 use chrono::{NaiveDateTime, TimeZone, Utc};
-use futures::stream::{BoxStream, StreamExt};
+use futures::{
+    stream::{BoxStream, StreamExt},
+    FutureExt,
+};
 use hdfs_native::{client::FileStatus, file::FileWriter, Client, HdfsError, WriteOptions};
 use object_store::{
-    multipart::{PartId, PutPart, WriteMultiPart},
-    path::Path,
-    GetOptions, GetRange, GetResult, GetResultPayload, ListResult, MultipartId, ObjectMeta,
-    ObjectStore, PutMode, PutOptions, PutResult, Result,
+    path::Path, GetOptions, GetRange, GetResult, GetResultPayload, ListResult, MultipartUpload,
+    ObjectMeta, ObjectStore, PutMode, PutMultipartOpts, PutOptions, PutPayload, PutResult, Result,
+    UploadPart,
 };
-use tokio::io::AsyncWrite;
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::{self, JoinHandle},
+};
 
 #[derive(Debug)]
 pub struct HdfsObjectStore {
@@ -42,10 +41,14 @@ pub struct HdfsObjectStore {
 }
 
 impl HdfsObjectStore {
-    pub fn new(client: Client) -> Self {
-        Self {
-            client: Arc::new(client),
-        }
+    pub fn new(client: Arc<Client>) -> Self {
+        Self { client }
+    }
+
+    pub fn with_url(url: &str) -> Result<Self> {
+        Ok(Self {
+            client: Arc::new(Client::new(url).to_object_store_err()?),
+        })
     }
 
     async fn internal_copy(&self, from: &Path, to: &Path, overwrite: bool) -> Result<()> {
@@ -81,6 +84,37 @@ impl HdfsObjectStore {
 
         Ok(())
     }
+
+    async fn open_tmp_file(&self, file_path: &str) -> Result<(FileWriter, String)> {
+        let path_buf = PathBuf::from(file_path);
+
+        let file_name = path_buf
+            .file_name()
+            .ok_or(HdfsError::InvalidPath("path missing filename".to_string()))
+            .to_object_store_err()?
+            .to_str()
+            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
+            .to_object_store_err()?
+            .to_string();
+
+        let tmp_file_path = path_buf
+            .with_file_name(format!(".{}.tmp", file_name))
+            .to_str()
+            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
+            .to_object_store_err()?
+            .to_string();
+
+        // Try to create a file with an incrementing index until we find one that doesn't exist yet
+        let mut index = 1;
+        loop {
+            let path = format!("{}.{}", tmp_file_path, index);
+            match self.client.create(&path, WriteOptions::default()).await {
+                Ok(writer) => break Ok((writer, path)),
+                Err(HdfsError::AlreadyExists(_)) => index += 1,
+                Err(e) => break Err(e).to_object_store_err(),
+            }
+        }
+    }
 }
 
 impl Display for HdfsObjectStore {
@@ -91,7 +125,7 @@ impl Display for HdfsObjectStore {
 
 impl From<Client> for HdfsObjectStore {
     fn from(value: Client) -> Self {
-        Self::new(value)
+        Self::new(Arc::new(value))
     }
 }
 
@@ -99,9 +133,14 @@ impl From<Client> for HdfsObjectStore {
 impl ObjectStore for HdfsObjectStore {
     /// Save the provided bytes to the specified location
     ///
-    /// To make the operation atomic, we write to a temporary file ".{filename}.tmp" and rename
+    /// To make the operation atomic, we write to a temporary file ".{filename}.tmp.{i}" and rename
     /// on a successful write.
-    async fn put_opts(&self, location: &Path, bytes: Bytes, opts: PutOptions) -> Result<PutResult> {
+    async fn put_opts(
+        &self,
+        location: &Path,
+        payload: PutPayload,
+        opts: PutOptions,
+    ) -> Result<PutResult> {
         let overwrite = match opts.mode {
             PutMode::Create => false,
             PutMode::Overwrite => true,
@@ -113,39 +152,23 @@ impl ObjectStore for HdfsObjectStore {
         };
 
         let final_file_path = make_absolute_file(location);
-        let path_buf = PathBuf::from(&final_file_path);
 
-        let file_name = path_buf
-            .file_name()
-            .ok_or(HdfsError::InvalidPath("path missing filename".to_string()))
-            .to_object_store_err()?
-            .to_str()
-            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
-            .to_object_store_err()?
-            .to_string();
+        // If we're not overwriting, do an upfront check to see if the file already
+        // exists. Otherwise we have to write the whole file and try to rename before
+        // finding out.
+        if !overwrite && self.client.get_file_info(&final_file_path).await.is_ok() {
+            return Err(HdfsError::AlreadyExists(final_file_path)).to_object_store_err();
+        }
 
-        let tmp_filename = path_buf
-            .with_file_name(format!(".{}.tmp", file_name))
-            .to_str()
-            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
-            .to_object_store_err()?
-            .to_string();
+        let (mut tmp_file, tmp_file_path) = self.open_tmp_file(&final_file_path).await?;
 
-        let write_options = WriteOptions {
-            overwrite,
-            ..Default::default()
-        };
-
-        let mut writer = self
-            .client
-            .create(&tmp_filename, write_options)
-            .await
-            .to_object_store_err()?;
-        writer.write(bytes).await.to_object_store_err()?;
-        writer.close().await.to_object_store_err()?;
+        for bytes in payload {
+            tmp_file.write(bytes).await.to_object_store_err()?;
+        }
+        tmp_file.close().await.to_object_store_err()?;
 
         self.client
-            .rename(&tmp_filename, &final_file_path, overwrite)
+            .rename(&tmp_file_path, &final_file_path, overwrite)
             .await
             .to_object_store_err()?;
 
@@ -155,71 +178,23 @@ impl ObjectStore for HdfsObjectStore {
         })
     }
 
-    /// Uses the [PutPart] trait to implement an asynchronous writer. We can't actually upload
-    /// multiple parts at once, so we simply set a limit of one part at a time.
-    async fn put_multipart(
+    /// Create a multipart writer that writes to a temporary file in a background task, and renames
+    /// to the final destination on complete.
+    async fn put_multipart_opts(
         &self,
         location: &Path,
-    ) -> Result<(MultipartId, Box<dyn AsyncWrite + Unpin + Send>)> {
+        _opts: PutMultipartOpts,
+    ) -> Result<Box<dyn MultipartUpload>> {
         let final_file_path = make_absolute_file(location);
-        let path_buf = PathBuf::from(&final_file_path);
 
-        let file_name = path_buf
-            .file_name()
-            .ok_or(HdfsError::InvalidPath("path missing filename".to_string()))
-            .to_object_store_err()?
-            .to_str()
-            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
-            .to_object_store_err()?
-            .to_string();
+        let (tmp_file, tmp_file_path) = self.open_tmp_file(&final_file_path).await?;
 
-        let tmp_filename = path_buf
-            .with_file_name(format!(".{}.tmp", file_name))
-            .to_str()
-            .ok_or(HdfsError::InvalidPath("path not valid unicode".to_string()))
-            .to_object_store_err()?
-            .to_string();
-
-        // First we need to check if the tmp file exists so we know whether to overwrite
-        let overwrite = match self.client.get_file_info(&tmp_filename).await {
-            Ok(_) => true,
-            Err(HdfsError::FileNotFound(_)) => false,
-            Err(e) => Err(e).to_object_store_err()?,
-        };
-
-        let write_options = WriteOptions {
-            overwrite,
-            ..Default::default()
-        };
-
-        let writer = self
-            .client
-            .create(&tmp_filename, write_options)
-            .await
-            .to_object_store_err()?;
-
-        Ok((
-            tmp_filename.clone(),
-            Box::new(WriteMultiPart::new(
-                HdfsMultipartWriter::new(
-                    Arc::clone(&self.client),
-                    writer,
-                    &tmp_filename,
-                    &final_file_path,
-                ),
-                1,
-            )),
-        ))
-    }
-
-    /// Attempts to delete the temporary file used for multipart uploads.
-    async fn abort_multipart(&self, _location: &Path, multipart_id: &MultipartId) -> Result<()> {
-        // The multipart_id is the resolved temporary file name, so we can just delete it
-        self.client
-            .delete(multipart_id, false)
-            .await
-            .to_object_store_err()?;
-        Ok(())
+        Ok(Box::new(HdfsMultipartWriter::new(
+            Arc::clone(&self.client),
+            tmp_file,
+            &tmp_file_path,
+            &final_file_path,
+        )))
     }
 
     async fn get_opts(&self, location: &Path, options: GetOptions) -> Result<GetResult> {
@@ -258,6 +233,7 @@ impl ObjectStore for HdfsObjectStore {
             payload,
             meta,
             range,
+            attributes: Default::default(),
         })
     }
 
@@ -434,75 +410,148 @@ impl<T> HdfsErrorConvert<T> for hdfs_native::Result<T> {
     }
 }
 
-// Create a fake multipart writer that assumes only one part will be
-// written at a time. It would be better if we figured out how to implement
-// AsyncWrite for the FileWriter
+type PartSender = mpsc::UnboundedSender<(oneshot::Sender<Result<()>>, PutPayload)>;
+
+// Create a fake multipart writer the creates an uploader to a temp file as a background
+// task, and submits new parts to be uploaded to a queue for this task.
+// A once cell is used to track whether a part has finished writing or not.
+// On completing, rename the file to the actual target.
 struct HdfsMultipartWriter {
-    // FileWriter is stateful, but put_part doesn't allow a mutable borrow so we
-    // have to wrap in an async mutex
     client: Arc<Client>,
-    inner: Arc<tokio::sync::Mutex<FileWriter>>,
+    sender: Option<(JoinHandle<Result<()>>, PartSender)>,
     tmp_filename: String,
     final_filename: String,
-    next_part: AtomicUsize,
 }
 
 impl HdfsMultipartWriter {
     fn new(
         client: Arc<Client>,
-        inner: FileWriter,
+        writer: FileWriter,
         tmp_filename: &str,
         final_filename: &str,
     ) -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
+
         Self {
             client,
-            inner: Arc::new(tokio::sync::Mutex::new(inner)),
+            sender: Some((Self::start_writer_task(writer, receiver), sender)),
             tmp_filename: tmp_filename.to_string(),
             final_filename: final_filename.to_string(),
-            next_part: AtomicUsize::new(0),
         }
+    }
+
+    fn start_writer_task(
+        mut writer: FileWriter,
+        mut part_receiver: mpsc::UnboundedReceiver<(oneshot::Sender<Result<()>>, PutPayload)>,
+    ) -> JoinHandle<Result<()>> {
+        task::spawn(async move {
+            'outer: loop {
+                match part_receiver.recv().await {
+                    Some((sender, part)) => {
+                        for bytes in part {
+                            if let Err(e) = writer.write(bytes).await.to_object_store_err() {
+                                let _ = sender.send(Err(e));
+                                break 'outer;
+                            }
+                        }
+                        let _ = sender.send(Ok(()));
+                    }
+                    None => {
+                        return writer.close().await.to_object_store_err();
+                    }
+                }
+            }
+
+            // If we've reached here, a write task failed so just return Err's for all new parts that come in
+            while let Some((sender, _)) = part_receiver.recv().await {
+                let _ = sender.send(
+                    Err(HdfsError::OperationFailed(
+                        "Write failed during one of the parts".to_string(),
+                    ))
+                    .to_object_store_err(),
+                );
+            }
+            Err(HdfsError::OperationFailed(
+                "Write failed during one of the parts".to_string(),
+            ))
+            .to_object_store_err()
+        })
+    }
+}
+
+impl std::fmt::Debug for HdfsMultipartWriter {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HdfsMultipartWriter")
+            .field("tmp_filename", &self.tmp_filename)
+            .field("final_filename", &self.final_filename)
+            .finish()
     }
 }
 
 #[async_trait]
-impl PutPart for HdfsMultipartWriter {
-    /// Upload a single part
-    async fn put_part(&self, buf: Vec<u8>, part_idx: usize) -> Result<PartId> {
-        if part_idx != self.next_part.load(Ordering::SeqCst) {
-            return Err(object_store::Error::NotSupported {
-                source: "Part received out of order".to_string().into(),
-            });
+impl MultipartUpload for HdfsMultipartWriter {
+    fn put_part(&mut self, payload: PutPayload) -> UploadPart {
+        let (result_sender, result_receiver) = oneshot::channel();
+
+        if let Some((_, payload_sender)) = self.sender.as_ref() {
+            payload_sender.send((result_sender, payload)).unwrap();
+        } else {
+            result_sender
+                .send(
+                    Err(HdfsError::OperationFailed(
+                        "Cannot put part after completing or aborting".to_string(),
+                    ))
+                    .to_object_store_err(),
+                )
+                .unwrap();
         }
 
-        self.inner
-            .lock()
-            .await
-            .write(buf.into())
-            .await
-            .to_object_store_err()?;
-
-        self.next_part.fetch_add(1, Ordering::SeqCst);
-
-        Ok(PartId {
-            content_id: part_idx.to_string(),
-        })
+        async { result_receiver.await.unwrap() }.boxed()
     }
 
-    /// Complete the upload with the provided parts
-    ///
-    /// `completed_parts` is in order of part number
-    async fn complete(&self, _completed_parts: Vec<PartId>) -> Result<()> {
-        self.inner
-            .lock()
-            .await
-            .close()
-            .await
-            .to_object_store_err()?;
-        self.client
-            .rename(&self.tmp_filename, &self.final_filename, true)
-            .await
-            .to_object_store_err()?;
-        Ok(())
+    async fn complete(&mut self) -> Result<PutResult> {
+        // Drop the sender so the task knows no more data is coming
+        if let Some((handle, sender)) = self.sender.take() {
+            drop(sender);
+
+            // Wait for the writer task to finish
+            handle.await??;
+
+            self.client
+                .rename(&self.tmp_filename, &self.final_filename, true)
+                .await
+                .to_object_store_err()?;
+
+            Ok(PutResult {
+                e_tag: None,
+                version: None,
+            })
+        } else {
+            Err(object_store::Error::NotSupported {
+                source: "Cannot call abort or complete multiple times".into(),
+            })
+        }
+    }
+
+    async fn abort(&mut self) -> Result<()> {
+        // Drop the sender so the task knows no more data is coming
+        if let Some((handle, sender)) = self.sender.take() {
+            drop(sender);
+
+            // Wait for the writer task to finish
+            handle.abort();
+
+            self.client
+                .delete(&self.tmp_filename, false)
+                .await
+                .to_object_store_err()?;
+
+            Ok(())
+        } else {
+            Err(object_store::Error::NotSupported {
+                source: "Cannot call abort or complete multiple times".into(),
+            })
+        }
     }
 }
 

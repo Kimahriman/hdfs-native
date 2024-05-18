@@ -1,23 +1,36 @@
 #[cfg(feature = "integration-test")]
-mod common;
-
-#[cfg(feature = "integration-test")]
 mod test {
-    use bytes::{Buf, BufMut, Bytes, BytesMut};
-    use hdfs_native::{minidfs::DfsFeatures, Client};
+    use bytes::{Buf, BufMut, BytesMut};
+    use hdfs_native::{
+        minidfs::{DfsFeatures, MiniDfs},
+        Client, WriteOptions,
+    };
     use hdfs_native_object_store::{HdfsErrorConvert, HdfsObjectStore};
-    use object_store::{PutMode, PutOptions};
+    use object_store::{PutMode, PutOptions, PutPayload};
     use serial_test::serial;
-    use std::collections::HashSet;
+    use std::{collections::HashSet, sync::Arc};
 
-    use crate::common::{setup, TEST_FILE_INTS};
+    pub const TEST_FILE_INTS: usize = 64 * 1024 * 1024;
 
     #[tokio::test]
     #[serial]
     async fn test_object_store() -> object_store::Result<()> {
-        let dfs = setup(&HashSet::from([DfsFeatures::HA]));
+        let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::HA]));
         let client = Client::new(&dfs.url).to_object_store_err()?;
-        let store = HdfsObjectStore::new(client);
+
+        // Create a test file with the client directly to sanity check reads and lists
+        let mut file = client
+            .create("/testfile", WriteOptions::default())
+            .await
+            .unwrap();
+        let mut buf = BytesMut::new();
+        for i in 0..TEST_FILE_INTS as i32 {
+            buf.put_i32(i);
+        }
+        file.write(buf.freeze()).await.unwrap();
+        file.close().await.unwrap();
+
+        let store = HdfsObjectStore::new(Arc::new(client));
 
         test_object_store_head(&store).await?;
         test_object_store_list(&store).await?;
@@ -108,14 +121,16 @@ mod test {
     async fn test_object_store_write(store: &HdfsObjectStore) -> object_store::Result<()> {
         use object_store::{path::Path, ObjectStore};
 
-        store.put(&Path::from("/newfile"), Bytes::new()).await?;
+        store
+            .put(&Path::from("/newfile"), PutPayload::new())
+            .await?;
         store.head(&Path::from("/newfile")).await?;
 
         // PutMode = Create should fail for existing file
         match store
             .put_opts(
                 &Path::from("/newfile"),
-                Bytes::new(),
+                PutPayload::new(),
                 PutOptions {
                     mode: PutMode::Create,
                     ..Default::default()
@@ -138,7 +153,9 @@ mod test {
             }
 
             let buf = data.freeze();
-            store.put(&Path::from("/newfile"), buf.clone()).await?;
+            store
+                .put(&Path::from("/newfile"), PutPayload::from_bytes(buf.clone()))
+                .await?;
 
             assert_eq!(
                 store.head(&Path::from("/newfile")).await?.size,
@@ -166,25 +183,18 @@ mod test {
     async fn test_object_store_write_multipart(
         store: &HdfsObjectStore,
     ) -> object_store::Result<()> {
-        use hdfs_native::HdfsError;
         use object_store::{path::Path, ObjectStore};
-        use tokio::io::AsyncWriteExt;
 
-        let (_, mut writer) = store.put_multipart(&"/newfile".into()).await?;
-        writer
-            .shutdown()
-            .await
-            .map_err(HdfsError::from)
-            .to_object_store_err()?;
+        let mut uploader = store.put_multipart(&"/newfile".into()).await?;
+        uploader.complete().await?;
 
-        store.put(&Path::from("/newfile"), Bytes::new()).await?;
         store.head(&Path::from("/newfile")).await?;
 
         // Check a small files, a file that is exactly one block, and a file slightly bigger than a block
         for size_to_check in [16i32, 128 * 1024 * 1024, 130 * 1024 * 1024] {
             let ints_to_write = size_to_check / 4;
 
-            let (_, mut writer) = store.put_multipart(&"/newfile".into()).await?;
+            let mut uploader = store.put_multipart(&"/newfile".into()).await?;
 
             let mut data = BytesMut::with_capacity(size_to_check as usize);
             for i in 0..ints_to_write {
@@ -195,18 +205,10 @@ mod test {
             let mut buf = data.freeze();
             while !buf.is_empty() {
                 let to_write = usize::min(buf.len(), 10 * 1024 * 1024);
-                writer
-                    .write_all_buf(&mut buf.split_to(to_write))
-                    .await
-                    .map_err(HdfsError::from)
-                    .to_object_store_err()?;
+                uploader.put_part(buf.split_to(to_write).into()).await?;
             }
 
-            writer
-                .shutdown()
-                .await
-                .map_err(HdfsError::from)
-                .to_object_store_err()?;
+            uploader.complete().await?;
 
             assert_eq!(
                 store.head(&Path::from("/newfile")).await?.size,
@@ -231,12 +233,22 @@ mod test {
         store.delete(&Path::from("/newfile")).await?;
 
         // Test aborting
-        let (multipart_id, _) = store.put_multipart(&"/newfile".into()).await?;
-        assert!(store.head(&"/.newfile.tmp".into()).await.is_ok());
-        store
-            .abort_multipart(&"/newfile".into(), &multipart_id)
-            .await?;
-        assert!(store.head(&"/.newfile.tmp".into()).await.is_err());
+        let mut uploader = store.put_multipart(&"/newfile".into()).await?;
+        assert!(store.head(&"/.newfile.tmp.1".into()).await.is_ok());
+        uploader.abort().await?;
+        assert!(store.head(&"/.newfile.tmp.1".into()).await.is_err());
+        assert!(store.head(&"/newfile".into()).await.is_err());
+
+        // Test multiple uploads to the same destination, default is to overwrite
+        let mut uploader1 = store.put_multipart(&"/newfile".into()).await?;
+        let mut uploader2 = store.put_multipart(&"/newfile".into()).await?;
+        uploader1.put_part(vec![1].into()).await?;
+        uploader2.put_part(vec![2].into()).await?;
+        uploader1.complete().await?;
+        uploader2.complete().await?;
+
+        let result = store.get(&"/newfile".into()).await?;
+        assert!(result.bytes().await?.to_vec() == vec![2]);
 
         Ok(())
     }
@@ -244,7 +256,9 @@ mod test {
     async fn test_object_store_copy(store: &HdfsObjectStore) -> object_store::Result<()> {
         use object_store::{path::Path, ObjectStore};
 
-        store.put(&Path::from("/newfile"), Bytes::new()).await?;
+        store
+            .put(&Path::from("/newfile"), PutPayload::new())
+            .await?;
 
         let size_to_check = 128 * 1024 * 1024;
         let ints_to_write = size_to_check / 4;
@@ -254,7 +268,9 @@ mod test {
         }
 
         let buf = data.freeze();
-        store.put(&Path::from("/newfile"), buf.clone()).await?;
+        store
+            .put(&Path::from("/newfile"), buf.clone().into())
+            .await?;
         store
             .copy(&Path::from("/newfile"), &Path::from("/newfile2"))
             .await?;

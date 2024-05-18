@@ -20,12 +20,14 @@ cipher = "0.4"
 crc = "3.2"
 ctr = "0.9"
 des = "0.8"
+# Just used for benchmarks
+fs-hdfs3 = { version = "0.1.12", optional = true }
 futures = { workspace = true }
 g2p = "1"
 hex = "0.4"
 hmac = "0.12"
 libc = "0.2"
-libgssapi = { version = "0.7", default-features = false, optional = true }
+libgssapi = { version = "0.7", default-features = false, optional = true, git = "https://github.com/Kimahriman/libgssapi.git", branch = "raw-slice-panic" }
 log = { workspace = true }
 md-5 = "0.10"
 num-traits = "0.2"
@@ -50,7 +52,6 @@ protobuf-src = { version = "1.1", optional = true }
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio", "async_futures"] }
 env_logger = "0.10"
-fs-hdfs3 = "0.1.12"
 serial_test = "2.0.0"
 tempfile = "3"
 which = "4"
@@ -60,7 +61,7 @@ kerberos = ["libgssapi"]
 
 generate-protobuf = ["prost-build", "protobuf-src"]
 integration-test = ["which"]
-benchmark = ["which"]
+benchmark = ["fs-hdfs3", "which"]
 
 [[bench]]
 name = "ec"
