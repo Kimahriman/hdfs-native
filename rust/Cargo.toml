@@ -15,14 +15,14 @@ aes = "0.8"
 base64 = "0.21"
 bytes = { workspace = true }
 cbc = "0.1"
-chrono = { workspace = true }
+chrono = "0.4"
 cipher = "0.4"
 crc = "3.2"
 ctr = "0.9"
 des = "0.8"
 # Just used for benchmarks
 fs-hdfs3 = { version = "0.1.12", optional = true }
-futures = { workspace = true }
+futures = "0.3"
 g2p = "1"
 hex = "0.4"
 hmac = "0.12"
@@ -52,7 +52,7 @@ protobuf-src = { version = "1.1", optional = true }
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio", "async_futures"] }
 env_logger = "0.10"
-serial_test = "2.0.0"
+serial_test = "2"
 tempfile = "3"
 which = "4"
 
