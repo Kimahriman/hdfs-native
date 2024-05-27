@@ -27,8 +27,8 @@ name = "hdfs_native._internal"
 [dependencies]
 bytes = { workspace = true } 
 env_logger = "0.10"
-hdfs-native = { path = "../crates/hdfs-native" }
-log = "0.4"
+hdfs-native = { path = "../rust" }
+log = { workspace = true }
 pyo3 = { version = "0.20", features = ["extension-module", "abi3", "abi3-py38"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
