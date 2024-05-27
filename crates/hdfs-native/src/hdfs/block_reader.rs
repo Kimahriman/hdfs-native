@@ -17,7 +17,10 @@ use crate::{
     hdfs::connection::{DatanodeConnection, Op, DATANODE_CACHE},
     proto::{
         common,
-        hdfs::{self, BlockOpResponseProto, PacketHeaderProto, ReadOpChecksumInfoProto},
+        hdfs::{
+            self, BlockOpResponseProto, ExtendedBlockProto, PacketHeaderProto,
+            ReadOpChecksumInfoProto,
+        },
     },
     HdfsError, Result,
 };
@@ -239,12 +242,67 @@ impl ReplicatedBlockStream {
     }
 }
 
+// Reads cells of data from a DataNode connection
+struct CellReader {
+    cell_size: usize,
+    cell_buffer: BytesMut,
+    current_packet: Bytes,
+    block_stream: ReplicatedBlockStream,
+}
+
+impl CellReader {
+    fn new(cell_size: usize, block_stream: ReplicatedBlockStream) -> Self {
+        Self {
+            cell_size,
+            cell_buffer: BytesMut::with_capacity(cell_size),
+            current_packet: Bytes::new(),
+            block_stream,
+        }
+    }
+
+    async fn next_cell(&mut self) -> Result<Bytes> {
+        // We always should be reading a full cell, no current optimizations for a partial cell
+        while self.cell_buffer.len() < self.cell_size {
+            if !self.current_packet.has_remaining() {
+                self.current_packet =
+                    self.block_stream
+                        .next_packet()
+                        .await?
+                        .ok_or(HdfsError::DataTransferError(
+                            "Block stream ended early".to_string(),
+                        ))?;
+            }
+
+            let bytes_to_copy = usize::min(
+                self.cell_size - self.cell_buffer.len(),
+                self.current_packet.remaining(),
+            );
+            self.cell_buffer
+                .put(self.current_packet.split_to(bytes_to_copy));
+        }
+
+        Ok(std::mem::replace(
+            &mut self.cell_buffer,
+            BytesMut::with_capacity(self.cell_size),
+        )
+        .freeze())
+    }
+}
+
 struct StripedBlockStream {
     protocol: Arc<NamenodeProtocol>,
-    block: hdfs::LocatedBlockProto,
+    extended_block: ExtendedBlockProto,
+    block_map: HashMap<usize, (hdfs::DatanodeInfoProto, common::TokenProto)>,
     offset: usize,
-    len: usize,
+    remaining: usize,
+    bytes_to_skip: usize,
     ec_schema: EcSchema,
+    // Position of the start of the current cell in a single block
+    current_cell_position: usize,
+    // End location in a single block we need to read
+    block_end: usize,
+    cell_readers: Vec<Option<CellReader>>,
+    cell_buffers: Vec<Bytes>,
 }
 
 impl StripedBlockStream {
@@ -255,12 +313,94 @@ impl StripedBlockStream {
         len: usize,
         ec_schema: EcSchema,
     ) -> Self {
+        assert_eq!(block.block_indices().len(), block.locs.len());
+
+        // Cell IDs for the range we are reading, inclusive
+        let starting_cell = ec_schema.cell_for_offset(offset);
+        let ending_cell = ec_schema.cell_for_offset(offset + len - 1);
+
+        // Logical rows or horizontal stripes we need to read, tail-exclusive
+        let starting_row = ec_schema.row_for_cell(starting_cell);
+        let ending_row = ec_schema.row_for_cell(ending_cell) + 1;
+        let block_end = ec_schema.offset_for_row(ending_row);
+
+        let current_cell_position = ec_schema.offset_for_row(starting_row);
+
+        let bytes_to_skip = offset - starting_row * ec_schema.data_units * ec_schema.cell_size;
+
+        let datanode_infos: Vec<(hdfs::DatanodeInfoProto, common::TokenProto)> = block
+            .locs
+            .iter()
+            .cloned()
+            .zip(block.block_tokens.iter().cloned())
+            .collect();
+
+        let block_map: HashMap<usize, (hdfs::DatanodeInfoProto, common::TokenProto)> = block
+            .block_indices()
+            .iter()
+            .copied()
+            .map(|i| i as usize)
+            .zip(datanode_infos.into_iter())
+            .collect();
+
         Self {
             protocol,
-            block,
+            extended_block: block.b,
+            block_map,
             offset,
-            len,
+            remaining: len,
+            bytes_to_skip,
             ec_schema,
+            current_cell_position,
+            block_end,
+            cell_readers: vec![],
+            cell_buffers: vec![],
+        }
+    }
+
+    // Reads the next slice of cells and decodes if necessary
+    fn read_slice(&mut self) -> Result<()> {
+        // Check if we need to start any new reads
+        let mut good_blocks = self.cell_readers.iter().filter(|r| r.is_some()).count();
+        while good_blocks < self.ec_schema.data_units {
+            if self.start_next_reader()? {
+                good_blocks += 1;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn start_next_reader(&mut self) -> Result<bool> {
+        if self.cell_readers.len() >= self.ec_schema.data_units + self.ec_schema.parity_units {
+            return Err(HdfsError::ErasureCodingError(
+                "Not enough valid shards".to_string(),
+            ));
+        }
+
+        let index = self.cell_readers.len();
+
+        if let Some((datanode_info, token)) = self.block_map.get(&index) {
+            #[cfg(feature = "integration-test")]
+            if let Some(fault_injection) = crate::test::EC_FAULT_INJECTOR.lock().unwrap().as_ref() {
+                if fault_injection.fail_blocks.contains(&(index as usize)) {
+                    debug!("Failing block read for {}", index);
+                    return Err(HdfsError::InternalError("Testing error".to_string()));
+                }
+            }
+
+            let max_block_offset = self
+                .ec_schema
+                .max_offset(index as usize, self.extended_block.num_bytes() as usize);
+
+            let len = self.block_end - self.current_cell_position;
+
+            let read_len = usize::min(self.remaining, max_block_offset - offset);
+
+            Ok(true)
+        } else {
+            self.cell_readers.push(None);
+            Ok(false)
         }
     }
 
@@ -300,11 +440,13 @@ impl StripedBlockStream {
     /// part of the range being requested at all. Currently the overhead of not doing this would be up to
     /// `data_units * cell_size * 2` of extra data being read from disk (basically two extra "rows" of data).
     async fn read_striped(&self) -> Result<Bytes> {
-        let mut buf = BytesMut::with_capacity(self.len);
+        let mut buf = BytesMut::with_capacity(self.remaining);
 
         // Cell IDs for the range we are reading, inclusive
         let starting_cell = self.ec_schema.cell_for_offset(self.offset);
-        let ending_cell = self.ec_schema.cell_for_offset(self.offset + self.len - 1);
+        let ending_cell = self
+            .ec_schema
+            .cell_for_offset(self.offset + self.remaining - 1);
 
         // Logical rows or horizontal stripes we need to read, tail-exclusive
         let starting_row = self.ec_schema.row_for_cell(starting_cell);
@@ -315,34 +457,18 @@ impl StripedBlockStream {
         let block_end = self.ec_schema.offset_for_row(ending_row);
         let block_read_len = block_end - block_start;
 
-        assert_eq!(self.block.block_indices().len(), self.block.locs.len());
-        let datanode_infos: Vec<(&hdfs::DatanodeInfoProto, &common::TokenProto)> = self
-            .block
-            .locs
-            .iter()
-            .zip(self.block.block_tokens.iter())
-            .collect();
-
-        let block_map: HashMap<u8, (&hdfs::DatanodeInfoProto, &common::TokenProto)> = self
-            .block
-            .block_indices()
-            .iter()
-            .copied()
-            .zip(datanode_infos.into_iter())
-            .collect();
-
         let mut stripe_results: Vec<Option<Bytes>> =
             vec![None; self.ec_schema.data_units + self.ec_schema.parity_units];
 
         let mut futures = Vec::new();
 
         for index in 0..self.ec_schema.data_units as u8 {
-            let datanode_info = block_map.get(&index);
+            let datanode_info = self.block_map.get(&index);
             futures.push(self.read_vertical_stripe(
                 &self.ec_schema,
                 index,
-                datanode_info.map(|(datanode, _)| datanode),
-                datanode_info.map(|(_, token)| token),
+                datanode_info.map(|(datanode, _)| datanode).as_ref(),
+                datanode_info.map(|(_, token)| token).as_ref(),
                 block_start,
                 block_read_len,
             ));
@@ -362,13 +488,13 @@ impl StripedBlockStream {
         let mut parity_unit = 0usize;
         while blocks_needed > 0 && parity_unit < self.ec_schema.parity_units {
             let block_index = (self.ec_schema.data_units + parity_unit) as u8;
-            let datanode_info = block_map.get(&block_index);
+            let datanode_info = self.block_map.get(&block_index);
             let result = self
                 .read_vertical_stripe(
                     &self.ec_schema,
                     block_index,
-                    datanode_info.map(|(datanode, _)| datanode),
-                    datanode_info.map(|(_, token)| token),
+                    datanode_info.map(|(datanode, _)| datanode).as_ref(),
+                    datanode_info.map(|(_, token)| token).as_ref(),
                     block_start,
                     block_read_len,
                 )
@@ -384,7 +510,7 @@ impl StripedBlockStream {
         let decoded_bufs = self.ec_schema.ec_decode(stripe_results)?;
         let mut bytes_to_skip =
             self.offset - starting_row * self.ec_schema.data_units * self.ec_schema.cell_size;
-        let mut bytes_to_write = self.len;
+        let mut bytes_to_write = self.remaining;
         for mut cell in decoded_bufs.into_iter() {
             if bytes_to_skip > 0 {
                 if bytes_to_skip >= cell.len() {
@@ -430,7 +556,7 @@ impl StripedBlockStream {
         let read_len = usize::min(len, max_block_offset - offset);
 
         if read_len == 0 {
-            // We're past the end of the file so there's nothign to read, just return a zeroed buffer
+            // We're past the end of the file so there's nothing to read, just return a zeroed buffer
             Ok(BytesMut::zeroed(len).freeze())
         } else if let Some((datanode_info, token)) = datanode.zip(token) {
             let mut buf = BytesMut::zeroed(len);
