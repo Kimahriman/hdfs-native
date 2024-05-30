@@ -35,22 +35,21 @@ fn bench(c: &mut Criterion) {
         .build()
         .unwrap();
 
+    rt.block_on(async { write_file(&client, "/bench", ints_to_write).await });
+
     let mut group = c.benchmark_group("read");
     group.throughput(Throughput::Bytes((ints_to_write * 4) as u64));
     group.sample_size(10);
 
     group.bench_function("read-native", |b| {
-        rt.block_on(async { write_file(&client, "/bench", ints_to_write).await });
-        let reader = rt.block_on(client.read("/bench")).unwrap();
         b.to_async(&rt).iter(|| async {
-            // let reader = client.read("/bench").await.unwrap();
+            let reader = client.read("/bench").await.unwrap();
 
             reader.read_range(0, reader.file_length()).await.unwrap()
         })
     });
     group.sample_size(10);
     group.bench_function("read-libhdfs", |b| {
-        rt.block_on(async { write_file(&client, "/bench", ints_to_write).await });
         let fs = get_hdfs().unwrap();
         b.iter(|| {
             let mut buf = BytesMut::zeroed(ints_to_write * 4);
@@ -69,18 +68,18 @@ fn bench(c: &mut Criterion) {
 
     drop(group);
 
+    rt.block_on(async { write_file(&client, "/ec-3-2/bench", ints_to_write).await });
+
     let mut group = c.benchmark_group("read-ec");
     group.throughput(Throughput::Bytes((ints_to_write * 4) as u64));
     group.sample_size(10);
     group.bench_function("read-native", |b| {
-        rt.block_on(async { write_file(&client, "/ec-3-2/bench", ints_to_write).await });
         let reader = rt.block_on(client.read("/ec-3-2/bench")).unwrap();
         b.to_async(&rt)
             .iter(|| async { reader.read_range(0, reader.file_length()).await.unwrap() })
     });
     group.sample_size(10);
     group.bench_function("read-libhdfs", |b| {
-        rt.block_on(async { write_file(&client, "/ec-3-2/bench", ints_to_write).await });
         let fs = get_hdfs().unwrap();
         b.iter(|| {
             let mut buf = BytesMut::zeroed(ints_to_write * 4);

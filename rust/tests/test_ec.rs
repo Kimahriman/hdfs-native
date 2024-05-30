@@ -50,7 +50,8 @@ mod test {
     }
 
     fn verify_read(mut data: Bytes, size: usize) {
-        assert!(size % 4 == 0);
+        assert_eq!(size % 4, 0);
+        assert_eq!(data.len(), size);
         let num_ints = size / 4;
 
         for i in 0..num_ints as u32 {
@@ -119,7 +120,7 @@ mod test {
                     let _ = EC_FAULT_INJECTOR.lock().unwrap().insert(EcFaultInjection {
                         fail_blocks: (0..faults).collect(),
                     });
-                    let data = reader.read_range(0, reader.file_length()).await?;
+                    let data = reader.read_range(0, file_size).await?;
                     verify_read(data, file_size);
                 }
 
