@@ -7,7 +7,7 @@ homepage = "https://github.com/Kimahriman/hdfs-native"
 repository = "https://github.com/Kimahriman/hdfs-native"
 keywords = ["hadoop", "hdfs"]
 description = "Native HDFS client implementation in Rust"
-readme = "../../README.md"
+readme = "../README.md"
 license = "Apache-2.0"
 
 [dependencies]
@@ -27,7 +27,7 @@ g2p = "1"
 hex = "0.4"
 hmac = "0.12"
 libc = "0.2"
-libgssapi = { version = "0.7", default-features = false, optional = true, git = "https://github.com/Kimahriman/libgssapi.git", branch = "raw-slice-panic" }
+libgssapi = { version = "0.7", default-features = false, optional = true }
 log = { workspace = true }
 md-5 = "0.10"
 num-traits = "0.2"
