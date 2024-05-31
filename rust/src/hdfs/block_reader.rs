@@ -321,13 +321,11 @@ impl CellReader {
 ///
 /// We then convert these logical horizontal stripes into vertical stripes to read from each block/DataNode.
 /// In this case, we will have one read for cell_0 and cell_3 from blk_0, one for cell_1 and cell_4 from blk_1,
-/// and one for cell_2 and cell_5 from blk_2. If all of these reads succeed, we know we have everything we need
-/// to reconstruct the data being requested. If any read fails, we will then request the parity cells for the same
-/// vertical range of cells. If more data block reads fail then parity blocks exist, the read will fail.
-///
-/// Once we have enough of the vertical stripes, we can then convert those back into horizontal stripes to
-/// re-create each "row" of data. Then we simply need to take the range being requested out of the range
-/// we reconstructed.
+/// and one for cell_2 and cell_5 from blk_2. We read each block a cell at a time, and return the horizontal
+/// stripe of cells when we have all cells in a row. So first the first call to read_slice returns cells
+/// cell_0, cell_1, and cell_2, and the second returns cell_3, cell_4, and cell_5. If any cell fails to read
+/// we construct a read of a parity block for the remaining horizontal slices we still need to process. If
+/// more reads fail than we have parity rows, the entire read fails.
 ///
 /// In the future we can look at making this more efficient by not reading as many extra cells that aren't
 /// part of the range being requested at all. Currently the overhead of not doing this would be up to
