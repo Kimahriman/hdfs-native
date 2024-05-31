@@ -19,6 +19,9 @@ const UNKNOWN_SEQNO: i64 = -2;
 
 const HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
 
+// The number of packets and acks to queue up on writes
+const WRITE_PACKET_BUFFER_LEN: usize = 100;
+
 /// Wrapper around both types of block writers. This was simpler than trying to
 /// do dynamic dispatch with a BlockWriter trait.
 pub(crate) enum BlockWriter {
@@ -150,8 +153,9 @@ impl ReplicatedBlockWriter {
         let (reader, writer) = connection.split();
 
         // Channel for tracking packets that need to be acked
-        let (ack_queue_sender, ack_queue_receiever) = mpsc::channel::<(i64, bool)>(100);
-        let (packet_sender, packet_receiver) = mpsc::channel::<Packet>(100);
+        let (ack_queue_sender, ack_queue_receiever) =
+            mpsc::channel::<(i64, bool)>(WRITE_PACKET_BUFFER_LEN);
+        let (packet_sender, packet_receiver) = mpsc::channel::<Packet>(WRITE_PACKET_BUFFER_LEN);
 
         let ack_listener_handle = Self::listen_for_acks(reader, ack_queue_receiever);
         let packet_sender_handle = Self::start_packet_sender(writer, packet_receiver);

@@ -76,7 +76,7 @@ See the [Python README](./python/README.md)
 Some of the benchmarks compare performance to the JVM based client through libhdfs via the fs-hdfs3 crate. Because of that, some extra setup is required to run the benchmarks:
 
 ```bash
-export HADOOP_CONF_DIR=$(pwd)/crates/hdfs-native/target/test
+export HADOOP_CONF_DIR=$(pwd)/rust/target/test
 export CLASSPATH=$(hadoop classpath)
 ```
 
