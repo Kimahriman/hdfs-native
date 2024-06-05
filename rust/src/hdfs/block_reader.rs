@@ -171,7 +171,7 @@ impl ReplicatedBlockStream {
     async fn next_packet(&mut self) -> Result<Option<Bytes>> {
         // We've finished this read, just return None
         if self.len == 0 {
-            return Ok(None)
+            return Ok(None);
         }
 
         let (header, data) = loop {
