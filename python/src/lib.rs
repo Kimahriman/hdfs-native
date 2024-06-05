@@ -8,7 +8,6 @@ use ::hdfs_native::{
     Client,
 };
 use bytes::Bytes;
-use log::LevelFilter;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use tokio::runtime::Runtime;
 
@@ -172,9 +171,7 @@ impl RawClient {
     #[pyo3(signature = (url))]
     pub fn new(url: &str) -> PyResult<Self> {
         // Initialize logging, ignore errors if this is called multiple times
-        let _ = env_logger::Builder::new()
-            .filter_level(LevelFilter::Off)
-            .try_init();
+        let _ = env_logger::try_init();
 
         Ok(RawClient {
             inner: Client::new(url).map_err(PythonHdfsError::from)?,
