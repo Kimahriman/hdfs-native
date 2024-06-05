@@ -169,6 +169,11 @@ impl ReplicatedBlockStream {
     }
 
     async fn next_packet(&mut self) -> Result<Option<Bytes>> {
+        // We've finished this read, just return None
+        if self.len == 0 {
+            return Ok(None);
+        }
+
         let (header, data) = loop {
             if self.listener.is_none() {
                 let (connection, checksum_info) = self.select_next_datanode().await?;
@@ -196,12 +201,6 @@ impl ReplicatedBlockStream {
             }
         };
 
-        if self.len == 0 {
-            let conn = self.listener.take().unwrap().await.unwrap()?;
-            DATANODE_CACHE.release(conn);
-            return Ok(None);
-        }
-
         let packet_offset = if self.offset > header.offset_in_block as usize {
             self.offset - header.offset_in_block as usize
         } else {
@@ -211,6 +210,12 @@ impl ReplicatedBlockStream {
 
         self.offset += packet_len;
         self.len -= packet_len;
+
+        // We've consumed the whole read, there should be no more packets and the listener should complete
+        if self.len == 0 {
+            let conn = self.listener.take().unwrap().await.unwrap()?;
+            DATANODE_CACHE.release(conn);
+        }
 
         Ok(Some(
             data.slice(packet_offset..(packet_offset + packet_len)),
@@ -227,13 +232,15 @@ impl ReplicatedBlockStream {
                 let packet = connection.read_packet().await?;
                 let header = packet.header.clone();
                 let data = packet.get_data(&checksum_info)?;
-                let empty_packet = data.is_empty();
-                sender.send(Ok((header, data))).await.unwrap();
 
-                if empty_packet {
+                // If the packet is empty it means it's the last packet
+                // so tell the DataNode the read was a success and finish this task
+                if data.is_empty() {
                     connection.send_read_success().await?;
                     break;
                 }
+
+                sender.send(Ok((header, data))).await.unwrap();
             }
             Ok(connection)
         })
