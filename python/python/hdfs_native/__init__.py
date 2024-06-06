@@ -1,5 +1,5 @@
 import io
-from typing import Iterator
+from typing import Iterator, Optional
 from typing_extensions import Buffer
 
 from ._internal import *
@@ -68,7 +68,7 @@ class Client:
         """Gets the file status for the file at `path`"""
         return self.inner.get_file_info(path)
 
-    def list_status(self, path: str, recursive: bool) -> Iterator["FileStatus"]:
+    def list_status(self, path: str, recursive: bool = False) -> Iterator["FileStatus"]:
         """Gets the status of files rooted at `path`. If `recursive` is true, lists all files recursively."""
         return self.inner.list_status(path, recursive)
 
@@ -76,15 +76,18 @@ class Client:
         """Opens a file for reading at `path`"""
         return FileReader(self.inner.read(path))
 
-    def create(self, path: str, write_options: WriteOptions) -> FileWriter:
+    def create(self, path: str, write_options: Optional[WriteOptions] = None) -> FileWriter:
         """Creates a new file and opens it for writing at `path`"""
+        if not write_options:
+            write_options = WriteOptions()
+
         return FileWriter(self.inner.create(path, write_options))
     
     def append(self, path: str) -> FileWriter:
         """Opens an existing file to append to at `path`"""
         return FileWriter(self.inner.append(path))
 
-    def mkdirs(self, path: str, permission: int, create_parent: bool) -> None:
+    def mkdirs(self, path: str, permission: int = 0o0755, create_parent: bool = False) -> None:
         """
         Creates a directory at `path` with unix permissions `permission`. If `create_parent` is true,
         any parent directories that don't exist will also be created. Otherwise this will fail if
@@ -92,7 +95,7 @@ class Client:
         """
         return self.inner.mkdirs(path, permission, create_parent)
 
-    def rename(self, src: str, dst: str, overwrite: bool) -> None:
+    def rename(self, src: str, dst: str, overwrite: bool = False) -> None:
         """
         Moves a file or directory from `src` to `dst`. If `overwrite` is True, the destination will be
         overriden if it already exists, otherwise the operation will fail if the destination
@@ -100,7 +103,7 @@ class Client:
         """
         return self.inner.rename(src, dst, overwrite)
 
-    def delete(self, path: str, recursive: bool) -> bool:
+    def delete(self, path: str, recursive: bool = False) -> bool:
         """
         Deletes a file or directory at `path`. If `recursive` is True and the target is a directory,
         this will delete all contents underneath the directory. If `recursive` is False and the target
