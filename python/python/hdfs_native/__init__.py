@@ -107,3 +107,9 @@ class Client:
         is a non-empty directory, this will fail.
         """
         return self.inner.delete(path, recursive)
+    
+    def set_times(self, path: str, mtime: int, atime: int) -> None:
+        """
+        Changes the modification time and access time of the file at `path` to `mtime` and `atime`, respectively.
+        """
+        return self.inner.set_times(path, mtime, atime)

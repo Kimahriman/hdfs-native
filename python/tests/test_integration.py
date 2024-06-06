@@ -51,4 +51,13 @@ def test_integration(minidfs: str):
     for i in range(0, 33 * 1024 * 1024):
         assert data.read(4) == i.to_bytes(4, 'big')
 
+
+    mtime = 1717641455
+    atime = 1717641456
+    client.set_times("/testfile", mtime, atime)
+    file_info = client.get_file_info("/testfile")
+    assert file_info.modification_time == mtime
+    assert file_info.access_time == atime
+
     client.delete("/testfile", False)
+

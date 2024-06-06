@@ -422,6 +422,15 @@ impl Client {
             .await
             .map(|r| r.result)
     }
+
+    /// Sets the modified and access times for a file. Times should be in milliseconds from the epoch.
+    pub async fn set_times(&self, path: &str, mtime: u64, atime: u64) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .set_times(&resolved_path, mtime, atime)
+            .await?;
+        Ok(())
+    }
 }
 
 impl Default for Client {

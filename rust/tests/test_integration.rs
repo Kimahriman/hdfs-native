@@ -187,6 +187,7 @@ mod test {
         test_read_write(&client).await?;
         // We use writing to create files, so do this after
         test_recursive_listing(&client).await?;
+        test_set_times(&client).await?;
 
         Ok(())
     }
@@ -326,6 +327,26 @@ mod test {
         assert_eq!(statuses.len(), 4);
 
         client.delete("/dir", true).await?;
+
+        Ok(())
+    }
+
+    async fn test_set_times(client: &Client) -> Result<()> {
+        client
+            .create("/test", WriteOptions::default())
+            .await?
+            .close()
+            .await?;
+
+        let mtime = 1717641455;
+        let atime = 1717641456;
+
+        client.set_times("/test", mtime, atime).await?;
+
+        let file_info = client.get_file_info("/test").await?;
+
+        assert_eq!(file_info.modification_time, mtime);
+        assert_eq!(file_info.access_time, atime);
 
         Ok(())
     }

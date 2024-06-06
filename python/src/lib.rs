@@ -239,6 +239,10 @@ impl RawClient {
     pub fn delete(&self, path: &str, recursive: bool) -> PyHdfsResult<bool> {
         Ok(self.rt.block_on(self.inner.delete(path, recursive))?)
     }
+
+    pub fn set_times(&self, path: &str, mtime: u64, atime: u64) -> PyHdfsResult<()> {
+        Ok(self.rt.block_on(self.inner.set_times(path, mtime, atime))?)
+    }
 }
 
 /// A Python module implemented in Rust.
