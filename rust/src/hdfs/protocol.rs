@@ -388,6 +388,29 @@ impl NamenodeProtocol {
         debug!("renewLease response: {:?}", &decoded);
         Ok(decoded)
     }
+
+    pub(crate) async fn set_times(
+        &self,
+        src: &str,
+        mtime: u64,
+        atime: u64,
+    ) -> Result<hdfs::SetTimesResponseProto> {
+        let message = hdfs::SetTimesRequestProto {
+            src: src.to_string(),
+            mtime,
+            atime,
+        };
+        debug!("setTimes request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call("setTimes", message.encode_length_delimited_to_vec())
+            .await?;
+
+        let decoded = hdfs::SetTimesResponseProto::decode_length_delimited(response)?;
+        debug!("setTimes response: {:?}", &decoded);
+        Ok(decoded)
+    }
 }
 
 impl Drop for NamenodeProtocol {
