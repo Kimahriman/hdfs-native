@@ -59,5 +59,20 @@ def test_integration(minidfs: str):
     assert file_info.modification_time == mtime
     assert file_info.access_time == atime
 
-    client.delete("/testfile", False)
 
+    client.set_owner("/testfile", "testuser", "testgroup")
+    file_info = client.get_file_info("/testfile")
+    assert file_info.owner == "testuser"
+    assert file_info.group == "testgroup"
+
+    client.set_owner("/testfile", owner="testuser2")
+    file_info = client.get_file_info("/testfile")
+    assert file_info.owner == "testuser2"
+    assert file_info.group == "testgroup"
+
+    client.set_owner("/testfile", group="testgroup2")
+    file_info = client.get_file_info("/testfile")
+    assert file_info.owner == "testuser2"
+    assert file_info.group == "testgroup2"
+
+    client.delete("/testfile", False)

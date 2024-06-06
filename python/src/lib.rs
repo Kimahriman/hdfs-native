@@ -243,6 +243,15 @@ impl RawClient {
     pub fn set_times(&self, path: &str, mtime: u64, atime: u64) -> PyHdfsResult<()> {
         Ok(self.rt.block_on(self.inner.set_times(path, mtime, atime))?)
     }
+
+    pub fn set_owner(
+        &self,
+        path: &str,
+        owner: Option<&str>,
+        group: Option<&str>,
+    ) -> PyHdfsResult<()> {
+        Ok(self.rt.block_on(self.inner.set_owner(path, owner, group))?)
+    }
 }
 
 /// A Python module implemented in Rust.
