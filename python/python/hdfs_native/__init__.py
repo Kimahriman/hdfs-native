@@ -1,5 +1,5 @@
 import io
-from typing import Iterator
+from typing import Iterator, Optional
 from typing_extensions import Buffer
 
 from ._internal import *
@@ -113,3 +113,9 @@ class Client:
         Changes the modification time and access time of the file at `path` to `mtime` and `atime`, respectively.
         """
         return self.inner.set_times(path, mtime, atime)
+
+    def set_owner(self, path: str, owner: Optional[str] = None, group: Optional[str] = None) -> None:
+        """
+        Sets the owner and/or group for the file at `path`
+        """
+        return self.inner.set_owner(path, owner, group)

@@ -188,6 +188,7 @@ mod test {
         // We use writing to create files, so do this after
         test_recursive_listing(&client).await?;
         test_set_times(&client).await?;
+        test_set_owner(&client).await?;
 
         Ok(())
     }
@@ -347,6 +348,38 @@ mod test {
 
         assert_eq!(file_info.modification_time, mtime);
         assert_eq!(file_info.access_time, atime);
+
+        client.delete("/test", false).await?;
+
+        Ok(())
+    }
+
+    async fn test_set_owner(client: &Client) -> Result<()> {
+        client
+            .create("/test", WriteOptions::default())
+            .await?
+            .close()
+            .await?;
+
+        client
+            .set_owner("/test", Some("testuser"), Some("testgroup"))
+            .await?;
+        let file_info = client.get_file_info("/test").await?;
+
+        assert_eq!(file_info.owner, "testuser");
+        assert_eq!(file_info.group, "testgroup");
+
+        client.set_owner("/test", Some("testuser2"), None).await?;
+        let file_info = client.get_file_info("/test").await?;
+
+        assert_eq!(file_info.owner, "testuser2");
+        assert_eq!(file_info.group, "testgroup");
+
+        client.set_owner("/test", None, Some("testgroup2")).await?;
+        let file_info = client.get_file_info("/test").await?;
+
+        assert_eq!(file_info.owner, "testuser2");
+        assert_eq!(file_info.group, "testgroup2");
 
         Ok(())
     }

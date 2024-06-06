@@ -431,6 +431,20 @@ impl Client {
             .await?;
         Ok(())
     }
+
+    /// Optionally sets the owner and group for a file.
+    pub async fn set_owner(
+        &self,
+        path: &str,
+        owner: Option<&str>,
+        group: Option<&str>,
+    ) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .set_owner(&resolved_path, owner, group)
+            .await?;
+        Ok(())
+    }
 }
 
 impl Default for Client {

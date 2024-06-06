@@ -411,6 +411,30 @@ impl NamenodeProtocol {
         debug!("setTimes response: {:?}", &decoded);
         Ok(decoded)
     }
+
+    pub(crate) async fn set_owner(
+        &self,
+        src: &str,
+        owner: Option<&str>,
+        group: Option<&str>,
+    ) -> Result<hdfs::SetOwnerResponseProto> {
+        let message = hdfs::SetOwnerRequestProto {
+            src: src.to_string(),
+            username: owner.map(str::to_string),
+            groupname: group.map(str::to_string),
+        };
+
+        debug!("setOwner request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call("setOwner", message.encode_length_delimited_to_vec())
+            .await?;
+
+        let decoded = hdfs::SetOwnerResponseProto::decode_length_delimited(response)?;
+        debug!("setOwner response: {:?}", &decoded);
+        Ok(decoded)
+    }
 }
 
 impl Drop for NamenodeProtocol {
