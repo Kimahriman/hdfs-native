@@ -17,6 +17,16 @@ dependencies = [
     "fsspec"
 ]
 
+
+[project.optional-dependencies]
+devel = [
+    "mypy~=1.8.0",
+    "ruff~=0.4.8",
+    "pytest~=7.4",
+    "black~=24.4",
+    "isort~=5.13"
+]
+
 [project.urls]
 repository = "https://github.com/Kimahriman/hdfs-native"
 
@@ -32,8 +42,11 @@ module-name = "hdfs_native._internal"
 files = [
     "hdfs_native/**/*.py",
     "hdfs_native/**/*.pyi",
-    "tests/**/*.py"
 ]
+
+[[tool.mypy.overrides]]
+module = "fsspec.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = [

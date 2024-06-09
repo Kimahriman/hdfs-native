@@ -1,11 +1,13 @@
 import io
+
 from hdfs_native import Client, WriteOptions
+
 
 def test_integration(minidfs: str):
     client = Client(minidfs)
     client.create("/testfile", WriteOptions()).close()
     file_info = client.get_file_info("/testfile")
-    
+
     assert file_info.path == "/testfile"
 
     file_list = list(client.list_status("/", False))
@@ -27,7 +29,7 @@ def test_integration(minidfs: str):
         data = io.BytesIO()
 
         for i in range(0, 32 * 1024 * 1024):
-            data.write(i.to_bytes(4, 'big'))
+            data.write(i.to_bytes(4, "big"))
 
         file.write(data.getbuffer())
 
@@ -35,13 +37,13 @@ def test_integration(minidfs: str):
         data = io.BytesIO(file.read())
 
     for i in range(0, 32 * 1024 * 1024):
-        assert data.read(4) == i.to_bytes(4, 'big')
+        assert data.read(4) == i.to_bytes(4, "big")
 
     with client.append("/testfile") as file:
         data = io.BytesIO()
 
         for i in range(32 * 1024 * 1024, 33 * 1024 * 1024):
-            data.write(i.to_bytes(4, 'big'))
+            data.write(i.to_bytes(4, "big"))
 
         file.write(data.getbuffer())
 
@@ -49,13 +51,13 @@ def test_integration(minidfs: str):
         data = io.BytesIO(file.read())
 
     for i in range(0, 33 * 1024 * 1024):
-        assert data.read(4) == i.to_bytes(4, 'big')
+        assert data.read(4) == i.to_bytes(4, "big")
 
     with client.read("/testfile") as file:
         # Skip first two ints
         file.seek(8)
         expected = 2
-        assert file.read(4) == expected.to_bytes(4, 'big')
+        assert file.read(4) == expected.to_bytes(4, "big")
         assert file.tell() == 12
 
     mtime = 1717641455
@@ -64,7 +66,6 @@ def test_integration(minidfs: str):
     file_info = client.get_file_info("/testfile")
     assert file_info.modification_time == mtime
     assert file_info.access_time == atime
-
 
     client.set_owner("/testfile", "testuser", "testgroup")
     file_info = client.get_file_info("/testfile")

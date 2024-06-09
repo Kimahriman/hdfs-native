@@ -22,7 +22,6 @@ The same requirements apply as the Rust tests, requiring Java, Maven, Hadoop, an
 python3 -m venv .venv
 source .venv/bin/activate
 pip3 install maturin
-pip3 install -r requirements-dev.txt
-maturin develop
+maturin develop -E devel
 pytest
 ```

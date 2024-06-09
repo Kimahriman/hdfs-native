@@ -1,4 +1,0 @@
-mypy ~= 1
-pytest ~= 7
-black ~= 24
-isort ~= 5
