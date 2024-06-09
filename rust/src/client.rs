@@ -158,7 +158,7 @@ impl Client {
 
     pub fn new_with_config(url: &str, config: HashMap<String, String>) -> Result<Self> {
         let parsed_url = Url::parse(url)?;
-        Self::with_config(&parsed_url, Configuration::from(config))
+        Self::with_config(&parsed_url, Configuration::new_with_config(config)?)
     }
 
     fn with_config(url: &Url, config: Configuration) -> Result<Self> {

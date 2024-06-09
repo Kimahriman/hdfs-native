@@ -21,12 +21,6 @@ pub struct Configuration {
     map: HashMap<String, String>,
 }
 
-impl From<HashMap<String, String>> for Configuration {
-    fn from(conf_map: HashMap<String, String>) -> Self {
-        Self { map: conf_map }
-    }
-}
-
 impl Configuration {
     pub fn new() -> io::Result<Self> {
         let mut map: HashMap<String, String> = HashMap::new();
@@ -45,6 +39,12 @@ impl Configuration {
         }
 
         Ok(Configuration { map })
+    }
+
+    pub fn new_with_config(conf_map: HashMap<String, String>) -> io::Result<Self> {
+        let mut conf = Self::new()?;
+        conf.map.extend(conf_map);
+        Ok(conf)
     }
 
     /// Get a value from the config, returning None if the key wasn't defined.
