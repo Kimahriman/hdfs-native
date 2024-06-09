@@ -40,16 +40,31 @@ impl FileReader {
         }
     }
 
+    /// Returns the total size of the file
     pub fn file_length(&self) -> usize {
         self.status.length as usize
     }
 
+    /// Returns the remaining bytes left based on the current cursor position.
     pub fn remaining(&self) -> usize {
-        if self.position > self.status.length as usize {
+        if self.position > self.file_length() {
             0
         } else {
-            self.status.length as usize - self.position
+            self.file_length() - self.position
         }
+    }
+
+    /// Sets the cursor to the position. Panics if the position is beyond the end of the file
+    pub fn seek(&mut self, pos: usize) {
+        if pos > self.file_length() {
+            panic!("Cannot seek beyond the end of a file");
+        }
+        self.position = pos;
+    }
+
+    /// Returns the current cursor position in the file
+    pub fn tell(&self) -> usize {
+        self.position
     }
 
     /// Read up to `len` bytes into a new [Bytes] object, advancing the internal position in the file.

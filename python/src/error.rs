@@ -13,6 +13,7 @@ impl From<PythonHdfsError> for PyErr {
     fn from(value: PythonHdfsError) -> Self {
         match value.0 {
             HdfsError::IOError(err) => PyIOError::new_err(err),
+            HdfsError::AlreadyExists(path) => PyFileExistsError::new_err(path),
             HdfsError::FileNotFound(path) => PyFileNotFoundError::new_err(path),
             HdfsError::IsADirectoryError(path) => PyIsADirectoryError::new_err(path),
             HdfsError::UnsupportedFeature(feat) => PyNotImplementedError::new_err(feat),

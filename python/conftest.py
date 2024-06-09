@@ -1,8 +1,12 @@
-
+import urllib.parse
+import fsspec
 import subprocess
 import pytest
+import urllib
 
-@pytest.fixture
+from hdfs_native.fsspec import HdfsFileSystem
+
+@pytest.fixture(scope='module')
 def minidfs():
     child = subprocess.Popen(
         [
@@ -31,3 +35,8 @@ def minidfs():
         child.communicate(input="\n", timeout=30)
     except:
         child.kill()
+
+@pytest.fixture(scope='module')
+def fs(minidfs: str) -> HdfsFileSystem:
+    url = urllib.parse.urlparse(minidfs)
+    return fsspec.filesystem(url.scheme, host=url.hostname, port=url.port)

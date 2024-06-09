@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use ::hdfs_native::file::{FileReader, FileWriter};
@@ -77,6 +78,14 @@ struct RawFileReader {
 impl RawFileReader {
     pub fn file_length(&self) -> usize {
         self.inner.file_length()
+    }
+
+    pub fn seek(&mut self, pos: usize) {
+        self.inner.seek(pos);
+    }
+
+    pub fn tell(&self) -> usize {
+        self.inner.tell()
     }
 
     pub fn read(&mut self, len: i64) -> PyHdfsResult<Cow<[u8]>> {
@@ -168,13 +177,14 @@ struct RawClient {
 #[pymethods]
 impl RawClient {
     #[new]
-    #[pyo3(signature = (url))]
-    pub fn new(url: &str) -> PyResult<Self> {
+    #[pyo3(signature = (url, config))]
+    pub fn new(url: &str, config: Option<HashMap<String, String>>) -> PyResult<Self> {
         // Initialize logging, ignore errors if this is called multiple times
         let _ = env_logger::try_init();
 
         Ok(RawClient {
-            inner: Client::new(url).map_err(PythonHdfsError::from)?,
+            inner: Client::new_with_config(url, config.unwrap_or_default())
+                .map_err(PythonHdfsError::from)?,
             rt: Arc::new(
                 tokio::runtime::Runtime::new()
                     .map_err(|err| PyRuntimeError::new_err(err.to_string()))?,

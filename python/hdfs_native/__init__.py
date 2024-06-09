@@ -1,5 +1,6 @@
 import io
-from typing import Iterator, Optional
+import os
+from typing import Dict, Iterator, Optional
 from typing_extensions import Buffer
 
 from ._internal import *
@@ -19,6 +20,27 @@ class FileReader(io.RawIOBase):
     def __exit__(self, *_args):
         # Future updates could close the file manually here if that would help clean things up
         pass
+
+    @property
+    def size(self):
+        return len(self)
+
+    def seek(self, offset: int, whence=os.SEEK_SET):
+        """Seek to `offset` relative to `whence`"""
+        if whence == os.SEEK_SET:
+            self.inner.seek(offset)
+        elif whence == os.SEEK_CUR:
+            self.inner.seek(self.tell() + offset)
+        elif whence == os.SEEK_END:
+            self.inner.seek(self.inner.file_length() + offset)
+        else:
+            raise ValueError(f'Unsupported whence {whence}')
+
+    def seekable(self):
+        return True
+    
+    def tell(self) -> int:
+        return self.inner.tell()
 
     def readable(self) -> bool:
         return True
@@ -61,8 +83,8 @@ class FileWriter(io.RawIOBase):
 
 class Client:
 
-    def __init__(self, url: str):
-        self.inner = RawClient(url)
+    def __init__(self, url: str, config: Optional[Dict[str, str]] = None):
+        self.inner = RawClient(url, config)
 
     def get_file_info(self, path: str) -> "FileStatus":
         """Gets the file status for the file at `path`"""

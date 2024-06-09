@@ -13,20 +13,30 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
-    "typing-extensions"
+    "typing-extensions",
+    "fsspec"
 ]
 
 [project.urls]
 repository = "https://github.com/Kimahriman/hdfs-native"
 
+[project.entry-points."fsspec.specs"]
+hdfs = "hdfs_native.fsspec.HdfsFileSystem"
+viewfs = "hdfs_native.fsspec.HdfsFileSystem"
+
 [tool.maturin]
 features = ["pyo3/extension-module"]
-python-source = "python"
 module-name = "hdfs_native._internal"
 
 [tool.mypy]
 files = [
-    "python/**/*.py",
-    "python/**/*.pyi",
+    "hdfs_native/**/*.py",
+    "hdfs_native/**/*.pyi",
     "tests/**/*.py"
+]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "tests",
+    "hdfs_native",
 ]

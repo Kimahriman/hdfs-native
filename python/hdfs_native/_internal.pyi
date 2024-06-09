@@ -1,4 +1,4 @@
-from typing import Iterator, Optional
+from typing import Dict, Iterator, Optional
 from typing_extensions import Buffer
 
 
@@ -23,6 +23,12 @@ class RawFileReader:
     def file_length(self) -> int:
         """Returns the size of the file"""
 
+    def seek(self, pos: int) -> None:
+        """Sets the cursor to the given position"""
+
+    def tell(self) -> int:
+        """Returns the current cursor position in the file"""
+
     def read(self, len: int) -> bytes:
         """Reads `len` bytes from the file, advancing the position in the file"""
 
@@ -37,7 +43,7 @@ class RawFileWriter:
         """Closes the file and saves the final metadata to the NameNode"""
 
 class RawClient:
-    def __init__(self, url: str) -> None: ...
+    def __init__(self, url: str, config: Optional[Dict[str, str]]) -> None: ...
 
     def get_file_info(self, path: str) -> FileStatus: ...
 
