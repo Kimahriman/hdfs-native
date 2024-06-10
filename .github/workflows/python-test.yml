@@ -65,7 +65,7 @@ jobs:
       - name: Run tests
         run: |
           source .venv/bin/activate
-          mypy
+          pytest
 
   build:
     runs-on: ubuntu-latest
