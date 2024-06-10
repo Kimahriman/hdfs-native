@@ -1,24 +1,49 @@
 import io
-from typing import Iterator, Optional
-from typing_extensions import Buffer
+import os
+from typing import Dict, Iterator, Optional
+
+# For some reason mypy doesn't think this exists
+from typing_extensions import Buffer  # type: ignore
 
 from ._internal import *
 
+
 class FileReader(io.RawIOBase):
-    
+
     def __init__(self, inner: "RawFileReader"):
         self.inner = inner
 
     def __len__(self) -> int:
         return self.inner.file_length()
-    
+
     def __enter__(self):
         # Don't need to do anything special here
         return self
-    
+
     def __exit__(self, *_args):
         # Future updates could close the file manually here if that would help clean things up
         pass
+
+    @property
+    def size(self):
+        return len(self)
+
+    def seek(self, offset: int, whence=os.SEEK_SET):
+        """Seek to `offset` relative to `whence`"""
+        if whence == os.SEEK_SET:
+            self.inner.seek(offset)
+        elif whence == os.SEEK_CUR:
+            self.inner.seek(self.tell() + offset)
+        elif whence == os.SEEK_END:
+            self.inner.seek(self.inner.file_length() + offset)
+        else:
+            raise ValueError(f"Unsupported whence {whence}")
+
+    def seekable(self):
+        return True
+
+    def tell(self) -> int:
+        return self.inner.tell()
 
     def readable(self) -> bool:
         return True
@@ -26,16 +51,17 @@ class FileReader(io.RawIOBase):
     def read(self, size: int = -1) -> bytes:
         """Read up to `size` bytes from the file, or all content if -1"""
         return self.inner.read(size)
-    
+
     def readall(self) -> bytes:
         return self.read()
 
     def read_range(self, offset: int, len: int) -> bytes:
         """Read `len` bytes from the file starting at `offset`. Doesn't affect the position in the file"""
         return self.inner.read_range(offset, len)
-    
+
     def close(self) -> None:
         pass
+
 
 class FileWriter(io.RawIOBase):
 
@@ -55,14 +81,15 @@ class FileWriter(io.RawIOBase):
 
     def __enter__(self) -> "FileWriter":
         return self
-    
+
     def __exit__(self, *_args):
         self.close()
 
+
 class Client:
 
-    def __init__(self, url: str):
-        self.inner = RawClient(url)
+    def __init__(self, url: str, config: Optional[Dict[str, str]] = None):
+        self.inner = RawClient(url, config)
 
     def get_file_info(self, path: str) -> "FileStatus":
         """Gets the file status for the file at `path`"""
@@ -79,7 +106,7 @@ class Client:
     def create(self, path: str, write_options: WriteOptions) -> FileWriter:
         """Creates a new file and opens it for writing at `path`"""
         return FileWriter(self.inner.create(path, write_options))
-    
+
     def append(self, path: str) -> FileWriter:
         """Opens an existing file to append to at `path`"""
         return FileWriter(self.inner.append(path))
@@ -107,14 +134,19 @@ class Client:
         is a non-empty directory, this will fail.
         """
         return self.inner.delete(path, recursive)
-    
+
     def set_times(self, path: str, mtime: int, atime: int) -> None:
         """
         Changes the modification time and access time of the file at `path` to `mtime` and `atime`, respectively.
         """
         return self.inner.set_times(path, mtime, atime)
 
-    def set_owner(self, path: str, owner: Optional[str] = None, group: Optional[str] = None) -> None:
+    def set_owner(
+        self,
+        path: str,
+        owner: Optional[str] = None,
+        group: Optional[str] = None,
+    ) -> None:
         """
         Sets the owner and/or group for the file at `path`
         """

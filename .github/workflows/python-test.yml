@@ -13,21 +13,6 @@ defaults:
     working-directory: ./python
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.12
-      - name: Install dev dependencies
-        run: |
-          pip3 install -r requirements-dev.txt
-      - name: Type checking
-        run: |
-          mypy python
-
   test:
     strategy:
       fail-fast: false
@@ -68,12 +53,18 @@ jobs:
           sccache: 'true'
           container: 'off'
           working-directory: ./python
-          args: --features kerberos
+          args: --features kerberos --extras devel
       
-      - name: Install dev dependencies and run tests
+      - name: Run lints
         run: |
           source .venv/bin/activate
-          pip3 install -r requirements-dev.txt
+          mypy
+          isort . --check
+          black . --check
+
+      - name: Run tests
+        run: |
+          source .venv/bin/activate
           pytest
 
   build:
