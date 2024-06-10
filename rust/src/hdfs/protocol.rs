@@ -443,7 +443,7 @@ impl NamenodeProtocol {
     ) -> Result<hdfs::SetPermissionResponseProto> {
         let message = hdfs::SetPermissionRequestProto {
             src: src.to_string(),
-            permission: hdfs::FsPermissionProto { perm: permission }
+            permission: hdfs::FsPermissionProto { perm: permission },
         };
 
         debug!("setPermission request: {:?}", &message);

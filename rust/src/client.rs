@@ -448,7 +448,7 @@ impl Client {
 
     /// Sets permissions for a file. Permission should be an octal number reprenting the Unix style
     /// permission.
-    /// 
+    ///
     /// For example, to set permissions to rwxr-xr-x:
     /// ```rust
     /// # async fn func() {
@@ -456,11 +456,7 @@ impl Client {
     /// client.set_permission("/path", 0o755).await.unwrap();
     /// }
     /// ```
-    pub async fn set_permission(
-        &self,
-        path: &str,
-        permission: u32,
-    ) -> Result<()> {
+    pub async fn set_permission(&self, path: &str, permission: u32) -> Result<()> {
         let (link, resolved_path) = self.mount_table.resolve(path);
         link.protocol
             .set_permission(&resolved_path, permission)
