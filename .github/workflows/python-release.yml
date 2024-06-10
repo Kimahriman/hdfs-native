@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
         if: ${{ matrix.target }} != 'x86_64'
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -42,7 +42,7 @@ jobs:
           before-script-linux: |
             yum install -y epel-release && yum install -y krb5-devel llvm-toolset-7.0-clang llvm-toolset-7.0-llvm-devel
       - name: Upload wheels
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: wheels
           path: dist
@@ -67,7 +67,7 @@ jobs:
           BINDGEN_EXTRA_CLANG_ARGS: "-I/usr/local/include"
           LIBRARY_PATH: /usr/local/lib
       - name: Upload wheels
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: wheels
           path: dist
@@ -82,7 +82,7 @@ jobs:
           command: sdist
           args: --out dist --manifest-path python/Cargo.toml
       - name: Upload sdist
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: wheels
           path: dist
@@ -93,7 +93,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [linux, macos, sdist]
     steps:
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: wheels
       - name: Publish to PyPI
