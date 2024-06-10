@@ -262,6 +262,12 @@ impl RawClient {
     ) -> PyHdfsResult<()> {
         Ok(self.rt.block_on(self.inner.set_owner(path, owner, group))?)
     }
+
+    pub fn set_permission(&self, path: &str, permission: u32) -> PyHdfsResult<()> {
+        Ok(self
+            .rt
+            .block_on(self.inner.set_permission(path, permission))?)
+    }
 }
 
 /// A Python module implemented in Rust.

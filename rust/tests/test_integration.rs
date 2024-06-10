@@ -189,6 +189,7 @@ mod test {
         test_recursive_listing(&client).await?;
         test_set_times(&client).await?;
         test_set_owner(&client).await?;
+        test_set_permission(&client).await?;
 
         Ok(())
     }
@@ -380,6 +381,27 @@ mod test {
 
         assert_eq!(file_info.owner, "testuser2");
         assert_eq!(file_info.group, "testgroup2");
+
+        client.delete("/test", false).await?;
+
+        Ok(())
+    }
+
+    async fn test_set_permission(client: &Client) -> Result<()> {
+        client
+            .create("/test", WriteOptions::default())
+            .await?
+            .close()
+            .await?;
+
+        let file_info = client.get_file_info("/test").await?;
+        assert_eq!(file_info.permission, 0o644);
+
+        client.set_permission("/test", 0o600).await?;
+        let file_info = client.get_file_info("/test").await?;
+        assert_eq!(file_info.permission, 0o600);
+
+        client.delete("/test", false).await?;
 
         Ok(())
     }

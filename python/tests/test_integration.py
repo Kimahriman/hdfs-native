@@ -82,4 +82,9 @@ def test_integration(minidfs: str):
     assert file_info.owner == "testuser2"
     assert file_info.group == "testgroup2"
 
+    assert file_info.permission == 0o644
+    client.set_permission("/testfile", 0o600)
+    file_info = client.get_file_info("/testfile")
+    assert file_info.permission == 0o600
+
     client.delete("/testfile", False)

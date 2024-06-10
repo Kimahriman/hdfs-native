@@ -151,3 +151,10 @@ class Client:
         Sets the owner and/or group for the file at `path`
         """
         return self.inner.set_owner(path, owner, group)
+
+    def set_permission(self, path: str, permission: int) -> None:
+        """
+        Sets the permissions for file at `path` to the octal value `permission`.
+        For example, to set "rw-r--r--" Unix style permissions, use permission=0o644.
+        """
+        return self.inner.set_permission(path, permission)
