@@ -1,6 +1,7 @@
 import secrets
 import shutil
 import time
+import urllib.parse
 from contextlib import suppress
 from datetime import datetime
 from typing import TYPE_CHECKING, Dict, List, Optional, Union
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
 
 
 class HdfsFileSystem(AbstractFileSystem):
+    root_marker = "/"
+
     def __init__(self, host: str, port: Optional[int] = None, *args, **storage_options):
         super().__init__(host, port, *args, **storage_options)
         self.host = host
@@ -27,6 +30,25 @@ class HdfsFileSystem(AbstractFileSystem):
     @property
     def fsid(self):
         return f"hdfs_native_{tokenize(self.protocol, self.host, self.port)}"
+
+    @classmethod
+    def _strip_protocol(cls, path: str) -> str:
+        url = urllib.parse.urlparse(path)
+        return url.path or cls.root_marker
+
+    def unstrip_protocol(self, name: str) -> str:
+        path = self._strip_protocol(name)
+
+        url = f"{self.protocol}://{self.host}"
+        if self.port:
+            url += f":{self.port}"
+
+        return f"{url}{path}"
+
+    @staticmethod
+    def _get_kwargs_from_urls(path):
+        url = urllib.parse.urlparse(path)
+        return {"host": url.hostname, "port": url.port}
 
     def _convert_file_status(self, file_status: "FileStatus") -> Dict:
         return {
@@ -41,7 +63,7 @@ class HdfsFileSystem(AbstractFileSystem):
         }
 
     def info(self, path, **_kwargs) -> Dict:
-        file_status = self.client.get_file_info(path)
+        file_status = self.client.get_file_info(self._strip_protocol(path))
         return self._convert_file_status(file_status)
 
     def exists(self, path, **_kwargs):
@@ -52,13 +74,14 @@ class HdfsFileSystem(AbstractFileSystem):
             return False
 
     def ls(self, path: str, detail=True, **kwargs) -> List[Union[str, Dict]]:
-        listing = self.client.list_status(path, False)
+        listing = self.client.list_status(self._strip_protocol(path), False)
         if detail:
             return [self._convert_file_status(status) for status in listing]
         else:
             return [status.path for status in listing]
 
     def touch(self, path: str, truncate=True, **kwargs):
+        path = self._strip_protocol(path)
         if truncate or not self.exists(path):
             with self.open(path, "wb", **kwargs):
                 pass
@@ -67,20 +90,29 @@ class HdfsFileSystem(AbstractFileSystem):
             self.client.set_times(path, now, now)
 
     def mkdir(self, path: str, create_parents=True, **kwargs):
-        self.client.mkdirs(path, kwargs.get("permission", 0o755), create_parents)
+        self.client.mkdirs(
+            self._strip_protocol(path),
+            kwargs.get("permission", 0o755),
+            create_parents,
+        )
 
     def makedirs(self, path: str, exist_ok=False):
+        path = self._strip_protocol(path)
         if not exist_ok and self.exists(path):
             raise FileExistsError("File or directory already exists")
 
         return self.mkdir(path, create_parents=True)
 
     def mv(self, path1: str, path2: str, **kwargs):
-        self.client.rename(path1, path2, kwargs.get("overwrite", False))
+        self.client.rename(
+            self._strip_protocol(path1),
+            self._strip_protocol(path2),
+            kwargs.get("overwrite", False),
+        )
 
     def cp_file(self, path1, path2, **kwargs):
-        with self._open(path1, "rb") as lstream:
-            tmp_fname = f".{path2}.tmp.{secrets.token_hex(6)}"
+        with self._open(self._strip_protocol(path1), "rb") as lstream:
+            tmp_fname = f".{self._strip_protocol(path2)}.tmp.{secrets.token_hex(6)}"
             try:
                 with self.open(tmp_fname, "wb") as rstream:
                     shutil.copyfileobj(lstream, rstream)
@@ -91,18 +123,18 @@ class HdfsFileSystem(AbstractFileSystem):
                 raise
 
     def rmdir(self, path: str) -> None:
-        self.client.delete(path, False)
+        self.client.delete(self._strip_protocol(path), False)
 
     def rm(self, path: str, recursive=False, maxdepth: Optional[int] = None) -> None:
         if maxdepth is not None:
             raise NotImplementedError("maxdepth is not supported")
-        self.client.delete(path, recursive)
+        self.client.delete(self._strip_protocol(path), recursive)
 
     def rm_file(self, path: str):
-        self.rm(path)
+        self.rm(self._strip_protocol(path))
 
     def modified(self, path: str):
-        file_info = self.client.get_file_info(path)
+        file_info = self.client.get_file_info(self._strip_protocol(path))
         return datetime.fromtimestamp(file_info.modification_time)
 
     def _open(
@@ -114,6 +146,7 @@ class HdfsFileSystem(AbstractFileSystem):
         block_size: Optional[int] = None,
         **_kwargs,
     ):
+        path = self._strip_protocol(path)
         if mode == "rb":
             return self.client.read(path)
         elif mode == "wb":

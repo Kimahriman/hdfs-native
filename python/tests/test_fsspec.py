@@ -1,3 +1,6 @@
+import urllib.parse
+
+import fsspec
 import pytest
 
 from hdfs_native.fsspec import HdfsFileSystem
@@ -67,3 +70,18 @@ def test_listing(fs: HdfsFileSystem):
     assert listing[0]["size"] == 0
     assert listing[0]["name"] == "/testdir"
     assert listing[0]["type"] == "directory"
+
+
+def test_parsing(minidfs: str):
+    with fsspec.open(f"{minidfs}/test", "wb") as f:
+        f.write(b"hey there")
+
+    url = urllib.parse.urlparse(minidfs)
+    fs: HdfsFileSystem
+    urlpath: str
+    fs, urlpath = fsspec.url_to_fs(f"{minidfs}/path")
+    assert fs.host == url.hostname
+    assert fs.port == url.port
+    assert urlpath == "/path"
+
+    assert fs.unstrip_protocol("/path") == f"{minidfs}/path"
