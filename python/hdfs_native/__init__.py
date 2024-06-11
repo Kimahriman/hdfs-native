@@ -158,3 +158,9 @@ class Client:
         For example, to set "rw-r--r--" Unix style permissions, use permission=0o644.
         """
         return self.inner.set_permission(path, permission)
+
+    def set_replication(self, path: str, replication: int) -> bool:
+        """
+        Sets the replication for file at `path` to `replication`
+        """
+        return self.inner.set_replication(path, replication)

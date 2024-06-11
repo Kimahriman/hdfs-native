@@ -87,4 +87,12 @@ def test_integration(minidfs: str):
     file_info = client.get_file_info("/testfile")
     assert file_info.permission == 0o600
 
+    client.set_replication("/testfile", 1)
+    file_info = client.get_file_info("/testfile")
+    assert file_info.replication == 1
+
+    client.set_replication("/testfile", 2)
+    file_info = client.get_file_info("/testfile")
+    assert file_info.replication == 2
+
     client.delete("/testfile", False)

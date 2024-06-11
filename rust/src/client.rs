@@ -463,6 +463,18 @@ impl Client {
             .await?;
         Ok(())
     }
+
+    /// Sets the replication for a file.
+    pub async fn set_replication(&self, path: &str, replication: u32) -> Result<bool> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        let result = link
+            .protocol
+            .set_replication(&resolved_path, replication)
+            .await?
+            .result;
+
+        Ok(result)
+    }
 }
 
 impl Default for Client {
@@ -621,6 +633,8 @@ pub struct FileStatus {
     pub group: String,
     pub modification_time: u64,
     pub access_time: u64,
+    pub replication: Option<u32>,
+    pub blocksize: Option<u64>,
 }
 
 impl FileStatus {
@@ -644,6 +658,8 @@ impl FileStatus {
             group: value.group,
             modification_time: value.modification_time,
             access_time: value.access_time,
+            replication: value.block_replication,
+            blocksize: value.blocksize,
         }
     }
 }

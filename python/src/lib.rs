@@ -28,6 +28,8 @@ struct PyFileStatus {
     group: String,
     modification_time: u64,
     access_time: u64,
+    replication: Option<u32>,
+    blocksize: Option<u64>,
 }
 
 impl From<FileStatus> for PyFileStatus {
@@ -41,6 +43,8 @@ impl From<FileStatus> for PyFileStatus {
             group: value.group,
             modification_time: value.modification_time,
             access_time: value.access_time,
+            replication: value.replication,
+            blocksize: value.blocksize,
         }
     }
 }
@@ -267,6 +271,12 @@ impl RawClient {
         Ok(self
             .rt
             .block_on(self.inner.set_permission(path, permission))?)
+    }
+
+    pub fn set_replication(&self, path: &str, replication: u32) -> PyHdfsResult<bool> {
+        Ok(self
+            .rt
+            .block_on(self.inner.set_replication(path, replication))?)
     }
 }
 
