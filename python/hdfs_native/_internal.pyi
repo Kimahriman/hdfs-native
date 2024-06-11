@@ -12,6 +12,8 @@ class FileStatus:
     group: str
     modification_time: int
     access_time: int
+    replication: Optional[int]
+    blocksize: Optional[int]
 
 class WriteOptions:
     block_size: Optional[int]
@@ -61,3 +63,4 @@ class RawClient:
         group: Optional[str],
     ) -> None: ...
     def set_permission(self, path: str, permission: int) -> None: ...
+    def set_replication(self, path: str, replication: int) -> bool: ...

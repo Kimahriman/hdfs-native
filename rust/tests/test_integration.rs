@@ -190,6 +190,7 @@ mod test {
         test_set_times(&client).await?;
         test_set_owner(&client).await?;
         test_set_permission(&client).await?;
+        test_set_replication(&client).await?;
 
         Ok(())
     }
@@ -400,6 +401,26 @@ mod test {
         client.set_permission("/test", 0o600).await?;
         let file_info = client.get_file_info("/test").await?;
         assert_eq!(file_info.permission, 0o600);
+
+        client.delete("/test", false).await?;
+
+        Ok(())
+    }
+
+    async fn test_set_replication(client: &Client) -> Result<()> {
+        client
+            .create("/test", WriteOptions::default())
+            .await?
+            .close()
+            .await?;
+
+        client.set_replication("/test", 1).await?;
+        let file_info = client.get_file_info("/test").await?;
+        assert_eq!(file_info.replication, Some(1));
+
+        client.set_replication("/test", 2).await?;
+        let file_info = client.get_file_info("/test").await?;
+        assert_eq!(file_info.replication, Some(2));
 
         client.delete("/test", false).await?;
 

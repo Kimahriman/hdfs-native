@@ -457,6 +457,28 @@ impl NamenodeProtocol {
         debug!("setPermission response: {:?}", &decoded);
         Ok(decoded)
     }
+
+    pub(crate) async fn set_replication(
+        &self,
+        src: &str,
+        replication: u32,
+    ) -> Result<hdfs::SetReplicationResponseProto> {
+        let message = hdfs::SetReplicationRequestProto {
+            src: src.to_string(),
+            replication,
+        };
+
+        debug!("setReplication request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call("setReplication", message.encode_length_delimited_to_vec())
+            .await?;
+
+        let decoded = hdfs::SetReplicationResponseProto::decode_length_delimited(response)?;
+        debug!("setReplication response: {:?}", &decoded);
+        Ok(decoded)
+    }
 }
 
 impl Drop for NamenodeProtocol {
