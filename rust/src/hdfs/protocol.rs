@@ -435,6 +435,28 @@ impl NamenodeProtocol {
         debug!("setOwner response: {:?}", &decoded);
         Ok(decoded)
     }
+
+    pub(crate) async fn set_permission(
+        &self,
+        src: &str,
+        permission: u32,
+    ) -> Result<hdfs::SetPermissionResponseProto> {
+        let message = hdfs::SetPermissionRequestProto {
+            src: src.to_string(),
+            permission: hdfs::FsPermissionProto { perm: permission },
+        };
+
+        debug!("setPermission request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call("setPermission", message.encode_length_delimited_to_vec())
+            .await?;
+
+        let decoded = hdfs::SetPermissionResponseProto::decode_length_delimited(response)?;
+        debug!("setPermission response: {:?}", &decoded);
+        Ok(decoded)
+    }
 }
 
 impl Drop for NamenodeProtocol {

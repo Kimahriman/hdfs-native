@@ -22,8 +22,8 @@ pub struct WriteOptions {
     pub block_size: Option<u64>,
     /// Replication factor. Default is retrieved from the server.
     pub replication: Option<u32>,
-    /// Unix file permission, defaults to 0o755. This is the raw octal
-    /// value represented in base 10.
+    /// Unix file permission, defaults to 0o644, which is "rw-r--r--" as a Unix permission.
+    /// This is the raw octal value represented in base 10.
     pub permission: u32,
     /// Whether to overwrite the file, defaults to false. If true and the
     /// file does not exist, it will result in an error.
@@ -38,7 +38,7 @@ impl Default for WriteOptions {
         Self {
             block_size: None,
             replication: None,
-            permission: 0o755,
+            permission: 0o644,
             overwrite: false,
             create_parent: true,
         }
@@ -442,6 +442,24 @@ impl Client {
         let (link, resolved_path) = self.mount_table.resolve(path);
         link.protocol
             .set_owner(&resolved_path, owner, group)
+            .await?;
+        Ok(())
+    }
+
+    /// Sets permissions for a file. Permission should be an octal number reprenting the Unix style
+    /// permission.
+    ///
+    /// For example, to set permissions to rwxr-xr-x:
+    /// ```rust
+    /// # async fn func() {
+    /// # let client = hdfs_native::Client::new("localhost:9000").unwrap();
+    /// client.set_permission("/path", 0o755).await.unwrap();
+    /// }
+    /// ```
+    pub async fn set_permission(&self, path: &str, permission: u32) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .set_permission(&resolved_path, permission)
             .await?;
         Ok(())
     }
