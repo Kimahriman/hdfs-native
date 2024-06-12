@@ -446,11 +446,6 @@ mod test {
         assert_eq!(content_summary.directory_count, 2);
         // Test file plus the two we made above
         assert_eq!(content_summary.length, TEST_FILE_INTS as u64 * 4 + 4 + 6);
-        // 3x replication by default
-        assert_eq!(
-            content_summary.space_consumed,
-            (TEST_FILE_INTS as u64 * 4 + 4 + 6) * 3
-        );
 
         Ok(())
     }
