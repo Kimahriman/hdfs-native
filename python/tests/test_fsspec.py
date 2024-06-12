@@ -71,6 +71,8 @@ def test_listing(fs: HdfsFileSystem):
     assert listing[0]["name"] == "/testdir"
     assert listing[0]["type"] == "directory"
 
+    fs.rm("/testdir", True)
+
 
 def test_parsing(minidfs: str):
     with fsspec.open(f"{minidfs}/test", "wb") as f:
@@ -85,3 +87,17 @@ def test_parsing(minidfs: str):
     assert urlpath == "/path"
 
     assert fs.unstrip_protocol("/path") == f"{minidfs}/path"
+
+
+def test_du(fs: HdfsFileSystem):
+    with fs.open("/test", mode="wb") as file:
+        file.write(b"hello there")
+
+    with fs.open("/test2", mode="wb") as file:
+        file.write(b"hello again")
+
+    assert fs.du("/test") == 11
+    assert fs.du("/test2") == 11
+    assert fs.du("/") == 22
+
+    assert fs.du("/", total=False) == {"/test": 11, "/test2": 11}

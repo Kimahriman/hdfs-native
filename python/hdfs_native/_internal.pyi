@@ -15,6 +15,14 @@ class FileStatus:
     replication: Optional[int]
     blocksize: Optional[int]
 
+class ContentSummary:
+    length: int
+    file_count: int
+    directory_count: int
+    quota: int
+    space_consumed: int
+    space_quota: int
+
 class WriteOptions:
     block_size: Optional[int]
     replication: Optional[int]
@@ -64,3 +72,4 @@ class RawClient:
     ) -> None: ...
     def set_permission(self, path: str, permission: int) -> None: ...
     def set_replication(self, path: str, replication: int) -> bool: ...
+    def get_content_summary(self, path) -> ContentSummary: ...

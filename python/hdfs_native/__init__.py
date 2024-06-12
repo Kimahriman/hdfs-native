@@ -164,3 +164,9 @@ class Client:
         Sets the replication for file at `path` to `replication`
         """
         return self.inner.set_replication(path, replication)
+
+    def get_content_summary(self, path: str) -> "ContentSummary":
+        """
+        Gets a content summary for `path`
+        """
+        return self.inner.get_content_summary(path)

@@ -479,6 +479,29 @@ impl NamenodeProtocol {
         debug!("setReplication response: {:?}", &decoded);
         Ok(decoded)
     }
+
+    pub(crate) async fn get_content_summary(
+        &self,
+        path: &str,
+    ) -> Result<hdfs::GetContentSummaryResponseProto> {
+        let message = hdfs::GetContentSummaryRequestProto {
+            path: path.to_string(),
+        };
+
+        debug!("getContentSummary request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call(
+                "getContentSummary",
+                message.encode_length_delimited_to_vec(),
+            )
+            .await?;
+
+        let decoded = hdfs::GetContentSummaryResponseProto::decode_length_delimited(response)?;
+        debug!("getContentSummary response: {:?}", &decoded);
+        Ok(decoded)
+    }
 }
 
 impl Drop for NamenodeProtocol {
