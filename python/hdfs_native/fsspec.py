@@ -89,6 +89,23 @@ class HdfsFileSystem(AbstractFileSystem):
             now = int(time.time() * 1000)
             self.client.set_times(path, now, now)
 
+    def du(
+        self,
+        path: str,
+        total=True,
+        maxdepth: Optional[int] = None,
+        withdirs=False,
+        **kwargs,
+    ) -> Union[int, Dict[str, int]]:
+        if total:
+            if maxdepth is not None:
+                raise NotImplementedError("maxdepth is not supported with total")
+
+            content_summary = self.client.get_content_summary(path)
+            return content_summary.length
+        else:
+            return super().du(path, total, maxdepth, withdirs, **kwargs)
+
     def mkdir(self, path: str, create_parents=True, **kwargs):
         self.client.mkdirs(
             self._strip_protocol(path),
