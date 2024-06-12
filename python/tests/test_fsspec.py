@@ -71,6 +71,8 @@ def test_listing(fs: HdfsFileSystem):
     assert listing[0]["name"] == "/testdir"
     assert listing[0]["type"] == "directory"
 
+    fs.rm("/testdir", True)
+
 
 def test_parsing(minidfs: str):
     with fsspec.open(f"{minidfs}/test", "wb") as f:
