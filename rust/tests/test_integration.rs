@@ -191,6 +191,7 @@ mod test {
         test_set_owner(&client).await?;
         test_set_permission(&client).await?;
         test_set_replication(&client).await?;
+        test_get_content_summary(&client).await?;
 
         Ok(())
     }
@@ -423,6 +424,33 @@ mod test {
         assert_eq!(file_info.replication, Some(2));
 
         client.delete("/test", false).await?;
+
+        Ok(())
+    }
+
+    async fn test_get_content_summary(client: &Client) -> Result<()> {
+        let mut file1 = client.create("/test", WriteOptions::default()).await?;
+
+        file1.write(vec![0, 1, 2, 3].into()).await?;
+        file1.close().await?;
+
+        let mut file2 = client.create("/test2", WriteOptions::default()).await?;
+
+        file2.write(vec![0, 1, 2, 3, 4, 5].into()).await?;
+        file2.close().await?;
+
+        client.mkdirs("/testdir", 0o755, true).await?;
+
+        let content_summary = client.get_content_summary("/").await?;
+        assert_eq!(content_summary.file_count, 3,);
+        assert_eq!(content_summary.directory_count, 2);
+        // Test file plus the two we made above
+        assert_eq!(content_summary.length, TEST_FILE_INTS as u64 * 4 + 4 + 6);
+        // 3x replication by default
+        assert_eq!(
+            content_summary.space_consumed,
+            (TEST_FILE_INTS as u64 * 4 + 4 + 6) * 3
+        );
 
         Ok(())
     }

@@ -95,4 +95,9 @@ def test_integration(minidfs: str):
     file_info = client.get_file_info("/testfile")
     assert file_info.replication == 2
 
+    content_summary = client.get_content_summary("/")
+    assert content_summary.file_count == 1
+    assert content_summary.directory_count == 1
+    assert content_summary.length == 33 * 1024 * 1024 * 4
+
     client.delete("/testfile", False)

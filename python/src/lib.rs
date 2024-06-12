@@ -9,6 +9,7 @@ use ::hdfs_native::{
     Client,
 };
 use bytes::Bytes;
+use hdfs_native::client::ContentSummary;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use tokio::runtime::Runtime;
 
@@ -68,6 +69,29 @@ impl PyFileStatusIter {
             Ok(Some(PyFileStatus::from(result?)))
         } else {
             Ok(None)
+        }
+    }
+}
+
+#[pyclass(get_all, frozen, name = "ContentSummary")]
+struct PyContentSummary {
+    length: u64,
+    file_count: u64,
+    directory_count: u64,
+    quota: u64,
+    space_consumed: u64,
+    space_quota: u64,
+}
+
+impl From<ContentSummary> for PyContentSummary {
+    fn from(value: ContentSummary) -> Self {
+        Self {
+            length: value.length,
+            file_count: value.file_count,
+            directory_count: value.directory_count,
+            quota: value.quota,
+            space_consumed: value.space_consumed,
+            space_quota: value.space_quota,
         }
     }
 }
@@ -277,6 +301,13 @@ impl RawClient {
         Ok(self
             .rt
             .block_on(self.inner.set_replication(path, replication))?)
+    }
+
+    pub fn get_content_summary(&self, path: &str) -> PyHdfsResult<PyContentSummary> {
+        Ok(self
+            .rt
+            .block_on(self.inner.get_content_summary(path))?
+            .into())
     }
 }
 

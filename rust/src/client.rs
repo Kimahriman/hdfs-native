@@ -14,7 +14,7 @@ use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
 
-use crate::proto::hdfs::HdfsFileStatusProto;
+use crate::proto::hdfs::{ContentSummaryProto, HdfsFileStatusProto};
 
 #[derive(Clone)]
 pub struct WriteOptions {
@@ -475,6 +475,18 @@ impl Client {
 
         Ok(result)
     }
+
+    /// Gets a content summary for a file or directory rooted at `path
+    pub async fn get_content_summary(&self, path: &str) -> Result<ContentSummary> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        let result = link
+            .protocol
+            .get_content_summary(&resolved_path)
+            .await?
+            .summary;
+
+        Ok(result.into())
+    }
 }
 
 impl Default for Client {
@@ -660,6 +672,29 @@ impl FileStatus {
             access_time: value.access_time,
             replication: value.block_replication,
             blocksize: value.blocksize,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ContentSummary {
+    pub length: u64,
+    pub file_count: u64,
+    pub directory_count: u64,
+    pub quota: u64,
+    pub space_consumed: u64,
+    pub space_quota: u64,
+}
+
+impl From<ContentSummaryProto> for ContentSummary {
+    fn from(value: ContentSummaryProto) -> Self {
+        ContentSummary {
+            length: value.length,
+            file_count: value.file_count,
+            directory_count: value.directory_count,
+            quota: value.quota,
+            space_consumed: value.space_consumed,
+            space_quota: value.space_quota,
         }
     }
 }
