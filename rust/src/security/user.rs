@@ -124,6 +124,7 @@ impl BlockTokenIdentifier {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct Token {
     pub alias: String,
     pub identifier: Vec<u8>,
