@@ -17,7 +17,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_security_kerberos() {
         test_with_features(&HashSet::from([DfsFeatures::Security]))
             .await
@@ -34,7 +33,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_integrity_kerberos() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,
@@ -58,7 +56,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_privacy_kerberos() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,
@@ -82,7 +79,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_aes() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,
@@ -95,7 +91,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_forced_data_transfer_encryption() {
         // DataTransferEncryption enabled but privacy isn't, still force encryption
         test_with_features(&HashSet::from([
@@ -108,7 +103,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_data_transfer_encryption() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,
@@ -121,7 +115,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_data_transfer_encryption_aes() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,
@@ -143,7 +136,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_security_privacy_ha() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,

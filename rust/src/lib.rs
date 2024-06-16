@@ -22,9 +22,6 @@
 //! # Ok(())
 //! # }
 //! ```
-//!
-//! # Optional cargo package features
-//! - `kerberos` - include support for Kerberos authentication. Uses the libgssapi package. Supports all RPC authentication and encryption methods.
 
 pub mod client;
 pub(crate) mod common;

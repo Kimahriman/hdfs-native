@@ -13,6 +13,7 @@ license = "Apache-2.0"
 [dependencies]
 aes = "0.8"
 base64 = "0.21"
+bitflags = "2.5.0"
 bytes = { workspace = true }
 cbc = "0.1"
 chrono = "0.4"
@@ -27,7 +28,7 @@ g2p = "1"
 hex = "0.4"
 hmac = "0.12"
 libc = "0.2"
-libgssapi = { version = "0.7", default-features = false, optional = true }
+libloading = "0.8"
 log = { workspace = true }
 md-5 = "0.10"
 num-traits = "0.2"
@@ -57,8 +58,6 @@ tempfile = "3"
 which = "4"
 
 [features]
-kerberos = ["libgssapi"]
-
 generate-protobuf = ["prost-build", "protobuf-src"]
 integration-test = ["which"]
 benchmark = ["fs-hdfs3", "which"]

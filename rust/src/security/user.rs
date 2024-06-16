@@ -16,7 +16,6 @@ use crate::proto::hdfs::StorageTypeProto;
 use crate::Result;
 
 const HADOOP_USER_NAME: &str = "HADOOP_USER_NAME";
-#[cfg(feature = "kerberos")]
 const HADOOP_PROXY_USER: &str = "HADOOP_PROXY_USER";
 const HADOOP_TOKEN_FILE_LOCATION: &str = "HADOOP_TOKEN_FILE_LOCATION";
 const TOKEN_STORAGE_MAGIC: &[u8] = "HDTS".as_bytes();
@@ -323,7 +322,6 @@ impl User {
             .find(|t| t.kind == kind && t.service == service)
     }
 
-    #[cfg(feature = "kerberos")]
     pub(crate) fn get_user_info_from_principal(principal: &str) -> UserInfo {
         let username = User::get_user_from_principal(principal);
         let proxy_user = env::var(HADOOP_PROXY_USER).ok();
@@ -347,7 +345,6 @@ impl User {
         }
     }
 
-    #[cfg(feature = "kerberos")]
     pub(crate) fn get_user_from_principal(principal: &str) -> String {
         // If there's a /, take the part before it.
         if let Some(index) = principal.find('/') {
