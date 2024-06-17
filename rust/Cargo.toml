@@ -13,7 +13,7 @@ license = "Apache-2.0"
 [dependencies]
 aes = "0.8"
 base64 = "0.21"
-bitflags = "2.5.0"
+bitflags = "2"
 bytes = { workspace = true }
 cbc = "0.1"
 chrono = "0.4"
