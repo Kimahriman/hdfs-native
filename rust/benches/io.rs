@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
+#[allow(unused_imports)]
 use bytes::{Buf, BufMut, BytesMut};
 use criterion::*;
-use hdfs::hdfs::get_hdfs;
 use hdfs_native::{
     minidfs::{DfsFeatures, MiniDfs},
     Client, WriteOptions,
@@ -49,8 +49,9 @@ fn bench(c: &mut Criterion) {
         })
     });
     group.sample_size(50);
+    #[cfg(unix)]
     group.bench_function("read-libhdfs", |b| {
-        let fs = get_hdfs().unwrap();
+        let fs = hdfs::hdfs::get_hdfs().unwrap();
         b.iter(|| {
             let mut buf = BytesMut::zeroed(ints_to_write * 4);
             let mut bytes_read = 0;
@@ -79,8 +80,9 @@ fn bench(c: &mut Criterion) {
             .iter(|| async { reader.read_range(0, reader.file_length()).await.unwrap() })
     });
     group.sample_size(50);
+    #[cfg(unix)]
     group.bench_function("read-libhdfs", |b| {
-        let fs = get_hdfs().unwrap();
+        let fs = hdfs::hdfs::get_hdfs().unwrap();
         b.iter(|| {
             let mut buf = BytesMut::zeroed(ints_to_write * 4);
             let mut bytes_read = 0;
@@ -120,8 +122,9 @@ fn bench(c: &mut Criterion) {
         })
     });
     group.sample_size(10);
+    #[cfg(unix)]
     group.bench_function("write-libhdfs", |b| {
-        let fs = get_hdfs().unwrap();
+        let fs = hdfs::hdfs::get_hdfs().unwrap();
         b.iter(|| {
             let mut buf = buf.clone();
             let writer = fs.create_with_overwrite("/bench-write", true).unwrap();
@@ -154,8 +157,9 @@ fn bench(c: &mut Criterion) {
         })
     });
     group.sample_size(10);
+    #[cfg(unix)]
     group.bench_function("write-libhdfs", |b| {
-        let fs = get_hdfs().unwrap();
+        let fs = hdfs::hdfs::get_hdfs().unwrap();
         b.iter(|| {
             let mut buf = buf.clone();
             let writer = fs

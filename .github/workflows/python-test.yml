@@ -73,6 +73,7 @@ jobs:
         with:
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
+          manylinux: auto
 
       - name: Upload wheels
         if: github.ref == 'refs/heads/master'
