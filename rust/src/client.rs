@@ -161,6 +161,17 @@ impl Client {
         Self::with_config(&parsed_url, Configuration::new_with_config(config)?)
     }
 
+    pub fn default_with_config(config: HashMap<String, String>) -> Result<Self> {
+        let config = Configuration::new_with_config(config)?;
+        let url = config
+            .get(config::DEFAULT_FS)
+            .ok_or(HdfsError::InvalidArgument(format!(
+                "No {} setting found",
+                config::DEFAULT_FS
+            )))?;
+        Self::with_config(&Url::parse(&url)?, config)
+    }
+
     fn with_config(url: &Url, config: Configuration) -> Result<Self> {
         if !url.has_host() {
             return Err(HdfsError::InvalidArgument(
@@ -493,19 +504,7 @@ impl Default for Client {
     /// Creates a new HDFS Client based on the fs.defaultFS setting. Panics if the config files fail to load,
     /// no defaultFS is defined, or the defaultFS is invalid.
     fn default() -> Self {
-        let config = Configuration::new().expect("Failed to load configuration");
-        let url = config
-            .get(config::DEFAULT_FS)
-            .ok_or(HdfsError::InvalidArgument(format!(
-                "No {} setting found",
-                config::DEFAULT_FS
-            )))
-            .expect("No fs.defaultFS config defined");
-        Self::with_config(
-            &Url::parse(&url).expect("Failed to parse fs.defaultFS"),
-            config,
-        )
-        .expect("Failed to create default client")
+        Self::default_with_config(Default::default()).expect("Failed to create default client")
     }
 }
 
