@@ -41,7 +41,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: build and lint with clippy
-        run: cargo clippy --all-targets --features integration-test,benchmark -- -D warnings
+        run: cargo clippy --all-targets --features integration-test -- -D warnings
 
       - name: Check docs
         run: cargo doc
@@ -50,7 +50,7 @@ jobs:
         run: cargo check --tests
 
       - name: Check all features
-        run: cargo check --all-targets --features integration-test,benchmark
+        run: cargo check --all-targets --features integration-test
 
   test:
     strategy:
