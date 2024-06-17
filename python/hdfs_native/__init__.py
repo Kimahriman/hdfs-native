@@ -88,7 +88,7 @@ class FileWriter(io.RawIOBase):
 
 class Client:
 
-    def __init__(self, url: str, config: Optional[Dict[str, str]] = None):
+    def __init__(self, url: Optional[str], config: Optional[Dict[str, str]] = None):
         self.inner = RawClient(url, config)
 
     def get_file_info(self, path: str) -> "FileStatus":

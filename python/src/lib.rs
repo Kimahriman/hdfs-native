@@ -206,13 +206,20 @@ struct RawClient {
 impl RawClient {
     #[new]
     #[pyo3(signature = (url, config))]
-    pub fn new(url: &str, config: Option<HashMap<String, String>>) -> PyResult<Self> {
+    pub fn new(url: Option<&str>, config: Option<HashMap<String, String>>) -> PyResult<Self> {
         // Initialize logging, ignore errors if this is called multiple times
         let _ = env_logger::try_init();
 
+        let config = config.unwrap_or_default();
+
+        let inner = if let Some(url) = url {
+            Client::new_with_config(url, config).map_err(PythonHdfsError::from)?
+        } else {
+            Client::default_with_config(config).map_err(PythonHdfsError::from)?
+        };
+
         Ok(RawClient {
-            inner: Client::new_with_config(url, config.unwrap_or_default())
-                .map_err(PythonHdfsError::from)?,
+            inner,
             rt: Arc::new(
                 tokio::runtime::Runtime::new()
                     .map_err(|err| PyRuntimeError::new_err(err.to_string()))?,
