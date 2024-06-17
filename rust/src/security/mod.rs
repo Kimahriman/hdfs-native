@@ -1,5 +1,4 @@
 mod digest;
-#[cfg(feature = "kerberos")]
-mod gssapi;
+pub(crate) mod gssapi;
 pub mod sasl;
 pub mod user;

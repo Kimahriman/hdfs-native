@@ -27,7 +27,6 @@ use crate::proto::{
 use crate::security::digest::DigestSaslSession;
 use crate::{HdfsError, Result};
 
-#[cfg(feature = "kerberos")]
 use super::gssapi::GssapiSession;
 use super::user::{User, UserInfo};
 
@@ -192,7 +191,6 @@ impl SaslRpcClient {
                 (Some(AuthMethod::Simple), _) => {
                     return Ok((auth.clone(), None));
                 }
-                #[cfg(feature = "kerberos")]
                 (Some(AuthMethod::Kerberos), _) => {
                     let session = GssapiSession::new(auth.protocol(), auth.server_id())?;
                     return Ok((auth.clone(), Some(Box::new(session))));

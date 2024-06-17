@@ -40,23 +40,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install native libs
-        run: sudo apt-get install -y libkrb5-dev
-
       - name: build and lint with clippy
-        run: cargo clippy --all-targets --features kerberos,integration-test,benchmark -- -D warnings
+        run: cargo clippy --all-targets --features integration-test,benchmark -- -D warnings
 
       - name: Check docs
         run: cargo doc
 
       - name: Check no features
         run: cargo check --tests
-      
-      - name: Check kerberos
-        run: cargo check --tests --features kerberos
 
       - name: Check all features
-        run: cargo check --all-targets --features kerberos,integration-test,benchmark
+        run: cargo check --all-targets --features integration-test,benchmark
 
   test:
     strategy:
@@ -99,4 +93,4 @@ jobs:
           echo "$GITHUB_WORKSPACE/hadoop-3.4.0/bin" >> $GITHUB_PATH
 
       - name: Run tests
-        run: cargo test --features kerberos,integration-test
+        run: cargo test --features integration-test
