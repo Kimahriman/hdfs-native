@@ -6,7 +6,7 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-use users::get_current_username;
+use whoami::username;
 
 use crate::proto::common::CredentialsProto;
 use crate::proto::common::TokenProto;
@@ -334,13 +334,7 @@ impl User {
     }
 
     pub(crate) fn get_simpler_user() -> UserInfo {
-        let effective_user = env::var(HADOOP_USER_NAME).ok().unwrap_or_else(|| {
-            get_current_username()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-        });
+        let effective_user = env::var(HADOOP_USER_NAME).ok().unwrap_or_else(username);
         UserInfo {
             real_user: None,
             effective_user: Some(effective_user),
