@@ -22,12 +22,30 @@ Here is a list of currently supported and unsupported but possible future featur
     - RS schema only, no support for RS-Legacy or XOR
 
 ### Security Features
-- [x] Kerberos authentication (GSSAPI SASL support)
+- [x] Kerberos authentication (GSSAPI SASL support) (requires libgssapi_krb5, see below)
 - [x] Token authentication (DIGEST-MD5 SASL support)
 - [x] NameNode SASL connection
 - [x] DataNode SASL connection
 - [x] DataNode data transfer encryption
 - [ ] Encryption at rest (KMS support)
+
+### Kerberos Support
+Kerberos (SASL GSSAPI) mechanism is supported through a runtime dynamic link to `libgssapi_krb5`. This must be installed separately, but is likely already installed on your system. If not you can install it by:
+
+#### Debian-based systems
+```bash
+apt-get install libgssapi-krb5-2
+```
+
+#### RHEL-based systems
+```bash
+yum install krb5-libs
+```
+
+#### MacOS
+```bash
+brew install krb5
+```
 
 ## Supported HDFS Settings
 The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xml` in the directories `$HADOOP_CONF_DIR` or if that doesn't exist, `$HADOOP_HOME/etc/hadoop`. Currently the supported configs that are used are:
@@ -41,23 +59,9 @@ All other settings are generally assumed to be the defaults currently. For insta
 
 ## Building
 
-### Mac
 ```
-brew install krb5
-# You might need these env vars on newer Macs
-export BINDGEN_EXTRA_CLANG_ARGS="-I/opt/homebrew/include"
-export LIBRARY_PATH=/opt/homebrew/lib
-cargo build --features kerberos
+cargo build
 ```
-
-### Ubuntu
-```
-apt-get install clang libkrb5-dev
-cargo build --features kerberos
-```
-
-## Crate features
-- `kerberos` - enables kerberos GSSAPI authentication support. This uses the `libgssapi` crate and supports integrity as well as confidentiality
 
 ## Object store implementation
 An object_store implementation for HDFS is provided in the [hdfs-native-object-store](./crates/hdfs-native-object-store/) crate.
@@ -66,7 +70,7 @@ An object_store implementation for HDFS is provided in the [hdfs-native-object-s
 The tests are mostly integration tests that utilize a small Java application in `rust/mindifs/` that runs a custom `MiniDFSCluster`. To run the tests, you need to have Java, Maven, Hadoop binaries, and Kerberos tools available and on your path. Any Java version between 8 and 17 should work.
 
 ```bash
-cargo test -p hdfs-native --features kerberos,intergation-test
+cargo test -p hdfs-native --features intergation-test
 ```
 
 ### Python tests

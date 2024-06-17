@@ -98,10 +98,7 @@ mod test {
     async fn test_erasure_coded_read() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        #[allow(unused_mut)]
-        let mut dfs_features = HashSet::from([DfsFeatures::EC]);
-        #[cfg(feature = "kerberos")]
-        dfs_features.insert(DfsFeatures::Security);
+        let dfs_features = HashSet::from([DfsFeatures::EC]);
 
         let dfs = MiniDfs::with_features(&dfs_features);
         let client = Client::default();
@@ -173,10 +170,7 @@ mod test {
     async fn test_erasure_coded_write() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        #[allow(unused_mut)]
-        let mut dfs_features = HashSet::from([DfsFeatures::EC]);
-        #[cfg(feature = "kerberos")]
-        dfs_features.insert(DfsFeatures::Security);
+        let dfs_features = HashSet::from([DfsFeatures::EC]);
 
         let _dfs = MiniDfs::with_features(&dfs_features);
         let client = Client::default();

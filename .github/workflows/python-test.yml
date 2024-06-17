@@ -29,9 +29,6 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Install native libs
-        run: sudo apt-get install -y libkrb5-dev krb5-user
-
       - name: Download Hadoop
         run: |
           wget -q https://dlcdn.apache.org/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz
@@ -53,7 +50,7 @@ jobs:
           sccache: 'true'
           container: 'off'
           working-directory: ./python
-          args: --features kerberos --extras devel
+          args: --extras devel
       
       - name: Run lints
         run: |
@@ -74,12 +71,9 @@ jobs:
       - name: Build wheel
         uses: PyO3/maturin-action@v1
         with:
-          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml --features kerberos
+          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
-          manylinux: '2014'
-          docker-options: -e LD_LIBRARY_PATH=/opt/rh/llvm-toolset-7.0/root/usr/lib64 -e LLVM_CONFIG_PATH=/opt/rh/llvm-toolset-7.0/root/usr/bin/llvm-config
-          before-script-linux: |
-            yum install -y epel-release && yum install -y krb5-devel llvm-toolset-7.0-clang llvm-toolset-7.0-llvm-devel
+
       - name: Upload wheels
         if: github.ref == 'refs/heads/master'
         uses: actions/upload-artifact@v4
