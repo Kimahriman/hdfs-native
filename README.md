@@ -22,12 +22,30 @@ Here is a list of currently supported and unsupported but possible future featur
     - RS schema only, no support for RS-Legacy or XOR
 
 ### Security Features
-- [x] Kerberos authentication (GSSAPI SASL support)
+- [x] Kerberos authentication (GSSAPI SASL support) (requires libgssapi_krb5, see below)
 - [x] Token authentication (DIGEST-MD5 SASL support)
 - [x] NameNode SASL connection
 - [x] DataNode SASL connection
 - [x] DataNode data transfer encryption
 - [ ] Encryption at rest (KMS support)
+
+### Kerberos Support
+Kerberos (SASL GSSAPI) mechanism is supported through a runtime dynamic link to `libgssapi_krb5`. This must be installed separately, but is likely already installed on your system. If not you can install it by:
+
+#### Debian-based systems
+```bash
+apt-get install libgssapi-krb5-2
+```
+
+#### RHEL-based systems
+```bash
+yum install krb5-libs
+```
+
+#### MacOS
+```bash
+brew install krb5
+```
 
 ## Supported HDFS Settings
 The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xml` in the directories `$HADOOP_CONF_DIR` or if that doesn't exist, `$HADOOP_HOME/etc/hadoop`. Currently the supported configs that are used are:
