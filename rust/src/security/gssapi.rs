@@ -56,7 +56,16 @@ bitflags::bitflags! {
 }
 
 static LIBGSSAPI: Lazy<Option<bindings::GSSAPI>> = Lazy::new(|| {
-    match unsafe { bindings::GSSAPI::new(library_filename("gssapi_krb5")) } {
+    // Debian systems don't have a symlink for just libgssapi_krb5.so, only libgssapi_krb5.so.2
+    // RHEL based systems have this .2 link also, so just use that
+    #[cfg(target_os = "linux")]
+    let library_name = "libgssapi_krb5.so.2";
+
+    #[cfg(not(target_os = "linux"))]
+    let library_name = library_filename("gssapi_krb5").into_string().unwrap();
+
+    #[cfg(not(any))]
+    match unsafe { bindings::GSSAPI::new(library_name) } {
         Ok(gssapi) => Some(gssapi),
         Err(e) => {
             #[cfg(target_os = "macos")]
