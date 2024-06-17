@@ -1,7 +1,5 @@
 use std::io;
 
-#[cfg(feature = "kerberos")]
-use libgssapi::error::Error as GssapiError;
 use prost::DecodeError;
 use thiserror::Error;
 
@@ -45,9 +43,8 @@ pub enum HdfsError {
     FatalRPCError(String, String),
     #[error("SASL error")]
     SASLError(String),
-    #[cfg(feature = "kerberos")]
     #[error("GSSAPI error")]
-    GSSAPIError(#[from] GssapiError),
+    GSSAPIError(crate::security::gssapi::GssMajorCodes, u32, String),
     #[error("No valid SASL mechanism found")]
     NoSASLMechanism,
 }

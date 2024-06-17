@@ -13,6 +13,7 @@ license = "Apache-2.0"
 [dependencies]
 aes = "0.8"
 base64 = "0.21"
+bitflags = "2"
 bytes = { workspace = true }
 cbc = "0.1"
 chrono = "0.4"
@@ -20,14 +21,12 @@ cipher = "0.4"
 crc = "3.2"
 ctr = "0.9"
 des = "0.8"
-# Just used for benchmarks
-fs-hdfs3 = { version = "0.1.12", optional = true }
 futures = "0.3"
 g2p = "1"
 hex = "0.4"
 hmac = "0.12"
 libc = "0.2"
-libgssapi = { version = "0.7", default-features = false, optional = true }
+libloading = "0.8"
 log = { workspace = true }
 md-5 = "0.10"
 num-traits = "0.2"
@@ -41,9 +40,13 @@ socket2 = "0.5"
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "io-util", "macros", "sync", "time"] }
 url = "2"
-users = { version = "0.11", default-features = false }
 uuid = { version = "1", features = ["v4"] }
 which = { version = "4", optional = true }
+whoami = "1"
+
+[target.'cfg(unix)'.dependencies]
+# Just used for benchmarks
+fs-hdfs3 = { version = "0.1.12", optional = true }
 
 [build-dependencies]
 prost-build = { version = "0.12", optional = true }
@@ -57,8 +60,6 @@ tempfile = "3"
 which = "4"
 
 [features]
-kerberos = ["libgssapi"]
-
 generate-protobuf = ["prost-build", "protobuf-src"]
 integration-test = ["which"]
 benchmark = ["fs-hdfs3", "which"]

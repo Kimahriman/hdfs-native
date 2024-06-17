@@ -17,7 +17,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_security_kerberos() {
         test_with_features(&HashSet::from([DfsFeatures::Security]))
             .await
@@ -34,7 +33,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_integrity_kerberos() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,
@@ -58,7 +56,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_privacy_kerberos() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,
@@ -82,7 +79,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_aes() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,
@@ -95,7 +91,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_forced_data_transfer_encryption() {
         // DataTransferEncryption enabled but privacy isn't, still force encryption
         test_with_features(&HashSet::from([
@@ -108,7 +103,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_data_transfer_encryption() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,
@@ -121,7 +115,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_data_transfer_encryption_aes() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,
@@ -143,7 +136,6 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    #[cfg(feature = "kerberos")]
     async fn test_security_privacy_ha() {
         test_with_features(&HashSet::from([
             DfsFeatures::Security,
@@ -187,6 +179,11 @@ mod test {
         test_read_write(&client).await?;
         // We use writing to create files, so do this after
         test_recursive_listing(&client).await?;
+        test_set_times(&client).await?;
+        test_set_owner(&client).await?;
+        test_set_permission(&client).await?;
+        test_set_replication(&client).await?;
+        test_get_content_summary(&client).await?;
 
         Ok(())
     }
@@ -326,6 +323,121 @@ mod test {
         assert_eq!(statuses.len(), 4);
 
         client.delete("/dir", true).await?;
+
+        Ok(())
+    }
+
+    async fn test_set_times(client: &Client) -> Result<()> {
+        client
+            .create("/test", WriteOptions::default())
+            .await?
+            .close()
+            .await?;
+
+        let mtime = 1717641455;
+        let atime = 1717641456;
+
+        client.set_times("/test", mtime, atime).await?;
+
+        let file_info = client.get_file_info("/test").await?;
+
+        assert_eq!(file_info.modification_time, mtime);
+        assert_eq!(file_info.access_time, atime);
+
+        client.delete("/test", false).await?;
+
+        Ok(())
+    }
+
+    async fn test_set_owner(client: &Client) -> Result<()> {
+        client
+            .create("/test", WriteOptions::default())
+            .await?
+            .close()
+            .await?;
+
+        client
+            .set_owner("/test", Some("testuser"), Some("testgroup"))
+            .await?;
+        let file_info = client.get_file_info("/test").await?;
+
+        assert_eq!(file_info.owner, "testuser");
+        assert_eq!(file_info.group, "testgroup");
+
+        client.set_owner("/test", Some("testuser2"), None).await?;
+        let file_info = client.get_file_info("/test").await?;
+
+        assert_eq!(file_info.owner, "testuser2");
+        assert_eq!(file_info.group, "testgroup");
+
+        client.set_owner("/test", None, Some("testgroup2")).await?;
+        let file_info = client.get_file_info("/test").await?;
+
+        assert_eq!(file_info.owner, "testuser2");
+        assert_eq!(file_info.group, "testgroup2");
+
+        client.delete("/test", false).await?;
+
+        Ok(())
+    }
+
+    async fn test_set_permission(client: &Client) -> Result<()> {
+        client
+            .create("/test", WriteOptions::default())
+            .await?
+            .close()
+            .await?;
+
+        let file_info = client.get_file_info("/test").await?;
+        assert_eq!(file_info.permission, 0o644);
+
+        client.set_permission("/test", 0o600).await?;
+        let file_info = client.get_file_info("/test").await?;
+        assert_eq!(file_info.permission, 0o600);
+
+        client.delete("/test", false).await?;
+
+        Ok(())
+    }
+
+    async fn test_set_replication(client: &Client) -> Result<()> {
+        client
+            .create("/test", WriteOptions::default())
+            .await?
+            .close()
+            .await?;
+
+        client.set_replication("/test", 1).await?;
+        let file_info = client.get_file_info("/test").await?;
+        assert_eq!(file_info.replication, Some(1));
+
+        client.set_replication("/test", 2).await?;
+        let file_info = client.get_file_info("/test").await?;
+        assert_eq!(file_info.replication, Some(2));
+
+        client.delete("/test", false).await?;
+
+        Ok(())
+    }
+
+    async fn test_get_content_summary(client: &Client) -> Result<()> {
+        let mut file1 = client.create("/test", WriteOptions::default()).await?;
+
+        file1.write(vec![0, 1, 2, 3].into()).await?;
+        file1.close().await?;
+
+        let mut file2 = client.create("/test2", WriteOptions::default()).await?;
+
+        file2.write(vec![0, 1, 2, 3, 4, 5].into()).await?;
+        file2.close().await?;
+
+        client.mkdirs("/testdir", 0o755, true).await?;
+
+        let content_summary = client.get_content_summary("/").await?;
+        assert_eq!(content_summary.file_count, 3,);
+        assert_eq!(content_summary.directory_count, 2);
+        // Test file plus the two we made above
+        assert_eq!(content_summary.length, TEST_FILE_INTS as u64 * 4 + 4 + 6);
 
         Ok(())
     }

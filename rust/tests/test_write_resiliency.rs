@@ -15,9 +15,6 @@ mod test {
     async fn test_write_resiliency() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        #[cfg(feature = "kerberos")]
-        let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::HA, DfsFeatures::Security]));
-        #[cfg(not(feature = "kerberos"))]
         let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::HA]));
         let client = Client::default();
 

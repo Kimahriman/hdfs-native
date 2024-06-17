@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use ::hdfs_native::file::{FileReader, FileWriter};
@@ -8,6 +9,7 @@ use ::hdfs_native::{
     Client,
 };
 use bytes::Bytes;
+use hdfs_native::client::ContentSummary;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use tokio::runtime::Runtime;
 
@@ -27,6 +29,8 @@ struct PyFileStatus {
     group: String,
     modification_time: u64,
     access_time: u64,
+    replication: Option<u32>,
+    blocksize: Option<u64>,
 }
 
 impl From<FileStatus> for PyFileStatus {
@@ -40,6 +44,8 @@ impl From<FileStatus> for PyFileStatus {
             group: value.group,
             modification_time: value.modification_time,
             access_time: value.access_time,
+            replication: value.replication,
+            blocksize: value.blocksize,
         }
     }
 }
@@ -67,6 +73,29 @@ impl PyFileStatusIter {
     }
 }
 
+#[pyclass(get_all, frozen, name = "ContentSummary")]
+struct PyContentSummary {
+    length: u64,
+    file_count: u64,
+    directory_count: u64,
+    quota: u64,
+    space_consumed: u64,
+    space_quota: u64,
+}
+
+impl From<ContentSummary> for PyContentSummary {
+    fn from(value: ContentSummary) -> Self {
+        Self {
+            length: value.length,
+            file_count: value.file_count,
+            directory_count: value.directory_count,
+            quota: value.quota,
+            space_consumed: value.space_consumed,
+            space_quota: value.space_quota,
+        }
+    }
+}
+
 #[pyclass]
 struct RawFileReader {
     inner: FileReader,
@@ -77,6 +106,14 @@ struct RawFileReader {
 impl RawFileReader {
     pub fn file_length(&self) -> usize {
         self.inner.file_length()
+    }
+
+    pub fn seek(&mut self, pos: usize) {
+        self.inner.seek(pos);
+    }
+
+    pub fn tell(&self) -> usize {
+        self.inner.tell()
     }
 
     pub fn read(&mut self, len: i64) -> PyHdfsResult<Cow<[u8]>> {
@@ -168,13 +205,14 @@ struct RawClient {
 #[pymethods]
 impl RawClient {
     #[new]
-    #[pyo3(signature = (url))]
-    pub fn new(url: &str) -> PyResult<Self> {
+    #[pyo3(signature = (url, config))]
+    pub fn new(url: &str, config: Option<HashMap<String, String>>) -> PyResult<Self> {
         // Initialize logging, ignore errors if this is called multiple times
         let _ = env_logger::try_init();
 
         Ok(RawClient {
-            inner: Client::new(url).map_err(PythonHdfsError::from)?,
+            inner: Client::new_with_config(url, config.unwrap_or_default())
+                .map_err(PythonHdfsError::from)?,
             rt: Arc::new(
                 tokio::runtime::Runtime::new()
                     .map_err(|err| PyRuntimeError::new_err(err.to_string()))?,
@@ -238,6 +276,38 @@ impl RawClient {
 
     pub fn delete(&self, path: &str, recursive: bool) -> PyHdfsResult<bool> {
         Ok(self.rt.block_on(self.inner.delete(path, recursive))?)
+    }
+
+    pub fn set_times(&self, path: &str, mtime: u64, atime: u64) -> PyHdfsResult<()> {
+        Ok(self.rt.block_on(self.inner.set_times(path, mtime, atime))?)
+    }
+
+    pub fn set_owner(
+        &self,
+        path: &str,
+        owner: Option<&str>,
+        group: Option<&str>,
+    ) -> PyHdfsResult<()> {
+        Ok(self.rt.block_on(self.inner.set_owner(path, owner, group))?)
+    }
+
+    pub fn set_permission(&self, path: &str, permission: u32) -> PyHdfsResult<()> {
+        Ok(self
+            .rt
+            .block_on(self.inner.set_permission(path, permission))?)
+    }
+
+    pub fn set_replication(&self, path: &str, replication: u32) -> PyHdfsResult<bool> {
+        Ok(self
+            .rt
+            .block_on(self.inner.set_replication(path, replication))?)
+    }
+
+    pub fn get_content_summary(&self, path: &str) -> PyHdfsResult<PyContentSummary> {
+        Ok(self
+            .rt
+            .block_on(self.inner.get_content_summary(path))?
+            .into())
     }
 }
 

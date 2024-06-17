@@ -14,7 +14,7 @@ use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
 
-use crate::proto::hdfs::HdfsFileStatusProto;
+use crate::proto::hdfs::{ContentSummaryProto, HdfsFileStatusProto};
 
 #[derive(Clone)]
 pub struct WriteOptions {
@@ -22,8 +22,8 @@ pub struct WriteOptions {
     pub block_size: Option<u64>,
     /// Replication factor. Default is retrieved from the server.
     pub replication: Option<u32>,
-    /// Unix file permission, defaults to 0o755. This is the raw octal
-    /// value represented in base 10.
+    /// Unix file permission, defaults to 0o644, which is "rw-r--r--" as a Unix permission.
+    /// This is the raw octal value represented in base 10.
     pub permission: u32,
     /// Whether to overwrite the file, defaults to false. If true and the
     /// file does not exist, it will result in an error.
@@ -38,7 +38,7 @@ impl Default for WriteOptions {
         Self {
             block_size: None,
             replication: None,
-            permission: 0o755,
+            permission: 0o644,
             overwrite: false,
             create_parent: true,
         }
@@ -158,7 +158,7 @@ impl Client {
 
     pub fn new_with_config(url: &str, config: HashMap<String, String>) -> Result<Self> {
         let parsed_url = Url::parse(url)?;
-        Self::with_config(&parsed_url, Configuration::from(config))
+        Self::with_config(&parsed_url, Configuration::new_with_config(config)?)
     }
 
     fn with_config(url: &Url, config: Configuration) -> Result<Self> {
@@ -422,6 +422,71 @@ impl Client {
             .await
             .map(|r| r.result)
     }
+
+    /// Sets the modified and access times for a file. Times should be in milliseconds from the epoch.
+    pub async fn set_times(&self, path: &str, mtime: u64, atime: u64) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .set_times(&resolved_path, mtime, atime)
+            .await?;
+        Ok(())
+    }
+
+    /// Optionally sets the owner and group for a file.
+    pub async fn set_owner(
+        &self,
+        path: &str,
+        owner: Option<&str>,
+        group: Option<&str>,
+    ) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .set_owner(&resolved_path, owner, group)
+            .await?;
+        Ok(())
+    }
+
+    /// Sets permissions for a file. Permission should be an octal number reprenting the Unix style
+    /// permission.
+    ///
+    /// For example, to set permissions to rwxr-xr-x:
+    /// ```rust
+    /// # async fn func() {
+    /// # let client = hdfs_native::Client::new("localhost:9000").unwrap();
+    /// client.set_permission("/path", 0o755).await.unwrap();
+    /// }
+    /// ```
+    pub async fn set_permission(&self, path: &str, permission: u32) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .set_permission(&resolved_path, permission)
+            .await?;
+        Ok(())
+    }
+
+    /// Sets the replication for a file.
+    pub async fn set_replication(&self, path: &str, replication: u32) -> Result<bool> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        let result = link
+            .protocol
+            .set_replication(&resolved_path, replication)
+            .await?
+            .result;
+
+        Ok(result)
+    }
+
+    /// Gets a content summary for a file or directory rooted at `path
+    pub async fn get_content_summary(&self, path: &str) -> Result<ContentSummary> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        let result = link
+            .protocol
+            .get_content_summary(&resolved_path)
+            .await?
+            .summary;
+
+        Ok(result.into())
+    }
 }
 
 impl Default for Client {
@@ -580,6 +645,8 @@ pub struct FileStatus {
     pub group: String,
     pub modification_time: u64,
     pub access_time: u64,
+    pub replication: Option<u32>,
+    pub blocksize: Option<u64>,
 }
 
 impl FileStatus {
@@ -603,6 +670,31 @@ impl FileStatus {
             group: value.group,
             modification_time: value.modification_time,
             access_time: value.access_time,
+            replication: value.block_replication,
+            blocksize: value.blocksize,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ContentSummary {
+    pub length: u64,
+    pub file_count: u64,
+    pub directory_count: u64,
+    pub quota: u64,
+    pub space_consumed: u64,
+    pub space_quota: u64,
+}
+
+impl From<ContentSummaryProto> for ContentSummary {
+    fn from(value: ContentSummaryProto) -> Self {
+        ContentSummary {
+            length: value.length,
+            file_count: value.file_count,
+            directory_count: value.directory_count,
+            quota: value.quota,
+            space_consumed: value.space_consumed,
+            space_quota: value.space_quota,
         }
     }
 }

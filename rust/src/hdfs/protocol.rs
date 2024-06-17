@@ -388,6 +388,120 @@ impl NamenodeProtocol {
         debug!("renewLease response: {:?}", &decoded);
         Ok(decoded)
     }
+
+    pub(crate) async fn set_times(
+        &self,
+        src: &str,
+        mtime: u64,
+        atime: u64,
+    ) -> Result<hdfs::SetTimesResponseProto> {
+        let message = hdfs::SetTimesRequestProto {
+            src: src.to_string(),
+            mtime,
+            atime,
+        };
+        debug!("setTimes request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call("setTimes", message.encode_length_delimited_to_vec())
+            .await?;
+
+        let decoded = hdfs::SetTimesResponseProto::decode_length_delimited(response)?;
+        debug!("setTimes response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
+    pub(crate) async fn set_owner(
+        &self,
+        src: &str,
+        owner: Option<&str>,
+        group: Option<&str>,
+    ) -> Result<hdfs::SetOwnerResponseProto> {
+        let message = hdfs::SetOwnerRequestProto {
+            src: src.to_string(),
+            username: owner.map(str::to_string),
+            groupname: group.map(str::to_string),
+        };
+
+        debug!("setOwner request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call("setOwner", message.encode_length_delimited_to_vec())
+            .await?;
+
+        let decoded = hdfs::SetOwnerResponseProto::decode_length_delimited(response)?;
+        debug!("setOwner response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
+    pub(crate) async fn set_permission(
+        &self,
+        src: &str,
+        permission: u32,
+    ) -> Result<hdfs::SetPermissionResponseProto> {
+        let message = hdfs::SetPermissionRequestProto {
+            src: src.to_string(),
+            permission: hdfs::FsPermissionProto { perm: permission },
+        };
+
+        debug!("setPermission request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call("setPermission", message.encode_length_delimited_to_vec())
+            .await?;
+
+        let decoded = hdfs::SetPermissionResponseProto::decode_length_delimited(response)?;
+        debug!("setPermission response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
+    pub(crate) async fn set_replication(
+        &self,
+        src: &str,
+        replication: u32,
+    ) -> Result<hdfs::SetReplicationResponseProto> {
+        let message = hdfs::SetReplicationRequestProto {
+            src: src.to_string(),
+            replication,
+        };
+
+        debug!("setReplication request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call("setReplication", message.encode_length_delimited_to_vec())
+            .await?;
+
+        let decoded = hdfs::SetReplicationResponseProto::decode_length_delimited(response)?;
+        debug!("setReplication response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
+    pub(crate) async fn get_content_summary(
+        &self,
+        path: &str,
+    ) -> Result<hdfs::GetContentSummaryResponseProto> {
+        let message = hdfs::GetContentSummaryRequestProto {
+            path: path.to_string(),
+        };
+
+        debug!("getContentSummary request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call(
+                "getContentSummary",
+                message.encode_length_delimited_to_vec(),
+            )
+            .await?;
+
+        let decoded = hdfs::GetContentSummaryResponseProto::decode_length_delimited(response)?;
+        debug!("getContentSummary response: {:?}", &decoded);
+        Ok(decoded)
+    }
 }
 
 impl Drop for NamenodeProtocol {

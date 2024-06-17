@@ -6,7 +6,7 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-use users::get_current_username;
+use whoami::username;
 
 use crate::proto::common::CredentialsProto;
 use crate::proto::common::TokenProto;
@@ -16,7 +16,6 @@ use crate::proto::hdfs::StorageTypeProto;
 use crate::Result;
 
 const HADOOP_USER_NAME: &str = "HADOOP_USER_NAME";
-#[cfg(feature = "kerberos")]
 const HADOOP_PROXY_USER: &str = "HADOOP_PROXY_USER";
 const HADOOP_TOKEN_FILE_LOCATION: &str = "HADOOP_TOKEN_FILE_LOCATION";
 const TOKEN_STORAGE_MAGIC: &[u8] = "HDTS".as_bytes();
@@ -125,6 +124,7 @@ impl BlockTokenIdentifier {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct Token {
     pub alias: String,
     pub identifier: Vec<u8>,
@@ -323,7 +323,6 @@ impl User {
             .find(|t| t.kind == kind && t.service == service)
     }
 
-    #[cfg(feature = "kerberos")]
     pub(crate) fn get_user_info_from_principal(principal: &str) -> UserInfo {
         let username = User::get_user_from_principal(principal);
         let proxy_user = env::var(HADOOP_PROXY_USER).ok();
@@ -334,20 +333,13 @@ impl User {
     }
 
     pub(crate) fn get_simpler_user() -> UserInfo {
-        let effective_user = env::var(HADOOP_USER_NAME).ok().unwrap_or_else(|| {
-            get_current_username()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-        });
+        let effective_user = env::var(HADOOP_USER_NAME).ok().unwrap_or_else(username);
         UserInfo {
             real_user: None,
             effective_user: Some(effective_user),
         }
     }
 
-    #[cfg(feature = "kerberos")]
     pub(crate) fn get_user_from_principal(principal: &str) -> String {
         // If there's a /, take the part before it.
         if let Some(index) = principal.find('/') {
