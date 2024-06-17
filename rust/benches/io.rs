@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+#[allow(unused_imports)]
 use bytes::{Buf, BufMut, BytesMut};
 use criterion::*;
 use hdfs_native::{
