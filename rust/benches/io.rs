@@ -1,4 +1,3 @@
-#![cfg(unix)]
 use std::collections::HashSet;
 
 use bytes::{Buf, BufMut, BytesMut};
