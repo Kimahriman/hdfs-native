@@ -103,7 +103,11 @@ class Client:
         """Opens a file for reading at `path`"""
         return FileReader(self.inner.read(path))
 
-    def create(self, path: str, write_options: Optional[WriteOptions] = None) -> FileWriter:
+    def create(
+        self,
+        path: str,
+        write_options: Optional[WriteOptions] = None,
+    ) -> FileWriter:
         """Creates a new file and opens it for writing at `path`"""
         if not write_options:
             write_options = WriteOptions()
@@ -114,7 +118,12 @@ class Client:
         """Opens an existing file to append to at `path`"""
         return FileWriter(self.inner.append(path))
 
-    def mkdirs(self, path: str, permission: int = 0o0755, create_parent: bool = False) -> None:
+    def mkdirs(
+        self,
+        path: str,
+        permission: int = 0o0755,
+        create_parent: bool = False,
+    ) -> None:
         """
         Creates a directory at `path` with unix permissions `permission`. If `create_parent` is true,
         any parent directories that don't exist will also be created. Otherwise this will fail if
