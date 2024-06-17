@@ -21,8 +21,6 @@ cipher = "0.4"
 crc = "3.2"
 ctr = "0.9"
 des = "0.8"
-# Just used for benchmarks
-fs-hdfs3 = { version = "0.1.12", optional = true }
 futures = "0.3"
 g2p = "1"
 hex = "0.4"
@@ -45,6 +43,10 @@ url = "2"
 uuid = { version = "1", features = ["v4"] }
 which = { version = "4", optional = true }
 whoami = "1"
+
+[target.'cfg(unix)'.dependencies]
+# Just used for benchmarks
+fs-hdfs3 = { version = "0.1.12", optional = true }
 
 [build-dependencies]
 prost-build = { version = "0.12", optional = true }
