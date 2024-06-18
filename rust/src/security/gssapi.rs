@@ -1,5 +1,4 @@
 use core::fmt;
-use libloading::library_filename;
 use log::warn;
 use once_cell::sync::Lazy;
 use std::marker::PhantomData;
@@ -55,23 +54,30 @@ bitflags::bitflags! {
     }
 }
 
-static LIBGSSAPI: Lazy<Option<bindings::GSSAPI>> =
-    Lazy::new(
-        || match unsafe { bindings::GSSAPI::new(library_filename("gssapi_krb5")) } {
-            Ok(gssapi) => Some(gssapi),
-            Err(e) => {
-                #[cfg(target_os = "macos")]
-                let message = "Try installing via \"brew install krb5\"";
-                #[cfg(target_os = "linux")]
-                let message = "On Debian based systems, try \"apt-get install libgssapi-krb5-2\"\n
-                           On RHEL based systems, try \"yum install krb5-libs\"";
-                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-                let message = "Loading Kerberos libraries are not supported on this system";
-                log::warn!("Failed to libgssapi_krb5.\n{}.\n{:?}", message, e);
-                None
-            }
-        },
-    );
+static LIBGSSAPI: Lazy<Option<bindings::GSSAPI>> = Lazy::new(|| {
+    // Debian systems don't have a symlink for just libgssapi_krb5.so, only libgssapi_krb5.so.2
+    // RHEL based systems have this .2 link also, so just use that
+    #[cfg(target_os = "linux")]
+    let library_name = "libgssapi_krb5.so.2";
+
+    #[cfg(not(target_os = "linux"))]
+    let library_name = libloading::library_filename("gssapi_krb5");
+
+    #[cfg(not(any))]
+    match unsafe { bindings::GSSAPI::new(library_name) } {
+        Ok(gssapi) => Some(gssapi),
+        Err(e) => {
+            #[cfg(target_os = "macos")]
+            let message = "Try installing via \"brew install krb5\"";
+            #[cfg(target_os = "linux")]
+                let message = "On Debian based systems, try \"apt-get install libgssapi-krb5-2\". On RHEL based systems, try \"yum install krb5-libs\"";
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            let message = "Loading Kerberos libraries are not supported on this system";
+            log::warn!("Failed to libgssapi_krb5.\n{}.\n{:?}", message, e);
+            None
+        }
+    }
+});
 
 fn libgssapi() -> crate::Result<&'static bindings::GSSAPI> {
     LIBGSSAPI.as_ref().ok_or(HdfsError::OperationFailed(
