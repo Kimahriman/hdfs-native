@@ -1,5 +1,4 @@
 use core::fmt;
-use libloading::library_filename;
 use log::warn;
 use once_cell::sync::Lazy;
 use std::marker::PhantomData;
@@ -62,7 +61,7 @@ static LIBGSSAPI: Lazy<Option<bindings::GSSAPI>> = Lazy::new(|| {
     let library_name = "libgssapi_krb5.so.2";
 
     #[cfg(not(target_os = "linux"))]
-    let library_name = library_filename("gssapi_krb5");
+    let library_name = libloading::library_filename("gssapi_krb5");
 
     #[cfg(not(any))]
     match unsafe { bindings::GSSAPI::new(library_name) } {
