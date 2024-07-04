@@ -30,6 +30,15 @@ class WriteOptions:
     overwrite: bool
     create_parent: bool
 
+    def __init__(
+        self,
+        block_size: Optional[int] = None,
+        replication: Optional[int] = None,
+        permission: Optional[int] = None,
+        overwrite: Optional[bool] = None,
+        create_parent: Optional[bool] = None,
+    ): ...
+
 class RawFileReader:
     def file_length(self) -> int:
         """Returns the size of the file"""

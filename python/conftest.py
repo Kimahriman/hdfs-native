@@ -3,6 +3,7 @@ import urllib
 import urllib.parse
 
 import fsspec
+from hdfs_native import Client
 import pytest
 
 from hdfs_native.fsspec import HdfsFileSystem
@@ -37,6 +38,11 @@ def minidfs():
         child.communicate(input="\n", timeout=30)
     except:
         child.kill()
+
+
+@pytest.fixture(scope="module")
+def client(minidfs: str) -> Client:
+    return Client(minidfs)
 
 
 @pytest.fixture(scope="module")
