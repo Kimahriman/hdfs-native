@@ -2,7 +2,12 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io;
+use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
+
+use log::debug;
+
+use crate::Result;
 
 const HADOOP_CONF_DIR: &str = "HADOOP_CONF_DIR";
 const HADOOP_HOME: &str = "HADOOP_HOME";
@@ -12,6 +17,7 @@ pub(crate) const DEFAULT_FS: &str = "fs.defaultFS";
 // Name Service settings
 const HA_NAMENODES_PREFIX: &str = "dfs.ha.namenodes";
 const HA_NAMENODE_RPC_ADDRESS_PREFIX: &str = "dfs.namenode.rpc-address";
+const HA_NAMENODE_RESOLVE_NEEDED: &str = "dfs.client.failover.resolve-needed";
 
 // Viewfs settings
 const VIEWFS_MOUNTTABLE_PREFIX: &str = "fs.viewfs.mounttable";
@@ -52,8 +58,9 @@ impl Configuration {
         self.map.get(key).cloned()
     }
 
-    pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Vec<String> {
-        self.map
+    pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Result<Vec<String>> {
+        let urls: Vec<String> = self
+            .map
             .get(&format!("{}.{}", HA_NAMENODES_PREFIX, nameservice))
             .into_iter()
             .flat_map(|namenodes| {
@@ -66,7 +73,31 @@ impl Configuration {
                         .map(|s| s.to_string())
                 })
             })
-            .collect()
+            .collect();
+
+        if self
+            .map
+            .get(&format!("{}.{}", HA_NAMENODE_RESOLVE_NEEDED, nameservice))
+            .is_some_and(|value| value.to_lowercase() == "true")
+        {
+            let mut resolved_urls: Vec<String> = Vec::new();
+            for url in urls {
+                for socket_addr in url.to_socket_addrs()? {
+                    if socket_addr.is_ipv4() {
+                        resolved_urls.push(socket_addr.to_string())
+                    }
+                }
+            }
+            debug!(
+                "Namenodes for {} resolved to {:?}",
+                nameservice, resolved_urls
+            );
+
+            Ok(resolved_urls)
+        } else {
+            debug!("Namenodes for {} without resolving {:?}", nameservice, urls);
+            Ok(urls)
+        }
     }
 
     pub(crate) fn get_mount_table(&self, cluster: &str) -> Vec<(Option<String>, String)> {
@@ -129,7 +160,10 @@ impl Configuration {
 
 #[cfg(test)]
 mod test {
-    use super::{Configuration, VIEWFS_MOUNTTABLE_PREFIX};
+    use super::{
+        Configuration, HA_NAMENODES_PREFIX, HA_NAMENODE_RESOLVE_NEEDED,
+        HA_NAMENODE_RPC_ADDRESS_PREFIX, VIEWFS_MOUNTTABLE_PREFIX,
+    };
 
     #[test]
     fn test_mount_table_config() {
@@ -191,5 +225,34 @@ mod test {
                 )
             ]
         );
+    }
+
+    #[test]
+    fn test_namenode_resolving() {
+        let config = Configuration {
+            map: vec![
+                (
+                    format!("{}.{}", HA_NAMENODES_PREFIX, "test"),
+                    "namenode".to_string(),
+                ),
+                (
+                    format!(
+                        "{}.{}.{}",
+                        HA_NAMENODE_RPC_ADDRESS_PREFIX, "test", "namenode"
+                    ),
+                    "localhost:9000".to_string(),
+                ),
+                (
+                    format!("{}.{}", HA_NAMENODE_RESOLVE_NEEDED, "test"),
+                    "true".to_string(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let urls = config.get_urls_for_nameservice("test").unwrap();
+        assert_eq!(urls.len(), 1, "{:?}", urls);
+        assert_eq!(urls[0], "127.0.0.1:9000");
     }
 }

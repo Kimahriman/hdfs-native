@@ -75,7 +75,7 @@ pub(crate) struct NameServiceProxy {
 impl NameServiceProxy {
     /// Creates a new proxy for a name service. If the URL contains a port,
     /// it is assumed to be for a single NameNode.
-    pub(crate) fn new(nameservice: &Url, config: &Configuration) -> Self {
+    pub(crate) fn new(nameservice: &Url, config: &Configuration) -> Result<Self> {
         let alignment_context = Arc::new(Mutex::new(AlignmentContext::default()));
 
         let proxy_connections = if let Some(port) = nameservice.port() {
@@ -88,7 +88,7 @@ impl NameServiceProxy {
         } else if let Some(host) = nameservice.host_str() {
             // TODO: Add check for no configured namenodes
             config
-                .get_urls_for_nameservice(host)
+                .get_urls_for_nameservice(host)?
                 .into_iter()
                 .map(|url| {
                     Arc::new(tokio::sync::Mutex::new(ProxyConnection::new(
@@ -102,11 +102,11 @@ impl NameServiceProxy {
             todo!()
         };
 
-        NameServiceProxy {
+        Ok(NameServiceProxy {
             proxy_connections,
             current_index: AtomicUsize::new(0),
             msycned: AtomicBool::new(false),
-        }
+        })
     }
 
     async fn msync_if_needed(&self) -> Result<()> {

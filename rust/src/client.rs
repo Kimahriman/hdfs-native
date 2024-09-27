@@ -181,7 +181,7 @@ impl Client {
 
         let mount_table = match url.scheme() {
             "hdfs" => {
-                let proxy = NameServiceProxy::new(url, &config);
+                let proxy = NameServiceProxy::new(url, &config)?;
                 let protocol = Arc::new(NamenodeProtocol::new(proxy));
 
                 MountTable {
@@ -218,7 +218,7 @@ impl Client {
                     "Only hdfs mounts are supported for viewfs".to_string(),
                 ));
             }
-            let proxy = NameServiceProxy::new(&url, config);
+            let proxy = NameServiceProxy::new(&url, config)?;
             let protocol = Arc::new(NamenodeProtocol::new(proxy));
 
             if let Some(prefix) = viewfs_path {
@@ -716,7 +716,8 @@ mod test {
 
     fn create_protocol(url: &str) -> Arc<NamenodeProtocol> {
         let proxy =
-            NameServiceProxy::new(&Url::parse(url).unwrap(), &Configuration::new().unwrap());
+            NameServiceProxy::new(&Url::parse(url).unwrap(), &Configuration::new().unwrap())
+                .unwrap();
         Arc::new(NamenodeProtocol::new(proxy))
     }
 

@@ -52,6 +52,7 @@ The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xm
 - `fs.defaultFS` - Client::default() support
 - `dfs.ha.namenodes` - name service support
 - `dfs.namenode.rpc-address.*` - name service support
+- `dfs.client.failover.resolve-needed.*` - DNS based NameNode discovery
 - `fs.viewfs.mounttable.*.link.*` - ViewFS links
 - `fs.viewfs.mounttable.*.linkFallback` - ViewFS link fallback
 
