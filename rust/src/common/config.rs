@@ -5,6 +5,8 @@ use std::io;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 
+use log::debug;
+
 use crate::Result;
 
 const HADOOP_CONF_DIR: &str = "HADOOP_CONF_DIR";
@@ -86,9 +88,14 @@ impl Configuration {
                     }
                 }
             }
+            debug!(
+                "Namenodes for {} resolved to {:?}",
+                nameservice, resolved_urls
+            );
 
             Ok(resolved_urls)
         } else {
+            debug!("Namenodes for {} without resolving {:?}", nameservice, urls);
             Ok(urls)
         }
     }
