@@ -63,7 +63,6 @@ static LIBGSSAPI: Lazy<Option<bindings::GSSAPI>> = Lazy::new(|| {
     #[cfg(not(target_os = "linux"))]
     let library_name = libloading::library_filename("gssapi_krb5");
 
-    #[cfg(not(any))]
     match unsafe { bindings::GSSAPI::new(library_name) } {
         Ok(gssapi) => Some(gssapi),
         Err(e) => {
