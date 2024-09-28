@@ -163,25 +163,35 @@ impl Client {
 
     pub fn default_with_config(config: HashMap<String, String>) -> Result<Self> {
         let config = Configuration::new_with_config(config)?;
+        Self::with_config(&Self::default_fs(&config)?, config)
+    }
+
+    fn default_fs(config: &Configuration) -> Result<Url> {
         let url = config
             .get(config::DEFAULT_FS)
             .ok_or(HdfsError::InvalidArgument(format!(
                 "No {} setting found",
                 config::DEFAULT_FS
             )))?;
-        Self::with_config(&Url::parse(&url)?, config)
+        Ok(Url::parse(&url)?)
     }
 
     fn with_config(url: &Url, config: Configuration) -> Result<Self> {
-        if !url.has_host() {
-            return Err(HdfsError::InvalidArgument(
-                "URL must contain a host".to_string(),
-            ));
-        }
+        let resolved_url = if !url.has_host() {
+            let default_url = Self::default_fs(&config)?;
+            if url.scheme() != default_url.scheme() || !default_url.has_host() {
+                return Err(HdfsError::InvalidArgument(
+                    "URL must contain a host".to_string(),
+                ));
+            }
+            default_url
+        } else {
+            url.clone()
+        };
 
         let mount_table = match url.scheme() {
             "hdfs" => {
-                let proxy = NameServiceProxy::new(url, &config)?;
+                let proxy = NameServiceProxy::new(&resolved_url, &config)?;
                 let protocol = Arc::new(NamenodeProtocol::new(proxy));
 
                 MountTable {
@@ -189,7 +199,7 @@ impl Client {
                     fallback: MountLink::new("/", "/", protocol),
                 }
             }
-            "viewfs" => Self::build_mount_table(url.host_str().unwrap(), &config)?,
+            "viewfs" => Self::build_mount_table(resolved_url.host_str().unwrap(), &config)?,
             _ => {
                 return Err(HdfsError::InvalidArgument(
                     "Only `hdfs` and `viewfs` schemes are supported".to_string(),
@@ -710,6 +720,7 @@ mod test {
     use crate::{
         common::config::Configuration,
         hdfs::{protocol::NamenodeProtocol, proxy::NameServiceProxy},
+        Client,
     };
 
     use super::{MountLink, MountTable};
@@ -719,6 +730,47 @@ mod test {
             NameServiceProxy::new(&Url::parse(url).unwrap(), &Configuration::new().unwrap())
                 .unwrap();
         Arc::new(NamenodeProtocol::new(proxy))
+    }
+
+    #[test]
+    fn test_default_fs() {
+        assert!(Client::default_with_config(
+            vec![("fs.defaultFS".to_string(), "hdfs://test".to_string())]
+                .into_iter()
+                .collect(),
+        )
+        .is_ok());
+
+        assert!(Client::default_with_config(
+            vec![("fs.defaultFS".to_string(), "hdfs://".to_string())]
+                .into_iter()
+                .collect(),
+        )
+        .is_err());
+
+        assert!(Client::new_with_config(
+            "hdfs://",
+            vec![("fs.defaultFS".to_string(), "hdfs://test".to_string())]
+                .into_iter()
+                .collect(),
+        )
+        .is_ok());
+
+        assert!(Client::new_with_config(
+            "hdfs://",
+            vec![("fs.defaultFS".to_string(), "hdfs://".to_string())]
+                .into_iter()
+                .collect(),
+        )
+        .is_err());
+
+        assert!(Client::new_with_config(
+            "hdfs://",
+            vec![("fs.defaultFS".to_string(), "viewfs://test".to_string())]
+                .into_iter()
+                .collect(),
+        )
+        .is_err());
     }
 
     #[test]
