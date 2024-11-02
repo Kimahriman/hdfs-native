@@ -20,11 +20,9 @@ dependencies = [
 
 [project.optional-dependencies]
 devel = [
-    "mypy~=1.8.0",
-    "ruff~=0.4.8",
-    "pytest~=7.4",
-    "black~=24.4",
-    "isort~=5.13"
+    "mypy~=1.13.0",
+    "ruff~=0.7.2",
+    "pytest~=8.3",
 ]
 
 [project.urls]
@@ -53,3 +51,6 @@ testpaths = [
     "tests",
     "hdfs_native",
 ]
+
+[tool.ruff.lint]
+extend-select = ["I"] 

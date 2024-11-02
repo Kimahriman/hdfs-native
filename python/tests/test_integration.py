@@ -3,9 +3,8 @@ import io
 from hdfs_native import Client, WriteOptions
 
 
-def test_integration(minidfs: str):
-    client = Client(minidfs)
-    client.create("/testfile", WriteOptions()).close()
+def test_integration(client: Client):
+    client.create("/testfile").close()
     file_info = client.get_file_info("/testfile")
 
     assert file_info.path == "/testfile"
@@ -25,7 +24,7 @@ def test_integration(minidfs: str):
     file_list = list(client.list_status("/", False))
     assert len(file_list) == 0
 
-    with client.create("/testfile", WriteOptions()) as file:
+    with client.create("/testfile") as file:
         data = io.BytesIO()
 
         for i in range(0, 32 * 1024 * 1024):
@@ -101,3 +100,18 @@ def test_integration(minidfs: str):
     assert content_summary.length == 33 * 1024 * 1024 * 4
 
     client.delete("/testfile", False)
+
+
+def test_write_options(client: Client):
+    with client.create("/testfile") as file:
+        file.write(b"abcd")
+
+    client.create(
+        "/testfile",
+        WriteOptions(overwrite=True, permission=0o700, block_size=1024 * 1024),
+    ).close()
+
+    file_info = client.get_file_info("/testfile")
+    assert file_info.length == 0
+    assert file_info.permission == 0o700
+    assert file_info.blocksize == 1024 * 1024

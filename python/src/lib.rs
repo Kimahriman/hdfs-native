@@ -50,6 +50,25 @@ impl From<FileStatus> for PyFileStatus {
     }
 }
 
+#[pymethods]
+impl PyFileStatus {
+    /// Return a dataclass-esque format for the repr
+    fn __repr__(&self) -> String {
+        format!("FileStatus(path='{}', length={}, isdir={}, permission={}, owner={}, group={}, modification_time={}, access_time={}, replication={}, blocksize={})",
+        self.path,
+        self.length,
+        self.isdir,
+        self.permission,
+        self.owner,
+        self.group,
+        self.modification_time,
+        self.access_time,
+        self.replication.map(|r| r.to_string()).unwrap_or("None".to_string()),
+        self.blocksize.map(|r| r.to_string()).unwrap_or("None".to_string())
+    )
+    }
+}
+
 #[pyclass(name = "FileStatusIter")]
 struct PyFileStatusIter {
     inner: ListStatusIterator,
@@ -93,6 +112,21 @@ impl From<ContentSummary> for PyContentSummary {
             space_consumed: value.space_consumed,
             space_quota: value.space_quota,
         }
+    }
+}
+
+#[pymethods]
+impl PyContentSummary {
+    /// Return a dataclass-esque format for the repr
+    fn __repr__(&self) -> String {
+        format!("ContentSummary(length={}, file_count={}, directory_count={}, quota={}, space_consumed={}, space_quota={})",
+            self.length,
+            self.file_count,
+            self.directory_count,
+            self.quota,
+            self.space_consumed,
+            self.space_quota,
+        )
     }
 }
 
@@ -173,9 +207,42 @@ impl From<WriteOptions> for PyWriteOptions {
 #[pymethods]
 impl PyWriteOptions {
     #[new]
-    #[pyo3(signature = ())]
-    pub fn new() -> Self {
-        Self::from(WriteOptions::default())
+    pub fn new(
+        block_size: Option<u64>,
+        replication: Option<u32>,
+        permission: Option<u32>,
+        overwrite: Option<bool>,
+        create_parent: Option<bool>,
+    ) -> Self {
+        let mut write_options = WriteOptions::default();
+        if let Some(block_size) = block_size {
+            write_options = write_options.block_size(block_size);
+        }
+        if let Some(replication) = replication {
+            write_options = write_options.replication(replication);
+        }
+        if let Some(permission) = permission {
+            write_options = write_options.permission(permission);
+        }
+        if let Some(overwrite) = overwrite {
+            write_options = write_options.overwrite(overwrite);
+        }
+        if let Some(create_parent) = create_parent {
+            write_options = write_options.create_parent(create_parent);
+        }
+
+        PyWriteOptions::from(write_options)
+    }
+
+    /// Return a dataclass-esque format for the repr
+    fn __repr__(&self) -> String {
+        format!("WriteOptions(block_size={}, replication={}, permission={}, overwrite={}, create_parent={})",
+            self.block_size.map(|x| x.to_string()).unwrap_or("None".to_string()),
+            self.replication.map(|x| x.to_string()).unwrap_or("None".to_string()),
+            self.permission,
+            self.overwrite,
+            self.create_parent
+        )
     }
 }
 
