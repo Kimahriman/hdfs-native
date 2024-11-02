@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use criterion::*;
+use futures::future::join_all;
 use hdfs_native::{minidfs::MiniDfs, Client, WriteOptions};
 
 fn bench(c: &mut Criterion) {
@@ -33,6 +34,23 @@ fn bench(c: &mut Criterion) {
     group.bench_function("getFileInfo-libhdfs", |b| {
         let fs = hdfs::hdfs::get_hdfs().unwrap();
         b.iter(|| fs.get_file_status("/bench").unwrap())
+    });
+
+    group.sampling_mode(SamplingMode::Flat);
+    group.bench_function("getFileInfo-parallel", |b| {
+        b.to_async(&rt).iter_batched(
+            || {
+                (0..100)
+                    .map(|_| client.get_file_info("/bench"))
+                    .collect::<Vec<_>>()
+            },
+            |futures| async {
+                for result in join_all(futures).await {
+                    result.unwrap();
+                }
+            },
+            BatchSize::SmallInput,
+        )
     });
 }
 
