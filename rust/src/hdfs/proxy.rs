@@ -155,16 +155,20 @@ impl NameServiceProxy {
             // If we're writing, try the current known active and then loop
             // through the rest if that fails
             let first = current_active;
-            let rest = (0..self.proxy_connections.len())
-                .filter(|i| *i != first)
-                .collect::<Vec<usize>>();
-            [vec![first], rest].concat()
+            let rest = (0..self.proxy_connections.len()).filter(|i| *i != first);
+            [first].into_iter().chain(rest).collect::<Vec<_>>()
         } else {
             // If we're reading, try all known observers, then the active, then
             // any remaining
-            let mut first = self.current_observers.lock().unwrap().clone();
+            let mut first = self
+                .current_observers
+                .lock()
+                .unwrap()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>();
             if !first.contains(&current_active) {
-                first.insert(current_active);
+                first.push(current_active);
             }
             let rest = (0..self.proxy_connections.len()).filter(|i| !first.contains(i));
             first.iter().copied().chain(rest).collect()
