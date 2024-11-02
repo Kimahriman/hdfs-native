@@ -260,7 +260,11 @@ impl RpcConnection {
         Ok(())
     }
 
-    pub(crate) async fn call(&self, method_name: &str, message: &[u8]) -> Result<Bytes> {
+    pub(crate) async fn call(
+        &self,
+        method_name: &str,
+        message: &[u8],
+    ) -> Result<oneshot::Receiver<Result<Bytes>>> {
         let call_id = self.get_next_call_id();
         let conn_header = self.get_connection_header(call_id, 0);
 
@@ -284,7 +288,7 @@ impl RpcConnection {
         self.write_messages(&[&conn_header_buf, &header_buf, message])
             .await?;
 
-        receiver.await.unwrap()
+        Ok(receiver)
     }
 }
 
