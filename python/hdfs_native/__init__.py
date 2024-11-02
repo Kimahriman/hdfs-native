@@ -1,15 +1,17 @@
 import io
 import os
-from typing import Dict, Iterator, Optional
+from typing import TYPE_CHECKING, Dict, Iterator, Optional
 
 # For some reason mypy doesn't think this exists
 from typing_extensions import Buffer  # type: ignore
 
-from ._internal import *
+from ._internal import RawClient, WriteOptions
+
+if TYPE_CHECKING:
+    from ._internal import ContentSummary, FileStatus, RawFileReader, RawFileWriter
 
 
 class FileReader(io.RawIOBase):
-
     def __init__(self, inner: "RawFileReader"):
         self.inner = inner
 
@@ -64,7 +66,6 @@ class FileReader(io.RawIOBase):
 
 
 class FileWriter(io.RawIOBase):
-
     def __init__(self, inner: "RawFileWriter"):
         self.inner = inner
 
@@ -87,7 +88,6 @@ class FileWriter(io.RawIOBase):
 
 
 class Client:
-
     def __init__(
         self,
         url: Optional[str] = None,

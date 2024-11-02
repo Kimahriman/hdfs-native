@@ -2,6 +2,7 @@ import urllib.parse
 
 import fsspec
 import pytest
+
 from hdfs_native.fsspec import HdfsFileSystem
 
 
@@ -9,22 +10,16 @@ def test_dirs(fs: HdfsFileSystem):
     fs.mkdir("/testdir")
     assert fs.info("/testdir")["type"] == "directory"
 
-    try:
+    with pytest.raises(FileExistsError):
         fs.makedirs("/testdir", exist_ok=False)
-        assert False, '"/testdir" already exists, should fail'
-    except:
-        pass
 
     fs.makedirs("/testdir", exist_ok=True)
 
     fs.mkdir("/testdir/nested/dir")
     assert fs.info("/testdir/nested/dir")["type"] == "directory"
 
-    try:
+    with pytest.raises(FileExistsError):
         fs.mkdir("/testdir/nested2/dir", create_parents=False)
-        assert False, "Should fail to make dir because parent doesn't exist"
-    except:
-        pass
 
     with pytest.raises(RuntimeError):
         fs.rm("/testdir", recursive=False)

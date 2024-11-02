@@ -4,6 +4,7 @@ import urllib.parse
 
 import fsspec
 import pytest
+
 from hdfs_native import Client
 from hdfs_native.fsspec import HdfsFileSystem
 
@@ -35,7 +36,7 @@ def minidfs():
 
     try:
         child.communicate(input="\n", timeout=30)
-    except:
+    except:  # noqa: E722
         child.kill()
 
 
