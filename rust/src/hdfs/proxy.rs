@@ -24,7 +24,7 @@ const OBSERVER_RETRY_EXCEPTION: &str = "org.apache.hadoop.ipc.ObserverRetryOnAct
 #[derive(Debug)]
 struct ProxyConnection {
     url: String,
-    inner: Option<RpcConnection>,
+    inner: Arc<tokio::sync::Mutex<Option<RpcConnection>>>,
     alignment_context: Arc<Mutex<AlignmentContext>>,
     nameservice: Option<String>,
 }
@@ -37,37 +37,42 @@ impl ProxyConnection {
     ) -> Self {
         ProxyConnection {
             url,
-            inner: None,
+            inner: Arc::new(tokio::sync::Mutex::new(None)),
             alignment_context,
             nameservice,
         }
     }
 
-    async fn get_connection(&mut self) -> Result<&RpcConnection> {
-        if self.inner.is_none() || !self.inner.as_ref().unwrap().is_alive() {
-            self.inner = Some(
-                RpcConnection::connect(
-                    &self.url,
-                    self.alignment_context.clone(),
-                    self.nameservice.as_deref(),
-                )
-                .await?,
-            );
-        }
-        Ok(self.inner.as_ref().unwrap())
-    }
+    async fn call(&self, method_name: &str, message: &[u8]) -> Result<Bytes> {
+        let receiver = {
+            let mut connection = self.inner.lock().await;
+            match &mut *connection {
+                Some(c) if c.is_alive() => (),
+                c => {
+                    *c = Some(
+                        RpcConnection::connect(
+                            &self.url,
+                            self.alignment_context.clone(),
+                            self.nameservice.as_deref(),
+                        )
+                        .await?,
+                    );
+                }
+            }
 
-    async fn call(&mut self, method_name: &str, message: &[u8]) -> Result<Bytes> {
-        self.get_connection()
-            .await?
-            .call(method_name, message)
-            .await
+            connection
+                .as_ref()
+                .unwrap()
+                .call(method_name, message)
+                .await?
+        };
+        receiver.await.unwrap()
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct NameServiceProxy {
-    proxy_connections: Vec<Arc<tokio::sync::Mutex<ProxyConnection>>>,
+    proxy_connections: Vec<ProxyConnection>,
     current_index: AtomicUsize,
     msycned: AtomicBool,
 }
@@ -80,22 +85,14 @@ impl NameServiceProxy {
 
         let proxy_connections = if let Some(port) = nameservice.port() {
             let url = format!("{}:{}", nameservice.host_str().unwrap(), port);
-            vec![Arc::new(tokio::sync::Mutex::new(ProxyConnection::new(
-                url,
-                alignment_context.clone(),
-                None,
-            )))]
+            vec![ProxyConnection::new(url, alignment_context.clone(), None)]
         } else if let Some(host) = nameservice.host_str() {
             // TODO: Add check for no configured namenodes
             config
                 .get_urls_for_nameservice(host)?
                 .into_iter()
                 .map(|url| {
-                    Arc::new(tokio::sync::Mutex::new(ProxyConnection::new(
-                        url,
-                        alignment_context.clone(),
-                        Some(host.to_string()),
-                    )))
+                    ProxyConnection::new(url, alignment_context.clone(), Some(host.to_string()))
                 })
                 .collect()
         } else {
@@ -142,8 +139,6 @@ impl NameServiceProxy {
         let mut attempts = 0;
         loop {
             let result = self.proxy_connections[proxy_index]
-                .lock()
-                .await
                 .call(method_name, &message)
                 .await;
 
