@@ -2,7 +2,6 @@ import urllib.parse
 
 import fsspec
 import pytest
-
 from hdfs_native.fsspec import HdfsFileSystem
 
 

@@ -3,9 +3,8 @@ import urllib
 import urllib.parse
 
 import fsspec
-from hdfs_native import Client
 import pytest
-
+from hdfs_native import Client
 from hdfs_native.fsspec import HdfsFileSystem
 
 
