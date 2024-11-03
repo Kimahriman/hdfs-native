@@ -114,7 +114,7 @@ impl NameServiceProxy {
     async fn msync_if_needed(&self, write: bool) -> Result<()> {
         if !self.msycned.fetch_or(true, Ordering::SeqCst) && !write {
             let msync_msg = hdfs::MsyncRequestProto::default();
-            self.call_inner("msync", msync_msg.encode_length_delimited_to_vec(), false)
+            self.call_inner("msync", msync_msg.encode_length_delimited_to_vec(), true)
                 .await
                 .map(|_| ())
                 .or_else(|err| match err {
@@ -196,17 +196,23 @@ impl NameServiceProxy {
                 }
                 Err(_) if attempts >= self.proxy_connections.len() - 1 => return result,
                 // Retriable error, do nothing and try the next connection
-                Err(HdfsError::RPCError(exception, _)) => match exception.as_ref() {
-                    OBSERVER_RETRY_EXCEPTION => {
-                        self.current_observers.lock().unwrap().insert(proxy_index);
+                Err(HdfsError::RPCError(exception, _))
+                | Err(HdfsError::FatalRPCError(exception, _))
+                    if Self::is_retriable(&exception) =>
+                {
+                    match exception.as_ref() {
+                        OBSERVER_RETRY_EXCEPTION => {
+                            self.current_observers.lock().unwrap().insert(proxy_index);
+                        }
+                        STANDBY_EXCEPTION => {
+                            self.current_observers.lock().unwrap().remove(&proxy_index);
+                        }
+                        _ => (),
                     }
-                    STANDBY_EXCEPTION => {
-                        self.current_observers.lock().unwrap().remove(&proxy_index);
-                    }
-                    _ => (),
-                },
+                }
                 Err(e) => {
                     // Some other error, we will retry but log the error
+                    self.current_observers.lock().unwrap().remove(&proxy_index);
                     warn!("{:?}", e);
                 }
             }

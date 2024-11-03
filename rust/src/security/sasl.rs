@@ -1,6 +1,6 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use cipher::{KeyIvInit, StreamCipher};
-use log::{debug, warn};
+use log::debug;
 use prost::Message;
 use std::io;
 use std::sync::{Arc, Mutex};
@@ -262,11 +262,6 @@ impl SaslReader {
                 ));
             }
             RpcStatusProto::Fatal => {
-                warn!(
-                    "RPC fatal error: {}: {}",
-                    rpc_response.exception_class_name(),
-                    rpc_response.error_msg()
-                );
                 return Err(HdfsError::FatalRPCError(
                     rpc_response.exception_class_name().to_string(),
                     rpc_response.error_msg().to_string(),
