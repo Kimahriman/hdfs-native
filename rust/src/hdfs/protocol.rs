@@ -56,7 +56,11 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call("getFileInfo", message.encode_length_delimited_to_vec())
+            .call(
+                "getFileInfo",
+                message.encode_length_delimited_to_vec(),
+                false,
+            )
             .await?;
 
         let decoded = hdfs::GetFileInfoResponseProto::decode_length_delimited(response)?;
@@ -80,7 +84,11 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call("getListing", message.encode_length_delimited_to_vec())
+            .call(
+                "getListing",
+                message.encode_length_delimited_to_vec(),
+                false,
+            )
             .await?;
 
         let decoded = hdfs::GetListingResponseProto::decode_length_delimited(response)?;
@@ -103,6 +111,7 @@ impl NamenodeProtocol {
             .call(
                 "getLocatedFileInfo",
                 message.encode_length_delimited_to_vec(),
+                false,
             )
             .await?;
 
@@ -119,6 +128,7 @@ impl NamenodeProtocol {
             .call(
                 "getServerDefaults",
                 message.encode_length_delimited_to_vec(),
+                false,
             )
             .await?;
 
@@ -148,6 +158,7 @@ impl NamenodeProtocol {
             .call(
                 "getDataEncryptionKey",
                 message.encode_length_delimited_to_vec(),
+                false,
             )
             .await?;
 
@@ -212,7 +223,7 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call("create", message.encode_length_delimited_to_vec())
+            .call("create", message.encode_length_delimited_to_vec(), true)
             .await?;
 
         let decoded = hdfs::CreateResponseProto::decode_length_delimited(response)?;
@@ -240,7 +251,7 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call("append", message.encode_length_delimited_to_vec())
+            .call("append", message.encode_length_delimited_to_vec(), true)
             .await?;
 
         let decoded = hdfs::AppendResponseProto::decode_length_delimited(response)?;
@@ -266,7 +277,7 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call("addBlock", message.encode_length_delimited_to_vec())
+            .call("addBlock", message.encode_length_delimited_to_vec(), true)
             .await?;
 
         let decoded = hdfs::AddBlockResponseProto::decode_length_delimited(response)?;
@@ -290,7 +301,7 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call("complete", message.encode_length_delimited_to_vec())
+            .call("complete", message.encode_length_delimited_to_vec(), true)
             .await?;
 
         let decoded = hdfs::CompleteResponseProto::decode_length_delimited(response)?;
@@ -316,7 +327,7 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call("mkdirs", message.encode_length_delimited_to_vec())
+            .call("mkdirs", message.encode_length_delimited_to_vec(), true)
             .await?;
 
         let decoded = hdfs::MkdirsResponseProto::decode_length_delimited(response)?;
@@ -340,7 +351,7 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call("rename2", message.encode_length_delimited_to_vec())
+            .call("rename2", message.encode_length_delimited_to_vec(), true)
             .await?;
 
         let decoded = hdfs::Rename2ResponseProto::decode_length_delimited(response)?;
@@ -361,7 +372,7 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call("delete", message.encode_length_delimited_to_vec())
+            .call("delete", message.encode_length_delimited_to_vec(), true)
             .await?;
 
         let decoded = hdfs::DeleteResponseProto::decode_length_delimited(response)?;
@@ -381,7 +392,7 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call("renewLease", message.encode_length_delimited_to_vec())
+            .call("renewLease", message.encode_length_delimited_to_vec(), true)
             .await?;
 
         let decoded = hdfs::RenewLeaseResponseProto::decode_length_delimited(response)?;
@@ -404,7 +415,7 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call("setTimes", message.encode_length_delimited_to_vec())
+            .call("setTimes", message.encode_length_delimited_to_vec(), true)
             .await?;
 
         let decoded = hdfs::SetTimesResponseProto::decode_length_delimited(response)?;
@@ -428,7 +439,7 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call("setOwner", message.encode_length_delimited_to_vec())
+            .call("setOwner", message.encode_length_delimited_to_vec(), true)
             .await?;
 
         let decoded = hdfs::SetOwnerResponseProto::decode_length_delimited(response)?;
@@ -450,7 +461,11 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call("setPermission", message.encode_length_delimited_to_vec())
+            .call(
+                "setPermission",
+                message.encode_length_delimited_to_vec(),
+                true,
+            )
             .await?;
 
         let decoded = hdfs::SetPermissionResponseProto::decode_length_delimited(response)?;
@@ -472,7 +487,11 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call("setReplication", message.encode_length_delimited_to_vec())
+            .call(
+                "setReplication",
+                message.encode_length_delimited_to_vec(),
+                true,
+            )
             .await?;
 
         let decoded = hdfs::SetReplicationResponseProto::decode_length_delimited(response)?;
@@ -495,6 +514,7 @@ impl NamenodeProtocol {
             .call(
                 "getContentSummary",
                 message.encode_length_delimited_to_vec(),
+                false,
             )
             .await?;
 

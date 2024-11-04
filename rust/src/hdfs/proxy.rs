@@ -1,6 +1,9 @@
-use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-    Arc, Mutex,
+use std::{
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use bytes::Bytes;
@@ -73,7 +76,8 @@ impl ProxyConnection {
 #[derive(Debug)]
 pub(crate) struct NameServiceProxy {
     proxy_connections: Vec<ProxyConnection>,
-    current_index: AtomicUsize,
+    current_active: AtomicUsize,
+    current_observers: Arc<Mutex<HashSet<usize>>>,
     msycned: AtomicBool,
 }
 
@@ -101,15 +105,16 @@ impl NameServiceProxy {
 
         Ok(NameServiceProxy {
             proxy_connections,
-            current_index: AtomicUsize::new(0),
+            current_active: AtomicUsize::new(0),
+            current_observers: Arc::new(Mutex::new(HashSet::new())),
             msycned: AtomicBool::new(false),
         })
     }
 
-    async fn msync_if_needed(&self) -> Result<()> {
-        if !self.msycned.fetch_or(true, Ordering::SeqCst) {
+    async fn msync_if_needed(&self, write: bool) -> Result<()> {
+        if !self.msycned.fetch_or(true, Ordering::SeqCst) && !write {
             let msync_msg = hdfs::MsyncRequestProto::default();
-            self.call_inner("msync", msync_msg.encode_length_delimited_to_vec())
+            self.call_inner("msync", msync_msg.encode_length_delimited_to_vec(), true)
                 .await
                 .map(|_| ())
                 .or_else(|err| match err {
@@ -125,26 +130,64 @@ impl NameServiceProxy {
         Ok(())
     }
 
-    pub(crate) async fn call(&self, method_name: &'static str, message: Vec<u8>) -> Result<Bytes> {
-        self.msync_if_needed().await?;
-        self.call_inner(method_name, message).await
+    pub(crate) async fn call(
+        &self,
+        method_name: &'static str,
+        message: Vec<u8>,
+        write: bool,
+    ) -> Result<Bytes> {
+        self.msync_if_needed(write).await?;
+        self.call_inner(method_name, message, write).await
     }
 
     fn is_retriable(exception: &str) -> bool {
         exception == STANDBY_EXCEPTION || exception == OBSERVER_RETRY_EXCEPTION
     }
 
-    async fn call_inner(&self, method_name: &'static str, message: Vec<u8>) -> Result<Bytes> {
-        let mut proxy_index = self.current_index.load(Ordering::SeqCst);
+    async fn call_inner(
+        &self,
+        method_name: &'static str,
+        message: Vec<u8>,
+        write: bool,
+    ) -> Result<Bytes> {
+        let current_active = self.current_active.load(Ordering::SeqCst);
+        let proxy_indices = if write {
+            // If we're writing, try the current known active and then loop
+            // through the rest if that fails
+            let first = current_active;
+            let rest = (0..self.proxy_connections.len()).filter(|i| *i != first);
+            [first].into_iter().chain(rest).collect::<Vec<_>>()
+        } else {
+            // If we're reading, try all known observers, then the active, then
+            // any remaining
+            let mut first = self
+                .current_observers
+                .lock()
+                .unwrap()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>();
+            if !first.contains(&current_active) {
+                first.push(current_active);
+            }
+            let rest = (0..self.proxy_connections.len()).filter(|i| !first.contains(i));
+            first.iter().copied().chain(rest).collect()
+        };
+
         let mut attempts = 0;
         loop {
+            let proxy_index = proxy_indices[attempts];
             let result = self.proxy_connections[proxy_index]
                 .call(method_name, &message)
                 .await;
 
             match result {
                 Ok(bytes) => {
-                    self.current_index.store(proxy_index, Ordering::SeqCst);
+                    if write {
+                        self.current_active.store(proxy_index, Ordering::SeqCst);
+                    } else {
+                        self.current_observers.lock().unwrap().insert(proxy_index);
+                    }
                     return Ok(bytes);
                 }
                 // RPCError indicates the call was successfully attempted but had an error, so should be returned immediately
@@ -153,13 +196,27 @@ impl NameServiceProxy {
                 }
                 Err(_) if attempts >= self.proxy_connections.len() - 1 => return result,
                 // Retriable error, do nothing and try the next connection
-                Err(HdfsError::RPCError(_, _)) => (),
+                Err(HdfsError::RPCError(exception, _))
+                | Err(HdfsError::FatalRPCError(exception, _))
+                    if Self::is_retriable(&exception) =>
+                {
+                    match exception.as_ref() {
+                        OBSERVER_RETRY_EXCEPTION => {
+                            self.current_observers.lock().unwrap().insert(proxy_index);
+                        }
+                        STANDBY_EXCEPTION => {
+                            self.current_observers.lock().unwrap().remove(&proxy_index);
+                        }
+                        _ => (),
+                    }
+                }
                 Err(e) => {
+                    // Some other error, we will retry but log the error
+                    self.current_observers.lock().unwrap().remove(&proxy_index);
                     warn!("{:?}", e);
                 }
             }
 
-            proxy_index = (proxy_index + 1) % self.proxy_connections.len();
             attempts += 1;
         }
     }

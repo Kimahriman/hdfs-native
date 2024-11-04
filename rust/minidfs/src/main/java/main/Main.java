@@ -136,7 +136,7 @@ public class Main {
                 dfs.transitionToActive(2);
             } else if (flags.contains("ha")) {
                 activeNamenode = 2;
-                // dfs.transitionToObserver(1);
+                dfs.transitionToObserver(1);
                 dfs.transitionToActive(activeNamenode);
             }
 
