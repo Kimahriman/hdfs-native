@@ -1,3 +1,4 @@
+import io
 import secrets
 import shutil
 import time
@@ -165,7 +166,10 @@ class HdfsFileSystem(AbstractFileSystem):
     ):
         path = self._strip_protocol(path)
         if mode == "rb":
-            return self.client.read(path)
+            reader = self.client.read(path)
+            if not block_size:
+                return reader
+            return io.BufferedReader(reader, buffer_size=block_size)
         elif mode == "wb":
             write_options = WriteOptions()
             write_options.overwrite = overwrite
