@@ -51,6 +51,7 @@ testpaths = [
     "tests",
     "hdfs_native",
 ]
+addopts = "-m 'not benchmark'"
 
 [tool.ruff.lint]
 extend-select = ["I"] 
