@@ -588,7 +588,7 @@ impl DirListingIterator {
 pub struct ListStatusIterator {
     mount_table: Arc<MountTable>,
     recursive: bool,
-    iters: Vec<DirListingIterator>,
+    iters: Arc<tokio::sync::Mutex<Vec<DirListingIterator>>>,
 }
 
 impl ListStatusIterator {
@@ -598,20 +598,21 @@ impl ListStatusIterator {
         ListStatusIterator {
             mount_table,
             recursive,
-            iters: vec![initial],
+            iters: Arc::new(tokio::sync::Mutex::new(vec![initial])),
         }
     }
 
-    pub async fn next(&mut self) -> Option<Result<FileStatus>> {
+    pub async fn next(&self) -> Option<Result<FileStatus>> {
         let mut next_file: Option<Result<FileStatus>> = None;
+        let mut iters = self.iters.lock().await;
         while next_file.is_none() {
-            if let Some(iter) = self.iters.last_mut() {
+            if let Some(iter) = iters.last_mut() {
                 if let Some(file_result) = iter.next().await {
                     if let Ok(file) = file_result {
                         // Return the directory as the next result, but start traversing into that directory
                         // next if we're doing a recursive listing
                         if file.isdir && self.recursive {
-                            self.iters.push(DirListingIterator::new(
+                            iters.push(DirListingIterator::new(
                                 file.path.clone(),
                                 &self.mount_table,
                                 false,
@@ -624,7 +625,7 @@ impl ListStatusIterator {
                     }
                 } else {
                     // We've exhausted this directory
-                    self.iters.pop();
+                    iters.pop();
                 }
             } else {
                 // There's nothing left, just return None
@@ -636,7 +637,7 @@ impl ListStatusIterator {
     }
 
     pub fn into_stream(self) -> BoxStream<'static, Result<FileStatus>> {
-        let listing = stream::unfold(self, |mut state| async move {
+        let listing = stream::unfold(self, |state| async move {
             let next = state.next().await;
             next.map(|n| (n, state))
         });
