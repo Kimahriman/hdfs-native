@@ -71,7 +71,7 @@ impl PyFileStatus {
 
 #[pyclass(name = "FileStatusIter")]
 struct PyFileStatusIter {
-    inner: ListStatusIterator,
+    inner: Arc<ListStatusIterator>,
     rt: Arc<Runtime>,
 }
 
@@ -81,10 +81,11 @@ impl PyFileStatusIter {
         slf
     }
 
-    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyHdfsResult<Option<PyFileStatus>> {
-        // This is dumb, figure out how to get around the double borrow here
+    fn __next__(slf: PyRefMut<'_, Self>) -> PyHdfsResult<Option<PyFileStatus>> {
+        // Kinda dumb, but lets us release the GIL while getting the next value
+        let inner = Arc::clone(&slf.inner);
         let rt = Arc::clone(&slf.rt);
-        if let Some(result) = rt.block_on(slf.inner.next()) {
+        if let Some(result) = slf.py().allow_threads(|| rt.block_on(inner.next())) {
             Ok(Some(PyFileStatus::from(result?)))
         } else {
             Ok(None)
@@ -150,21 +151,21 @@ impl RawFileReader {
         self.inner.tell()
     }
 
-    pub fn read(&mut self, len: i64) -> PyHdfsResult<Cow<[u8]>> {
+    pub fn read(&mut self, len: i64, py: Python) -> PyHdfsResult<Cow<[u8]>> {
         let read_len = if len < 0 {
             self.inner.remaining()
         } else {
             len as usize
         };
         Ok(Cow::from(
-            self.rt.block_on(self.inner.read(read_len))?.to_vec(),
+            py.allow_threads(|| self.rt.block_on(self.inner.read(read_len)))?
+                .to_vec(),
         ))
     }
 
-    pub fn read_range(&self, offset: usize, len: usize) -> PyHdfsResult<Cow<[u8]>> {
+    pub fn read_range(&self, offset: usize, len: usize, py: Python) -> PyHdfsResult<Cow<[u8]>> {
         Ok(Cow::from(
-            self.rt
-                .block_on(self.inner.read_range(offset, len))?
+            py.allow_threads(|| self.rt.block_on(self.inner.read_range(offset, len)))?
                 .to_vec(),
         ))
     }
@@ -254,12 +255,12 @@ struct RawFileWriter {
 
 #[pymethods]
 impl RawFileWriter {
-    pub fn write(&mut self, buf: Vec<u8>) -> PyHdfsResult<usize> {
-        Ok(self.rt.block_on(self.inner.write(Bytes::from(buf)))?)
+    pub fn write(&mut self, buf: Vec<u8>, py: Python) -> PyHdfsResult<usize> {
+        Ok(py.allow_threads(|| self.rt.block_on(self.inner.write(Bytes::from(buf))))?)
     }
 
-    pub fn close(&mut self) -> PyHdfsResult<()> {
-        Ok(self.rt.block_on(self.inner.close())?)
+    pub fn close(&mut self, py: Python) -> PyHdfsResult<()> {
+        Ok(py.allow_threads(|| self.rt.block_on(self.inner.close()))?)
     }
 }
 
@@ -294,23 +295,24 @@ impl RawClient {
         })
     }
 
-    pub fn get_file_info(&self, path: &str) -> PyHdfsResult<PyFileStatus> {
-        Ok(self
-            .rt
-            .block_on(self.inner.get_file_info(path))
-            .map(PyFileStatus::from)?)
+    pub fn get_file_info(&self, path: &str, py: Python) -> PyHdfsResult<PyFileStatus> {
+        Ok(py.allow_threads(|| {
+            self.rt
+                .block_on(self.inner.get_file_info(path))
+                .map(PyFileStatus::from)
+        })?)
     }
 
     pub fn list_status(&self, path: &str, recursive: bool) -> PyFileStatusIter {
         let inner = self.inner.list_status_iter(path, recursive);
         PyFileStatusIter {
-            inner,
+            inner: Arc::new(inner),
             rt: Arc::clone(&self.rt),
         }
     }
 
-    pub fn read(&self, path: &str) -> PyHdfsResult<RawFileReader> {
-        let file_reader = self.rt.block_on(self.inner.read(path))?;
+    pub fn read(&self, path: &str, py: Python) -> PyHdfsResult<RawFileReader> {
+        let file_reader = py.allow_threads(|| self.rt.block_on(self.inner.read(path)))?;
 
         Ok(RawFileReader {
             inner: file_reader,
@@ -318,10 +320,16 @@ impl RawClient {
         })
     }
 
-    pub fn create(&self, src: &str, write_options: PyWriteOptions) -> PyHdfsResult<RawFileWriter> {
-        let file_writer = self
-            .rt
-            .block_on(self.inner.create(src, WriteOptions::from(write_options)))?;
+    pub fn create(
+        &self,
+        src: &str,
+        write_options: PyWriteOptions,
+        py: Python,
+    ) -> PyHdfsResult<RawFileWriter> {
+        let file_writer = py.allow_threads(|| {
+            self.rt
+                .block_on(self.inner.create(src, WriteOptions::from(write_options)))
+        })?;
 
         Ok(RawFileWriter {
             inner: file_writer,
@@ -329,8 +337,8 @@ impl RawClient {
         })
     }
 
-    pub fn append(&self, src: &str) -> PyHdfsResult<RawFileWriter> {
-        let file_writer = self.rt.block_on(self.inner.append(src))?;
+    pub fn append(&self, src: &str, py: Python) -> PyHdfsResult<RawFileWriter> {
+        let file_writer = py.allow_threads(|| self.rt.block_on(self.inner.append(src)))?;
 
         Ok(RawFileWriter {
             inner: file_writer,
@@ -338,22 +346,29 @@ impl RawClient {
         })
     }
 
-    pub fn mkdirs(&self, path: &str, permission: u32, create_parent: bool) -> PyHdfsResult<()> {
-        Ok(self
-            .rt
-            .block_on(self.inner.mkdirs(path, permission, create_parent))?)
+    pub fn mkdirs(
+        &self,
+        path: &str,
+        permission: u32,
+        create_parent: bool,
+        py: Python,
+    ) -> PyHdfsResult<()> {
+        Ok(py.allow_threads(|| {
+            self.rt
+                .block_on(self.inner.mkdirs(path, permission, create_parent))
+        })?)
     }
 
-    pub fn rename(&self, src: &str, dst: &str, overwrite: bool) -> PyHdfsResult<()> {
-        Ok(self.rt.block_on(self.inner.rename(src, dst, overwrite))?)
+    pub fn rename(&self, src: &str, dst: &str, overwrite: bool, py: Python) -> PyHdfsResult<()> {
+        Ok(py.allow_threads(|| self.rt.block_on(self.inner.rename(src, dst, overwrite)))?)
     }
 
-    pub fn delete(&self, path: &str, recursive: bool) -> PyHdfsResult<bool> {
-        Ok(self.rt.block_on(self.inner.delete(path, recursive))?)
+    pub fn delete(&self, path: &str, recursive: bool, py: Python) -> PyHdfsResult<bool> {
+        Ok(py.allow_threads(|| self.rt.block_on(self.inner.delete(path, recursive)))?)
     }
 
-    pub fn set_times(&self, path: &str, mtime: u64, atime: u64) -> PyHdfsResult<()> {
-        Ok(self.rt.block_on(self.inner.set_times(path, mtime, atime))?)
+    pub fn set_times(&self, path: &str, mtime: u64, atime: u64, py: Python) -> PyHdfsResult<()> {
+        Ok(py.allow_threads(|| self.rt.block_on(self.inner.set_times(path, mtime, atime)))?)
     }
 
     pub fn set_owner(
@@ -361,26 +376,28 @@ impl RawClient {
         path: &str,
         owner: Option<&str>,
         group: Option<&str>,
+        py: Python,
     ) -> PyHdfsResult<()> {
-        Ok(self.rt.block_on(self.inner.set_owner(path, owner, group))?)
+        Ok(py.allow_threads(|| self.rt.block_on(self.inner.set_owner(path, owner, group)))?)
     }
 
-    pub fn set_permission(&self, path: &str, permission: u32) -> PyHdfsResult<()> {
-        Ok(self
-            .rt
-            .block_on(self.inner.set_permission(path, permission))?)
+    pub fn set_permission(&self, path: &str, permission: u32, py: Python) -> PyHdfsResult<()> {
+        Ok(py.allow_threads(|| {
+            self.rt
+                .block_on(self.inner.set_permission(path, permission))
+        })?)
     }
 
-    pub fn set_replication(&self, path: &str, replication: u32) -> PyHdfsResult<bool> {
-        Ok(self
-            .rt
-            .block_on(self.inner.set_replication(path, replication))?)
+    pub fn set_replication(&self, path: &str, replication: u32, py: Python) -> PyHdfsResult<bool> {
+        Ok(py.allow_threads(|| {
+            self.rt
+                .block_on(self.inner.set_replication(path, replication))
+        })?)
     }
 
-    pub fn get_content_summary(&self, path: &str) -> PyHdfsResult<PyContentSummary> {
-        Ok(self
-            .rt
-            .block_on(self.inner.get_content_summary(path))?
+    pub fn get_content_summary(&self, path: &str, py: Python) -> PyHdfsResult<PyContentSummary> {
+        Ok(py
+            .allow_threads(|| self.rt.block_on(self.inner.get_content_summary(path)))?
             .into())
     }
 }
