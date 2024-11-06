@@ -23,7 +23,7 @@ devel = [
     "mypy~=1.13.0",
     "ruff~=0.7.2",
     "pytest~=8.3",
-    "pytest-benchmark~=5.1"
+    "pytest-benchmark<5"
 ]
 
 [project.urls]
