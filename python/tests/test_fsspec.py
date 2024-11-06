@@ -37,6 +37,10 @@ def test_io(fs: HdfsFileSystem):
         data = file.read()
         assert data == b"hello there"
 
+    with fs.open("/test", mode="rb", block_size=1024) as file:
+        data = file.read()
+        assert data == b"hello there"
+
     fs.write_bytes("/test2", b"hello again")
     assert fs.read_bytes("/test2") == b"hello again"
     assert fs.read_bytes("/test2", start=1) == b"ello again"
