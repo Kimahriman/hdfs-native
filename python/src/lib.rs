@@ -71,7 +71,7 @@ impl PyFileStatus {
 
 #[pyclass(name = "FileStatusIter")]
 struct PyFileStatusIter {
-    inner: ListStatusIterator,
+    inner: Arc<ListStatusIterator>,
     rt: Arc<Runtime>,
 }
 
@@ -81,10 +81,11 @@ impl PyFileStatusIter {
         slf
     }
 
-    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyHdfsResult<Option<PyFileStatus>> {
-        // This is dumb, figure out how to get around the double borrow here
+    fn __next__(slf: PyRefMut<'_, Self>) -> PyHdfsResult<Option<PyFileStatus>> {
+        // Kinda dumb, but lets us release the GIL while getting the next value
+        let inner = Arc::clone(&slf.inner);
         let rt = Arc::clone(&slf.rt);
-        if let Some(result) = rt.block_on(slf.inner.next()) {
+        if let Some(result) = slf.py().allow_threads(|| rt.block_on(inner.next())) {
             Ok(Some(PyFileStatus::from(result?)))
         } else {
             Ok(None)
@@ -305,7 +306,7 @@ impl RawClient {
     pub fn list_status(&self, path: &str, recursive: bool) -> PyFileStatusIter {
         let inner = self.inner.list_status_iter(path, recursive);
         PyFileStatusIter {
-            inner,
+            inner: Arc::new(inner),
             rt: Arc::clone(&self.rt),
         }
     }
