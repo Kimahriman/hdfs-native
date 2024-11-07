@@ -19,14 +19,16 @@ if TYPE_CHECKING:
 class HdfsFileSystem(AbstractFileSystem):
     root_marker = "/"
 
-    def __init__(self, host: str, port: Optional[int] = None, *args, **storage_options):
+    def __init__(self, host: Optional[str] = None, port: Optional[int] = None, *args, **storage_options):
         super().__init__(host, port, *args, **storage_options)
         self.host = host
         self.port = port
-        url = f"{self.protocol}://{host}"
-        if port:
-            url += f":{port}"
-        self.client = Client(url)
+        url = f"{self.protocol}://"
+        if host:
+            url += host
+            if port:
+                url += f":{port}"
+        self.client = Client(url, storage_options)
 
     @property
     def fsid(self):
@@ -40,9 +42,11 @@ class HdfsFileSystem(AbstractFileSystem):
     def unstrip_protocol(self, name: str) -> str:
         path = self._strip_protocol(name)
 
-        url = f"{self.protocol}://{self.host}"
-        if self.port:
-            url += f":{self.port}"
+        url = f"{self.protocol}://"
+        if self.host:
+            url += self.host
+            if self.port:
+                url += f":{self.port}"
 
         return f"{url}{path}"
 
