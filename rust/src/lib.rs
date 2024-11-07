@@ -15,10 +15,16 @@
 //!
 //! Create a client for a Name Service
 //! ```rust
+//! use std::collections::HashMap;
 //! use hdfs_native::Client;
 //! # use hdfs_native::Result;
 //! # fn main() -> Result<()> {
-//! let client = Client::new("hdfs://ns")?;
+//! let config = HashMap::from([
+//!     ("dfs.ha.namenodes.ns".to_string(), "nn-1,nn-2".to_string()),
+//!     ("dfs.namenode.rpc-address.ns.nn-1".to_string(), "nn-1:9000".to_string()),
+//!     ("dfs.namenode.rpc-address.ns.nn-2".to_string(), "nn-2:9000".to_string()),
+//! ]);
+//! let client = Client::new_with_config("hdfs://ns", config)?;
 //! # Ok(())
 //! # }
 //! ```
