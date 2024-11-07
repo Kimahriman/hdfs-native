@@ -783,7 +783,7 @@ mod test {
     #[test]
     fn test_default_fs() {
         assert!(Client::default_with_config(
-            vec![("fs.defaultFS".to_string(), "hdfs://test".to_string())]
+            vec![("fs.defaultFS".to_string(), "hdfs://test:9000".to_string())]
                 .into_iter()
                 .collect(),
         )
@@ -798,7 +798,7 @@ mod test {
 
         assert!(Client::new_with_config(
             "hdfs://",
-            vec![("fs.defaultFS".to_string(), "hdfs://test".to_string())]
+            vec![("fs.defaultFS".to_string(), "hdfs://test:9000".to_string())]
                 .into_iter()
                 .collect(),
         )
