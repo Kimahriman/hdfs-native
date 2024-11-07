@@ -8,6 +8,7 @@ use prost::Message;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+use crate::acl::AclEntry;
 use crate::proto::hdfs::{
     self, DataEncryptionKeyProto, FsServerDefaultsProto, GetDataEncryptionKeyResponseProto,
 };
@@ -520,6 +521,145 @@ impl NamenodeProtocol {
 
         let decoded = hdfs::GetContentSummaryResponseProto::decode_length_delimited(response)?;
         debug!("getContentSummary response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
+    pub(crate) async fn modify_acl_entries(
+        &self,
+        path: &str,
+        acl_spec: Vec<AclEntry>,
+    ) -> Result<hdfs::ModifyAclEntriesResponseProto> {
+        let message = hdfs::ModifyAclEntriesRequestProto {
+            src: path.to_string(),
+            acl_spec: acl_spec.into_iter().collect(),
+        };
+
+        debug!("modifyAclEntries request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call(
+                "modifyAclEntries",
+                message.encode_length_delimited_to_vec(),
+                false,
+            )
+            .await?;
+
+        let decoded = hdfs::ModifyAclEntriesResponseProto::decode_length_delimited(response)?;
+        debug!("modifyAclEntries response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
+    pub(crate) async fn remove_acl_entries(
+        &self,
+        path: &str,
+        acl_spec: Vec<AclEntry>,
+    ) -> Result<hdfs::RemoveAclEntriesResponseProto> {
+        let message = hdfs::RemoveAclEntriesRequestProto {
+            src: path.to_string(),
+            acl_spec: acl_spec.into_iter().collect(),
+        };
+
+        debug!("removeAclEntries request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call(
+                "removeAclEntries",
+                message.encode_length_delimited_to_vec(),
+                false,
+            )
+            .await?;
+
+        let decoded = hdfs::RemoveAclEntriesResponseProto::decode_length_delimited(response)?;
+        debug!("removeAclEntries response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
+    pub(crate) async fn remove_default_acl(
+        &self,
+        path: &str,
+    ) -> Result<hdfs::RemoveDefaultAclResponseProto> {
+        let message = hdfs::RemoveDefaultAclRequestProto {
+            src: path.to_string(),
+        };
+
+        debug!("removeDefaultAcl request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call(
+                "removeDefaultAcl",
+                message.encode_length_delimited_to_vec(),
+                false,
+            )
+            .await?;
+
+        let decoded = hdfs::RemoveDefaultAclResponseProto::decode_length_delimited(response)?;
+        debug!("removeDefaultAcl response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
+    pub(crate) async fn remove_acl(&self, path: &str) -> Result<hdfs::RemoveAclResponseProto> {
+        let message = hdfs::RemoveAclRequestProto {
+            src: path.to_string(),
+        };
+
+        debug!("removeAcl request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call("removeAcl", message.encode_length_delimited_to_vec(), false)
+            .await?;
+
+        let decoded = hdfs::RemoveAclResponseProto::decode_length_delimited(response)?;
+        debug!("removeAcl response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
+    pub(crate) async fn set_acl(
+        &self,
+        path: &str,
+        acl_spec: Vec<AclEntry>,
+    ) -> Result<hdfs::SetAclResponseProto> {
+        let message = hdfs::SetAclRequestProto {
+            src: path.to_string(),
+            acl_spec: acl_spec.into_iter().collect(),
+        };
+
+        debug!("setAcl request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call("setAcl", message.encode_length_delimited_to_vec(), false)
+            .await?;
+
+        let decoded = hdfs::SetAclResponseProto::decode_length_delimited(response)?;
+        debug!("setAcl response: {:?}", &decoded);
+        Ok(decoded)
+    }
+
+    pub(crate) async fn get_acl_status(
+        &self,
+        path: &str,
+    ) -> Result<hdfs::GetAclStatusResponseProto> {
+        let message = hdfs::GetAclStatusRequestProto {
+            src: path.to_string(),
+        };
+
+        debug!("getAclStatus request: {:?}", &message);
+
+        let response = self
+            .proxy
+            .call(
+                "getAclStatus",
+                message.encode_length_delimited_to_vec(),
+                false,
+            )
+            .await?;
+
+        let decoded = hdfs::GetAclStatusResponseProto::decode_length_delimited(response)?;
+        debug!("getAclStatus response: {:?}", &decoded);
         Ok(decoded)
     }
 }

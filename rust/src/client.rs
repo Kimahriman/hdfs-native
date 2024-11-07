@@ -6,6 +6,7 @@ use futures::stream::BoxStream;
 use futures::{stream, StreamExt};
 use url::Url;
 
+use crate::acl::AclEntry;
 use crate::common::config::{self, Configuration};
 use crate::ec::resolve_ec_policy;
 use crate::error::{HdfsError, Result};
@@ -507,6 +508,52 @@ impl Client {
             .summary;
 
         Ok(result.into())
+    }
+
+    pub async fn modify_acl_entries(&self, path: &str, acl_spec: Vec<AclEntry>) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .modify_acl_entries(&resolved_path, acl_spec)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn remove_acl_entries(&self, path: &str, acl_spec: Vec<AclEntry>) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .remove_acl_entries(&resolved_path, acl_spec)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn remove_default_acl(&self, path: &str) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol.remove_default_acl(&resolved_path).await?;
+
+        Ok(())
+    }
+
+    pub async fn remove_acl(&self, path: &str) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol.remove_acl(&resolved_path).await?;
+
+        Ok(())
+    }
+
+    pub async fn set_acl(&self, path: &str, acl_spec: Vec<AclEntry>) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol.set_acl(&resolved_path, acl_spec).await?;
+
+        Ok(())
+    }
+
+    pub async fn get_acl_status(&self, path: &str) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol.get_acl_status(&resolved_path).await?;
+
+        Ok(())
     }
 }
 
