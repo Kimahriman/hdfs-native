@@ -103,12 +103,18 @@ impl NameServiceProxy {
             todo!()
         };
 
-        Ok(NameServiceProxy {
-            proxy_connections,
-            current_active: AtomicUsize::new(0),
-            current_observers: Arc::new(Mutex::new(HashSet::new())),
-            msycned: AtomicBool::new(false),
-        })
+        if proxy_connections.is_empty() {
+            Err(HdfsError::InvalidArgument(
+                "No NameNode hosts found".to_string(),
+            ))
+        } else {
+            Ok(NameServiceProxy {
+                proxy_connections,
+                current_active: AtomicUsize::new(0),
+                current_observers: Arc::new(Mutex::new(HashSet::new())),
+                msycned: AtomicBool::new(false),
+            })
+        }
     }
 
     async fn msync_if_needed(&self, write: bool) -> Result<()> {
