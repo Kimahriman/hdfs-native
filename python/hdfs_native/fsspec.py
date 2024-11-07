@@ -19,7 +19,13 @@ if TYPE_CHECKING:
 class HdfsFileSystem(AbstractFileSystem):
     root_marker = "/"
 
-    def __init__(self, host: Optional[str] = None, port: Optional[int] = None, *args, **storage_options):
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        *args,
+        **storage_options,
+    ):
         super().__init__(host, port, *args, **storage_options)
         self.host = host
         self.port = port

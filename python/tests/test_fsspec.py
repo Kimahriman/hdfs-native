@@ -8,8 +8,9 @@ from hdfs_native.fsspec import HdfsFileSystem
 
 def test_config(minidfs: str):
     url = urllib.parse.urlparse(minidfs)
-    fs: HdfsFileSystem = fsspec.filesystem(url.scheme, **{'fs.defaultFS': minidfs})
+    fs: HdfsFileSystem = fsspec.filesystem(url.scheme, **{"fs.defaultFS": minidfs})
     assert len(fs.ls("/")) == 0
+
 
 def test_dirs(fs: HdfsFileSystem):
     fs.mkdir("/testdir")
