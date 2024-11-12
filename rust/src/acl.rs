@@ -1,11 +1,12 @@
 use crate::{
     proto::hdfs::{
         acl_entry_proto::{AclEntryScopeProto, AclEntryTypeProto, FsActionProto},
-        AclEntryProto, GetAclStatusResponseProto,
+        AclEntryProto, AclStatusProto,
     },
     HdfsError,
 };
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum AclEntryType {
     User,
     Group,
@@ -61,6 +62,7 @@ impl TryFrom<String> for AclEntryType {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum AclEntryScope {
     Access,
     Default,
@@ -108,6 +110,7 @@ impl TryFrom<String> for AclEntryScope {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum FsAction {
     None = 0,
     Execute = 1,
@@ -179,6 +182,7 @@ impl TryFrom<String> for FsAction {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct AclEntry {
     pub r#type: AclEntryType,
     pub scope: AclEntryScope,
@@ -231,14 +235,14 @@ pub struct AclStatus {
     pub permission: u16,
 }
 
-impl From<GetAclStatusResponseProto> for AclStatus {
-    fn from(value: GetAclStatusResponseProto) -> Self {
+impl From<AclStatusProto> for AclStatus {
+    fn from(value: AclStatusProto) -> Self {
         Self {
-            owner: value.result.owner,
-            group: value.result.group,
-            sticky: value.result.sticky,
-            entries: value.result.entries.into_iter().collect(),
-            permission: value.result.permission.unwrap().perm as u16,
+            owner: value.owner,
+            group: value.group,
+            sticky: value.sticky,
+            entries: value.entries.into_iter().collect(),
+            permission: value.permission.unwrap().perm as u16,
         }
     }
 }

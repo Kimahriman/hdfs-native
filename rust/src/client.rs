@@ -6,7 +6,7 @@ use futures::stream::BoxStream;
 use futures::{stream, StreamExt};
 use url::Url;
 
-use crate::acl::AclEntry;
+use crate::acl::{AclEntry, AclStatus};
 use crate::common::config::{self, Configuration};
 use crate::ec::resolve_ec_policy;
 use crate::error::{HdfsError, Result};
@@ -549,11 +549,14 @@ impl Client {
         Ok(())
     }
 
-    pub async fn get_acl_status(&self, path: &str) -> Result<()> {
+    pub async fn get_acl_status(&self, path: &str) -> Result<AclStatus> {
         let (link, resolved_path) = self.mount_table.resolve(path);
-        link.protocol.get_acl_status(&resolved_path).await?;
-
-        Ok(())
+        Ok(link
+            .protocol
+            .get_acl_status(&resolved_path)
+            .await?
+            .result
+            .into())
     }
 }
 

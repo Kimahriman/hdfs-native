@@ -415,8 +415,7 @@ impl NamenodeProtocol {
             src: path.to_string(),
             acl_spec: acl_spec.into_iter().collect(),
         };
-        self.call("setAcl", message.encode_length_delimited_to_vec(), false)
-            .await
+        self.call("setAcl", message, false).await
     }
 
     pub(crate) async fn get_acl_status(
