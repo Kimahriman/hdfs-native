@@ -6,7 +6,10 @@ mod test {
     use crate::common::{assert_bufs_equal, setup, TEST_FILE_INTS};
     use bytes::{BufMut, BytesMut};
     use hdfs_native::{
-        acl::AclEntry, client::FileStatus, minidfs::DfsFeatures, Client, Result, WriteOptions,
+        acl::{AclEntry, AclEntryScope, AclEntryType, FsAction},
+        client::FileStatus,
+        minidfs::DfsFeatures,
+        Client, Result, WriteOptions,
     };
     use serial_test::serial;
     use std::collections::HashSet;
@@ -460,18 +463,15 @@ mod test {
         assert!(acl_status.entries.is_empty());
         assert!(!acl_status.sticky);
 
-        let user_entry = AclEntry {
-            r#type: hdfs_native::acl::AclEntryType::User,
-            scope: hdfs_native::acl::AclEntryScope::Access,
-            permissions: hdfs_native::acl::FsAction::Read,
-            name: Some("testuser".to_string()),
-        };
+        let user_entry = AclEntry::new("user", "access", "r--", Some("testuser".to_string()));
 
-        let group_entry = AclEntry {
-            r#type: hdfs_native::acl::AclEntryType::Group,
-            scope: hdfs_native::acl::AclEntryScope::Access,
-            permissions: hdfs_native::acl::FsAction::Write,
-            name: Some("testgroup".to_string()),
+        let group_entry = AclEntry::new("group", "access", "-w-", Some("testgroup".to_string()));
+
+        let other_entry = AclEntry {
+            r#type: AclEntryType::Other,
+            scope: AclEntryScope::Access,
+            permissions: FsAction::Read,
+            name: None,
         };
 
         client
@@ -543,6 +543,8 @@ mod test {
 
         // Default user acl added above plus the empty group permission
         assert_eq!(acl_status.entries.len(), 2, "{:?}", acl_status.entries);
+
+        client.remove_default_acl("/testdir").await?;
 
         client.delete("/testdir", true).await?;
 

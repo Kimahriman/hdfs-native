@@ -1,9 +1,6 @@
-use crate::{
-    proto::hdfs::{
-        acl_entry_proto::{AclEntryScopeProto, AclEntryTypeProto, FsActionProto},
-        AclEntryProto, AclStatusProto,
-    },
-    HdfsError,
+use crate::proto::hdfs::{
+    acl_entry_proto::{AclEntryScopeProto, AclEntryTypeProto, FsActionProto},
+    AclEntryProto, AclStatusProto,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -36,29 +33,21 @@ impl From<AclEntryTypeProto> for AclEntryType {
     }
 }
 
-impl TryFrom<&str> for AclEntryType {
-    type Error = HdfsError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "User" => Ok(AclEntryType::User),
-            "Group" => Ok(AclEntryType::Group),
-            "Mask" => Ok(AclEntryType::Mask),
-            "Other" => Ok(AclEntryType::Other),
-            _ => Err(HdfsError::InvalidArgument(format!(
-                "Unknown ACL entry type {}",
-                value
-            ))),
+impl From<&str> for AclEntryType {
+    fn from(value: &str) -> Self {
+        match value.to_ascii_lowercase().as_ref() {
+            "user" => AclEntryType::User,
+            "group" => AclEntryType::Group,
+            "mask" => AclEntryType::Mask,
+            "other" => AclEntryType::Other,
+            _ => panic!("Unknown ACL entry type {}", value),
         }
     }
 }
 
-impl TryFrom<String> for AclEntryType {
-    type Error = HdfsError;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        let v: &str = value.as_ref();
-        v.try_into()
+impl From<String> for AclEntryType {
+    fn from(value: String) -> Self {
+        Self::from(value.as_ref())
     }
 }
 
@@ -86,27 +75,19 @@ impl From<AclEntryScopeProto> for AclEntryScope {
     }
 }
 
-impl TryFrom<&str> for AclEntryScope {
-    type Error = HdfsError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "Access" => Ok(AclEntryScope::Access),
-            "Default" => Ok(AclEntryScope::Default),
-            _ => Err(HdfsError::InvalidArgument(format!(
-                "Unknown ACL entry scope {}",
-                value
-            ))),
+impl From<&str> for AclEntryScope {
+    fn from(value: &str) -> Self {
+        match value.to_ascii_lowercase().as_ref() {
+            "access" => AclEntryScope::Access,
+            "default" => AclEntryScope::Default,
+            _ => panic!("Unknown ACL entry scope {}", value),
         }
     }
 }
 
-impl TryFrom<String> for AclEntryScope {
-    type Error = HdfsError;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        let v: &str = value.as_ref();
-        v.try_into()
+impl From<String> for AclEntryScope {
+    fn from(value: String) -> Self {
+        Self::from(value.as_ref())
     }
 }
 
@@ -152,33 +133,25 @@ impl From<FsActionProto> for FsAction {
     }
 }
 
-impl TryFrom<&str> for FsAction {
-    type Error = HdfsError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
+impl From<&str> for FsAction {
+    fn from(value: &str) -> Self {
         match value {
-            "---" => Ok(FsAction::None),
-            "--x" => Ok(FsAction::Execute),
-            "-w-" => Ok(FsAction::Write),
-            "-wx" => Ok(FsAction::WriteExecute),
-            "r--" => Ok(FsAction::Read),
-            "r-x" => Ok(FsAction::ReadExecute),
-            "rw-" => Ok(FsAction::ReadWrite),
-            "rwx" => Ok(FsAction::PermAll),
-            _ => Err(HdfsError::InvalidArgument(format!(
-                "Unknown file system permission {}",
-                value
-            ))),
+            "---" => FsAction::None,
+            "--x" => FsAction::Execute,
+            "-w-" => FsAction::Write,
+            "-wx" => FsAction::WriteExecute,
+            "r--" => FsAction::Read,
+            "r-x" => FsAction::ReadExecute,
+            "rw-" => FsAction::ReadWrite,
+            "rwx" => FsAction::PermAll,
+            _ => panic!("Unknown file system permission {}", value),
         }
     }
 }
 
-impl TryFrom<String> for FsAction {
-    type Error = HdfsError;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        let v: &str = value.as_ref();
-        v.try_into()
+impl From<String> for FsAction {
+    fn from(value: String) -> Self {
+        Self::from(value.as_ref())
     }
 }
 
@@ -188,6 +161,23 @@ pub struct AclEntry {
     pub scope: AclEntryScope,
     pub permissions: FsAction,
     pub name: Option<String>,
+}
+
+impl AclEntry {
+    /// Create a new ACL entry.
+    pub fn new(
+        r#type: impl Into<AclEntryType>,
+        scope: impl Into<AclEntryScope>,
+        permissions: impl Into<FsAction>,
+        name: Option<String>,
+    ) -> Self {
+        Self {
+            r#type: r#type.into(),
+            scope: scope.into(),
+            permissions: permissions.into(),
+            name,
+        }
+    }
 }
 
 impl From<AclEntry> for AclEntryProto {
