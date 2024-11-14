@@ -201,6 +201,7 @@ impl FromIterator<PyAclEntry> for Vec<AclEntry> {
 #[pymethods]
 impl PyAclEntry {
     #[new]
+    #[pyo3(signature = (r#type, scope, permissions, name=None))]
     pub fn new(r#type: String, scope: String, permissions: String, name: Option<String>) -> Self {
         Self {
             r#type,
