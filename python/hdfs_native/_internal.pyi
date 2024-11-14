@@ -33,6 +33,14 @@ class AclEntry:
     permissions: FsAction
     name: Optional[str]
 
+    def __init__(
+        self,
+        type: AclEntryType,
+        scope: AclEntryScope,
+        permissions: FsAction,
+        name: Optional[str] = None,
+    ): ...
+
 class AclStatus:
     owner: str
     group: str
