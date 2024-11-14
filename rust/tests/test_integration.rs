@@ -5,7 +5,9 @@ mod common;
 mod test {
     use crate::common::{assert_bufs_equal, setup, TEST_FILE_INTS};
     use bytes::{BufMut, BytesMut};
-    use hdfs_native::{client::FileStatus, minidfs::DfsFeatures, Client, Result, WriteOptions};
+    use hdfs_native::{
+        acl::AclEntry, client::FileStatus, minidfs::DfsFeatures, Client, Result, WriteOptions,
+    };
     use serial_test::serial;
     use std::collections::HashSet;
 
@@ -184,6 +186,7 @@ mod test {
         test_set_permission(&client).await?;
         test_set_replication(&client).await?;
         test_get_content_summary(&client).await?;
+        test_acls(&client).await?;
 
         Ok(())
     }
@@ -438,6 +441,102 @@ mod test {
         assert_eq!(content_summary.directory_count, 2);
         // Test file plus the two we made above
         assert_eq!(content_summary.length, TEST_FILE_INTS as u64 * 4 + 4 + 6);
+
+        client.delete("/test", false).await?;
+        client.delete("/test2", false).await?;
+
+        Ok(())
+    }
+
+    async fn test_acls(client: &Client) -> Result<()> {
+        client
+            .create("/test", WriteOptions::default())
+            .await?
+            .close()
+            .await?;
+
+        let acl_status = client.get_acl_status("/test").await?;
+
+        assert!(acl_status.entries.is_empty());
+        assert!(!acl_status.sticky);
+
+        let user_entry = AclEntry::new("user", "access", "r--", Some("testuser".to_string()));
+
+        let group_entry = AclEntry::new("group", "access", "-w-", Some("testgroup".to_string()));
+
+        client
+            .modify_acl_entries("/test", vec![user_entry.clone()])
+            .await?;
+
+        let acl_status = client.get_acl_status("/test").await?;
+
+        // Empty group permission added automatically
+        assert_eq!(acl_status.entries.len(), 2, "{:?}", acl_status.entries);
+        assert!(acl_status.entries.contains(&user_entry));
+
+        client
+            .modify_acl_entries("/test", vec![group_entry.clone()])
+            .await?;
+
+        let acl_status = client.get_acl_status("/test").await?;
+
+        // Still contains the empty group
+        assert_eq!(acl_status.entries.len(), 3, "{:?}", acl_status.entries);
+        assert!(acl_status.entries.contains(&user_entry));
+        assert!(acl_status.entries.contains(&group_entry));
+
+        client
+            .remove_acl_entries("/test", vec![group_entry.clone()])
+            .await?;
+
+        let acl_status = client.get_acl_status("/test").await?;
+
+        assert_eq!(acl_status.entries.len(), 2, "{:?}", acl_status.entries);
+        assert!(acl_status.entries.contains(&user_entry));
+        assert!(!acl_status.entries.contains(&group_entry));
+
+        client.remove_acl("/test").await?;
+
+        let acl_status = client.get_acl_status("/test").await?;
+
+        assert_eq!(acl_status.entries.len(), 0);
+
+        client.delete("/test", false).await?;
+
+        // Default acl
+        client.mkdirs("/testdir", 0o755, true).await?;
+
+        client
+            .modify_acl_entries(
+                "/testdir",
+                vec![AclEntry {
+                    r#type: hdfs_native::acl::AclEntryType::User,
+                    scope: hdfs_native::acl::AclEntryScope::Default,
+                    permissions: hdfs_native::acl::FsAction::Read,
+                    name: Some("testuser".to_string()),
+                }],
+            )
+            .await?;
+
+        let acl_status = client.get_acl_status("/testdir").await?;
+
+        // All defaults get added automatically based on permissions
+        assert_eq!(acl_status.entries.len(), 5, "{:?}", acl_status.entries);
+
+        client
+            .create("/testdir/test", WriteOptions::default())
+            .await?
+            .close()
+            .await?;
+
+        let acl_status = client.get_acl_status("/testdir/test").await?;
+
+        // Default user acl added above plus the empty group permission
+        assert_eq!(acl_status.entries.len(), 2, "{:?}", acl_status.entries);
+
+        client.remove_default_acl("/testdir").await?;
+
+        client.delete("/testdir", true).await?;
 
         Ok(())
     }

@@ -9,6 +9,7 @@ use ::hdfs_native::{
     Client,
 };
 use bytes::Bytes;
+use hdfs_native::acl::{AclEntry, AclStatus};
 use hdfs_native::client::ContentSummary;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use tokio::runtime::Runtime;
@@ -127,6 +128,93 @@ impl PyContentSummary {
             self.quota,
             self.space_consumed,
             self.space_quota,
+        )
+    }
+}
+
+#[pyclass(get_all, frozen, name = "AclStatus")]
+struct PyAclStatus {
+    owner: String,
+    group: String,
+    sticky: bool,
+    entries: Vec<PyAclEntry>,
+    permission: u16,
+}
+
+impl From<AclStatus> for PyAclStatus {
+    fn from(value: AclStatus) -> Self {
+        Self {
+            owner: value.owner,
+            group: value.group,
+            sticky: value.sticky,
+            entries: value.entries.into_iter().map(PyAclEntry::from).collect(),
+            permission: value.permission,
+        }
+    }
+}
+
+#[pymethods]
+impl PyAclStatus {
+    /// Return a dataclass-esque format for the repr
+    fn __repr__(&self) -> String {
+        format!("AclStatus(owner='{}')", self.owner)
+    }
+}
+
+#[pyclass(get_all, set_all, name = "AclEntry")]
+#[derive(Clone, Default)]
+struct PyAclEntry {
+    r#type: String,
+    scope: String,
+    permissions: String,
+    name: Option<String>,
+}
+
+impl From<AclEntry> for PyAclEntry {
+    fn from(value: AclEntry) -> Self {
+        Self {
+            r#type: value.r#type.to_string(),
+            scope: value.scope.to_string(),
+            permissions: value.permissions.to_string(),
+            name: value.name,
+        }
+    }
+}
+
+impl From<PyAclEntry> for AclEntry {
+    fn from(value: PyAclEntry) -> Self {
+        Self {
+            r#type: value.r#type.into(),
+            scope: value.scope.into(),
+            permissions: value.permissions.into(),
+            name: value.name,
+        }
+    }
+}
+
+impl FromIterator<PyAclEntry> for Vec<AclEntry> {
+    fn from_iter<T: IntoIterator<Item = PyAclEntry>>(iter: T) -> Self {
+        iter.into_iter().map(AclEntry::from).collect()
+    }
+}
+
+#[pymethods]
+impl PyAclEntry {
+    #[new]
+    pub fn new(r#type: String, scope: String, permissions: String, name: Option<String>) -> Self {
+        Self {
+            r#type,
+            scope,
+            permissions,
+            name,
+        }
+    }
+
+    /// Return a dataclass-esque format for the repr
+    fn __repr__(&self) -> String {
+        format!(
+            "AclEntry(type='{}', scope='{}', permissions='{}', name='{:?}')",
+            self.r#type, self.scope, self.permissions, self.name
         )
     }
 }
@@ -402,12 +490,65 @@ impl RawClient {
             .allow_threads(|| self.rt.block_on(self.inner.get_content_summary(path)))?
             .into())
     }
+
+    pub fn modify_acl_entries(
+        &self,
+        path: &str,
+        acl_spec: Vec<PyAclEntry>,
+        py: Python,
+    ) -> PyHdfsResult<()> {
+        Ok(py.allow_threads(|| {
+            self.rt.block_on(
+                self.inner
+                    .modify_acl_entries(path, acl_spec.into_iter().collect()),
+            )
+        })?)
+    }
+
+    pub fn remove_acl_entries(
+        &self,
+        path: &str,
+        acl_spec: Vec<PyAclEntry>,
+        py: Python,
+    ) -> PyHdfsResult<()> {
+        Ok(py.allow_threads(|| {
+            self.rt.block_on(
+                self.inner
+                    .remove_acl_entries(path, acl_spec.into_iter().collect()),
+            )
+        })?)
+    }
+
+    pub fn remove_default_acl(&self, path: &str, py: Python) -> PyHdfsResult<()> {
+        Ok(py.allow_threads(|| self.rt.block_on(self.inner.remove_default_acl(path)))?)
+    }
+
+    pub fn remove_acl(&self, path: &str, py: Python) -> PyHdfsResult<()> {
+        Ok(py.allow_threads(|| self.rt.block_on(self.inner.remove_acl(path)))?)
+    }
+
+    pub fn set_acl(&self, path: &str, acl_spec: Vec<PyAclEntry>, py: Python) -> PyHdfsResult<()> {
+        Ok(py.allow_threads(|| {
+            self.rt
+                .block_on(self.inner.set_acl(path, acl_spec.into_iter().collect()))
+        })?)
+    }
+
+    pub fn get_acl_status(&self, path: &str, py: Python) -> PyHdfsResult<PyAclStatus> {
+        Ok(py
+            .allow_threads(|| self.rt.block_on(self.inner.get_acl_status(path)))?
+            .into())
+    }
 }
 
 /// A Python module implemented in Rust.
 #[pymodule]
 fn _internal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RawClient>()?;
+    m.add_class::<PyFileStatus>()?;
+    m.add_class::<PyContentSummary>()?;
     m.add_class::<PyWriteOptions>()?;
+    m.add_class::<PyAclEntry>()?;
+    m.add_class::<PyAclStatus>()?;
     Ok(())
 }

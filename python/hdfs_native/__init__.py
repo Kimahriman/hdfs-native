@@ -1,14 +1,24 @@
 import io
 import os
-from typing import TYPE_CHECKING, Dict, Iterator, Optional
+from typing import TYPE_CHECKING, Dict, Iterator, List, Optional
 
 # For some reason mypy doesn't think this exists
 from typing_extensions import Buffer  # type: ignore
 
-from ._internal import RawClient, WriteOptions
+from ._internal import (
+    AclEntry,
+    AclStatus,
+    ContentSummary,
+    FileStatus,
+    RawClient,
+    WriteOptions,
+)
 
 if TYPE_CHECKING:
-    from ._internal import ContentSummary, FileStatus, RawFileReader, RawFileWriter
+    from ._internal import (
+        RawFileReader,
+        RawFileWriter,
+    )
 
 
 class FileReader(io.RawIOBase):
@@ -95,11 +105,11 @@ class Client:
     ):
         self.inner = RawClient(url, config)
 
-    def get_file_info(self, path: str) -> "FileStatus":
+    def get_file_info(self, path: str) -> FileStatus:
         """Gets the file status for the file at `path`"""
         return self.inner.get_file_info(path)
 
-    def list_status(self, path: str, recursive: bool = False) -> Iterator["FileStatus"]:
+    def list_status(self, path: str, recursive: bool = False) -> Iterator[FileStatus]:
         """Gets the status of files rooted at `path`. If `recursive` is true, lists all files recursively."""
         return self.inner.list_status(path, recursive)
 
@@ -181,8 +191,46 @@ class Client:
         """
         return self.inner.set_replication(path, replication)
 
-    def get_content_summary(self, path: str) -> "ContentSummary":
+    def get_content_summary(self, path: str) -> ContentSummary:
         """
         Gets a content summary for `path`
         """
         return self.inner.get_content_summary(path)
+
+    def modify_acl_entries(self, path: str, entries: List[AclEntry]) -> None:
+        """
+        Update ACL entries for file or directory at `path`. Existing entries will remain.
+        """
+        return self.inner.modify_acl_entries(path, entries)
+
+    def remove_acl_entries(self, path: str, entries: List[AclEntry]) -> None:
+        """
+        Remove specific ACL entries for file or directory at `path`.
+        """
+        return self.inner.remove_acl_entries(path, entries)
+
+    def remove_default_acl(self, path: str) -> None:
+        """
+        Remove all default ACLs for file or directory at `path`.
+        """
+        return self.inner.remove_default_acl(path)
+
+    def remove_acl(self, path: str) -> None:
+        """
+        Remove all ACL entries for file or directory at `path`.
+        """
+        return self.inner.remove_acl(path)
+
+    def set_acl(self, path: str, entries: List[AclEntry]) -> None:
+        """
+        Override all ACL entries for file or directory at `path`. If only access ACLs are provided,
+        default ACLs are maintained. Likewise if only default ACLs are provided, access ACLs are
+        maintained.
+        """
+        return self.inner.set_acl(path, entries)
+
+    def get_acl_status(self, path: str) -> AclStatus:
+        """
+        Get the ACL status for the file or directory at `path`.
+        """
+        return self.inner.get_acl_status(path)

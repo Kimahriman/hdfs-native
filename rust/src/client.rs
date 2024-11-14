@@ -6,6 +6,7 @@ use futures::stream::BoxStream;
 use futures::{stream, StreamExt};
 use url::Url;
 
+use crate::acl::{AclEntry, AclStatus};
 use crate::common::config::{self, Configuration};
 use crate::ec::resolve_ec_policy;
 use crate::error::{HdfsError, Result};
@@ -497,7 +498,7 @@ impl Client {
         Ok(result)
     }
 
-    /// Gets a content summary for a file or directory rooted at `path
+    /// Gets a content summary for a file or directory rooted at `path`.
     pub async fn get_content_summary(&self, path: &str) -> Result<ContentSummary> {
         let (link, resolved_path) = self.mount_table.resolve(path);
         let result = link
@@ -507,6 +508,63 @@ impl Client {
             .summary;
 
         Ok(result.into())
+    }
+
+    /// Update ACL entries for file or directory at `path`. Existing entries will remain.
+    pub async fn modify_acl_entries(&self, path: &str, acl_spec: Vec<AclEntry>) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .modify_acl_entries(&resolved_path, acl_spec)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Remove specific ACL entries for file or directory at `path`.
+    pub async fn remove_acl_entries(&self, path: &str, acl_spec: Vec<AclEntry>) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .remove_acl_entries(&resolved_path, acl_spec)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Remove all default ACLs for file or directory at `path`.
+    pub async fn remove_default_acl(&self, path: &str) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol.remove_default_acl(&resolved_path).await?;
+
+        Ok(())
+    }
+
+    /// Remove all ACL entries for file or directory at `path`.
+    pub async fn remove_acl(&self, path: &str) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol.remove_acl(&resolved_path).await?;
+
+        Ok(())
+    }
+
+    /// Override all ACL entries for file or directory at `path`. If only access ACLs are provided,
+    /// default ACLs are maintained. Likewise if only default ACLs are provided, access ACLs are
+    /// maintained.
+    pub async fn set_acl(&self, path: &str, acl_spec: Vec<AclEntry>) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol.set_acl(&resolved_path, acl_spec).await?;
+
+        Ok(())
+    }
+
+    /// Get the ACL status for the file or directory at `path`.
+    pub async fn get_acl_status(&self, path: &str) -> Result<AclStatus> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        Ok(link
+            .protocol
+            .get_acl_status(&resolved_path)
+            .await?
+            .result
+            .into())
     }
 }
 
