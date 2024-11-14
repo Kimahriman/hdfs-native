@@ -467,13 +467,6 @@ mod test {
 
         let group_entry = AclEntry::new("group", "access", "-w-", Some("testgroup".to_string()));
 
-        let other_entry = AclEntry {
-            r#type: AclEntryType::Other,
-            scope: AclEntryScope::Access,
-            permissions: FsAction::Read,
-            name: None,
-        };
-
         client
             .modify_acl_entries("/test", vec![user_entry.clone()])
             .await?;
