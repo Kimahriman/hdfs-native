@@ -28,7 +28,7 @@
 //! # Ok(())
 //! # }
 //! ```
-
+pub mod acl;
 pub mod client;
 pub(crate) mod common;
 #[cfg(feature = "benchmark")]

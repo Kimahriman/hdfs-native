@@ -1,4 +1,4 @@
-from typing import Dict, Iterator, Optional
+from typing import Dict, Iterator, List, Literal, Optional
 
 # For some reason mypy doesn't think this exists
 from typing_extensions import Buffer  # type: ignore
@@ -22,6 +22,31 @@ class ContentSummary:
     quota: int
     space_consumed: int
     space_quota: int
+
+AclEntryType = Literal["user", "group", "mask", "other"]
+AclEntryScope = Literal["access", "default"]
+FsAction = Literal["---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"]
+
+class AclEntry:
+    type: AclEntryType
+    scope: AclEntryScope
+    permissions: FsAction
+    name: Optional[str]
+
+    def __init__(
+        self,
+        type: AclEntryType,
+        scope: AclEntryScope,
+        permissions: FsAction,
+        name: Optional[str] = None,
+    ): ...
+
+class AclStatus:
+    owner: str
+    group: str
+    sticky: bool
+    entries: List[AclEntry]
+    permission: int
 
 class WriteOptions:
     block_size: Optional[int]
@@ -85,4 +110,10 @@ class RawClient:
     ) -> None: ...
     def set_permission(self, path: str, permission: int) -> None: ...
     def set_replication(self, path: str, replication: int) -> bool: ...
-    def get_content_summary(self, path) -> ContentSummary: ...
+    def get_content_summary(self, path: str) -> ContentSummary: ...
+    def modify_acl_entries(self, path: str, entries: List[AclEntry]) -> None: ...
+    def remove_acl_entries(self, path: str, entries: List[AclEntry]) -> None: ...
+    def remove_default_acl(self, path: str) -> None: ...
+    def remove_acl(self, path: str) -> None: ...
+    def set_acl(self, path: str, entries: List[AclEntry]) -> None: ...
+    def get_acl_status(self, path: str) -> AclStatus: ...

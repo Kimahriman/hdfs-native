@@ -8,6 +8,7 @@ use prost::Message;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+use crate::acl::AclEntry;
 use crate::proto::hdfs::{
     self, DataEncryptionKeyProto, FsServerDefaultsProto, GetDataEncryptionKeyResponseProto,
 };
@@ -48,25 +49,30 @@ impl NamenodeProtocol {
         }
     }
 
+    async fn call<T: Message + Default>(
+        &self,
+        method_name: &'static str,
+        message: impl Message,
+        write: bool,
+    ) -> Result<T> {
+        debug!("{} request: {:?}", method_name, &message);
+
+        let response = self
+            .proxy
+            .call(method_name, message.encode_length_delimited_to_vec(), write)
+            .await?;
+
+        let decoded = T::decode_length_delimited(response)?;
+        debug!("{} response: {:?}", method_name, &decoded);
+
+        Ok(decoded)
+    }
+
     pub(crate) async fn get_file_info(&self, src: &str) -> Result<hdfs::GetFileInfoResponseProto> {
         let message = hdfs::GetFileInfoRequestProto {
             src: src.to_string(),
         };
-        debug!("get_file_info request: {:?}", &message);
-
-        let response = self
-            .proxy
-            .call(
-                "getFileInfo",
-                message.encode_length_delimited_to_vec(),
-                false,
-            )
-            .await?;
-
-        let decoded = hdfs::GetFileInfoResponseProto::decode_length_delimited(response)?;
-        debug!("get_file_info response: {:?}", &decoded);
-
-        Ok(decoded)
+        self.call("getFileInfo", message, false).await
     }
 
     pub(crate) async fn get_listing(
@@ -80,20 +86,8 @@ impl NamenodeProtocol {
             start_after,
             need_location,
         };
-        debug!("get_listing request: {:?}", &message);
 
-        let response = self
-            .proxy
-            .call(
-                "getListing",
-                message.encode_length_delimited_to_vec(),
-                false,
-            )
-            .await?;
-
-        let decoded = hdfs::GetListingResponseProto::decode_length_delimited(response)?;
-        debug!("get_listing response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("getListing", message, false).await
     }
 
     pub(crate) async fn get_located_file_info(
@@ -104,37 +98,13 @@ impl NamenodeProtocol {
             src: Some(src.to_string()),
             need_block_token: Some(true),
         };
-        debug!("getLocatedFileInfo request: {:?}", &message);
-
-        let response = self
-            .proxy
-            .call(
-                "getLocatedFileInfo",
-                message.encode_length_delimited_to_vec(),
-                false,
-            )
-            .await?;
-
-        let decoded = hdfs::GetLocatedFileInfoResponseProto::decode_length_delimited(response)?;
-        debug!("getLocatedFileInfo response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("getLocatedFileInfo", message, false).await
     }
 
     pub(crate) async fn get_server_defaults(&self) -> Result<hdfs::GetServerDefaultsResponseProto> {
         let message = hdfs::GetServerDefaultsRequestProto::default();
 
-        let response = self
-            .proxy
-            .call(
-                "getServerDefaults",
-                message.encode_length_delimited_to_vec(),
-                false,
-            )
-            .await?;
-
-        let decoded = hdfs::GetServerDefaultsResponseProto::decode_length_delimited(response)?;
-        debug!("get_server_defaults response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("getServerDefaults", message, false).await
     }
 
     pub(crate) async fn get_cached_server_defaults(&self) -> Result<FsServerDefaultsProto> {
@@ -153,18 +123,7 @@ impl NamenodeProtocol {
     ) -> Result<GetDataEncryptionKeyResponseProto> {
         let message = hdfs::GetDataEncryptionKeyRequestProto::default();
 
-        let response = self
-            .proxy
-            .call(
-                "getDataEncryptionKey",
-                message.encode_length_delimited_to_vec(),
-                false,
-            )
-            .await?;
-
-        let decoded = hdfs::GetDataEncryptionKeyResponseProto::decode_length_delimited(response)?;
-        debug!("get_data_encryption_key response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("getDataEncryptionKey", message, false).await
     }
 
     pub(crate) async fn get_cached_data_encryption_key(
@@ -219,16 +178,7 @@ impl NamenodeProtocol {
             ..Default::default()
         };
 
-        debug!("create request: {:?}", &message);
-
-        let response = self
-            .proxy
-            .call("create", message.encode_length_delimited_to_vec(), true)
-            .await?;
-
-        let decoded = hdfs::CreateResponseProto::decode_length_delimited(response)?;
-        debug!("create response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("create", message, true).await
     }
 
     pub(crate) async fn append(
@@ -247,16 +197,7 @@ impl NamenodeProtocol {
             flag: Some(flag),
         };
 
-        debug!("append request: {:?}", &message);
-
-        let response = self
-            .proxy
-            .call("append", message.encode_length_delimited_to_vec(), true)
-            .await?;
-
-        let decoded = hdfs::AppendResponseProto::decode_length_delimited(response)?;
-        debug!("append response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("append", message, true).await
     }
 
     pub(crate) async fn add_block(
@@ -273,16 +214,20 @@ impl NamenodeProtocol {
             ..Default::default()
         };
 
-        debug!("add_block request: {:?}", &message);
+        self.call("addBlock", message, true).await
+    }
 
-        let response = self
-            .proxy
-            .call("addBlock", message.encode_length_delimited_to_vec(), true)
-            .await?;
+    #[allow(dead_code)]
+    pub(crate) async fn update_block_for_pipeline(
+        &self,
+        block: hdfs::ExtendedBlockProto,
+    ) -> Result<hdfs::UpdateBlockForPipelineResponseProto> {
+        let message = hdfs::UpdateBlockForPipelineRequestProto {
+            block,
+            client_name: self.client_name.clone(),
+        };
 
-        let decoded = hdfs::AddBlockResponseProto::decode_length_delimited(response)?;
-        debug!("add_block response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("updateBlockForPipeline", message, true).await
     }
 
     pub(crate) async fn complete(
@@ -297,16 +242,7 @@ impl NamenodeProtocol {
             last,
             file_id,
         };
-        debug!("complete request: {:?}", &message);
-
-        let response = self
-            .proxy
-            .call("complete", message.encode_length_delimited_to_vec(), true)
-            .await?;
-
-        let decoded = hdfs::CompleteResponseProto::decode_length_delimited(response)?;
-        debug!("complete response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("complete", message, true).await
     }
 
     pub(crate) async fn mkdirs(
@@ -323,16 +259,7 @@ impl NamenodeProtocol {
             create_parent,
             ..Default::default()
         };
-        debug!("mkdirs request: {:?}", &message);
-
-        let response = self
-            .proxy
-            .call("mkdirs", message.encode_length_delimited_to_vec(), true)
-            .await?;
-
-        let decoded = hdfs::MkdirsResponseProto::decode_length_delimited(response)?;
-        debug!("mkdirs response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("mkdirs", message, true).await
     }
 
     pub(crate) async fn rename(
@@ -347,16 +274,7 @@ impl NamenodeProtocol {
             overwrite_dest: overwrite,
             ..Default::default()
         };
-        debug!("rename request: {:?}", &message);
-
-        let response = self
-            .proxy
-            .call("rename2", message.encode_length_delimited_to_vec(), true)
-            .await?;
-
-        let decoded = hdfs::Rename2ResponseProto::decode_length_delimited(response)?;
-        debug!("rename response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("rename2", message, true).await
     }
 
     pub(crate) async fn delete(
@@ -368,16 +286,7 @@ impl NamenodeProtocol {
             src: src.to_string(),
             recursive,
         };
-        debug!("delete request: {:?}", &message);
-
-        let response = self
-            .proxy
-            .call("delete", message.encode_length_delimited_to_vec(), true)
-            .await?;
-
-        let decoded = hdfs::DeleteResponseProto::decode_length_delimited(response)?;
-        debug!("delete response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("delete", message, true).await
     }
 
     pub(crate) async fn renew_lease(
@@ -388,16 +297,7 @@ impl NamenodeProtocol {
             client_name: self.client_name.clone(),
             namespaces,
         };
-        debug!("renewLease request: {:?}", &message);
-
-        let response = self
-            .proxy
-            .call("renewLease", message.encode_length_delimited_to_vec(), true)
-            .await?;
-
-        let decoded = hdfs::RenewLeaseResponseProto::decode_length_delimited(response)?;
-        debug!("renewLease response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("renewLease", message, true).await
     }
 
     pub(crate) async fn set_times(
@@ -411,16 +311,7 @@ impl NamenodeProtocol {
             mtime,
             atime,
         };
-        debug!("setTimes request: {:?}", &message);
-
-        let response = self
-            .proxy
-            .call("setTimes", message.encode_length_delimited_to_vec(), true)
-            .await?;
-
-        let decoded = hdfs::SetTimesResponseProto::decode_length_delimited(response)?;
-        debug!("setTimes response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("setTimes", message, true).await
     }
 
     pub(crate) async fn set_owner(
@@ -435,16 +326,7 @@ impl NamenodeProtocol {
             groupname: group.map(str::to_string),
         };
 
-        debug!("setOwner request: {:?}", &message);
-
-        let response = self
-            .proxy
-            .call("setOwner", message.encode_length_delimited_to_vec(), true)
-            .await?;
-
-        let decoded = hdfs::SetOwnerResponseProto::decode_length_delimited(response)?;
-        debug!("setOwner response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("setOwner", message, true).await
     }
 
     pub(crate) async fn set_permission(
@@ -456,21 +338,7 @@ impl NamenodeProtocol {
             src: src.to_string(),
             permission: hdfs::FsPermissionProto { perm: permission },
         };
-
-        debug!("setPermission request: {:?}", &message);
-
-        let response = self
-            .proxy
-            .call(
-                "setPermission",
-                message.encode_length_delimited_to_vec(),
-                true,
-            )
-            .await?;
-
-        let decoded = hdfs::SetPermissionResponseProto::decode_length_delimited(response)?;
-        debug!("setPermission response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("setPermission", message, true).await
     }
 
     pub(crate) async fn set_replication(
@@ -482,21 +350,7 @@ impl NamenodeProtocol {
             src: src.to_string(),
             replication,
         };
-
-        debug!("setReplication request: {:?}", &message);
-
-        let response = self
-            .proxy
-            .call(
-                "setReplication",
-                message.encode_length_delimited_to_vec(),
-                true,
-            )
-            .await?;
-
-        let decoded = hdfs::SetReplicationResponseProto::decode_length_delimited(response)?;
-        debug!("setReplication response: {:?}", &decoded);
-        Ok(decoded)
+        self.call("setReplication", message, true).await
     }
 
     pub(crate) async fn get_content_summary(
@@ -506,21 +360,72 @@ impl NamenodeProtocol {
         let message = hdfs::GetContentSummaryRequestProto {
             path: path.to_string(),
         };
+        self.call("getContentSummary", message, false).await
+    }
 
-        debug!("getContentSummary request: {:?}", &message);
+    pub(crate) async fn modify_acl_entries(
+        &self,
+        path: &str,
+        acl_spec: Vec<AclEntry>,
+    ) -> Result<hdfs::ModifyAclEntriesResponseProto> {
+        let message = hdfs::ModifyAclEntriesRequestProto {
+            src: path.to_string(),
+            acl_spec: acl_spec.into_iter().collect(),
+        };
 
-        let response = self
-            .proxy
-            .call(
-                "getContentSummary",
-                message.encode_length_delimited_to_vec(),
-                false,
-            )
-            .await?;
+        self.call("modifyAclEntries", message, false).await
+    }
 
-        let decoded = hdfs::GetContentSummaryResponseProto::decode_length_delimited(response)?;
-        debug!("getContentSummary response: {:?}", &decoded);
-        Ok(decoded)
+    pub(crate) async fn remove_acl_entries(
+        &self,
+        path: &str,
+        acl_spec: Vec<AclEntry>,
+    ) -> Result<hdfs::RemoveAclEntriesResponseProto> {
+        let message = hdfs::RemoveAclEntriesRequestProto {
+            src: path.to_string(),
+            acl_spec: acl_spec.into_iter().collect(),
+        };
+
+        self.call("removeAclEntries", message, false).await
+    }
+
+    pub(crate) async fn remove_default_acl(
+        &self,
+        path: &str,
+    ) -> Result<hdfs::RemoveDefaultAclResponseProto> {
+        let message = hdfs::RemoveDefaultAclRequestProto {
+            src: path.to_string(),
+        };
+        self.call("removeDefaultAcl", message, false).await
+    }
+
+    pub(crate) async fn remove_acl(&self, path: &str) -> Result<hdfs::RemoveAclResponseProto> {
+        let message = hdfs::RemoveAclRequestProto {
+            src: path.to_string(),
+        };
+        self.call("removeAcl", message, false).await
+    }
+
+    pub(crate) async fn set_acl(
+        &self,
+        path: &str,
+        acl_spec: Vec<AclEntry>,
+    ) -> Result<hdfs::SetAclResponseProto> {
+        let message = hdfs::SetAclRequestProto {
+            src: path.to_string(),
+            acl_spec: acl_spec.into_iter().collect(),
+        };
+        self.call("setAcl", message, false).await
+    }
+
+    pub(crate) async fn get_acl_status(
+        &self,
+        path: &str,
+    ) -> Result<hdfs::GetAclStatusResponseProto> {
+        let message = hdfs::GetAclStatusRequestProto {
+            src: path.to_string(),
+        };
+        self.call("getAclStatus", message, false).await
     }
 }
 
