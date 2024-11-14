@@ -1,6 +1,6 @@
 import io
 
-from hdfs_native import Client, WriteOptions
+from hdfs_native import AclEntry, Client, WriteOptions
 
 
 def test_integration(client: Client):
@@ -115,3 +115,34 @@ def test_write_options(client: Client):
     assert file_info.length == 0
     assert file_info.permission == 0o700
     assert file_info.blocksize == 1024 * 1024
+
+
+def test_acls(client: Client):
+    client.create("/test").close()
+
+    acl_status = client.get_acl_status("/test")
+    assert len(acl_status.entries) == 0
+
+    client.modify_acl_entries("/test", [AclEntry("user", "access", "r-x", "testuser")])
+    # Should be 2 entries now, a default group entry gets added as well
+    acl_status = client.get_acl_status("/test")
+    assert len(acl_status.entries) == 2
+
+    client.remove_acl("/test")
+    acl_status = client.get_acl_status("/test")
+    assert len(acl_status.entries) == 0
+
+    client.delete("/test")
+
+    client.mkdirs("/testdir")
+
+    client.modify_acl_entries(
+        "/testdir", [AclEntry("user", "default", "rwx", "testuser")]
+    )
+    # 4 other defaults get added automatically
+    acl_status = client.get_acl_status("/testdir")
+    assert len(acl_status.entries) == 5
+
+    client.remove_default_acl("/testdir")
+    acl_status = client.get_acl_status("/testdir")
+    assert len(acl_status.entries) == 0
