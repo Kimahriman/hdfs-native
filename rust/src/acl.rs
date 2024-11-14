@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::proto::hdfs::{
     acl_entry_proto::{AclEntryScopeProto, AclEntryTypeProto, FsActionProto},
     AclEntryProto, AclStatusProto,
@@ -51,6 +53,21 @@ impl From<String> for AclEntryType {
     }
 }
 
+impl Display for AclEntryType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                AclEntryType::User => "user",
+                AclEntryType::Group => "group",
+                AclEntryType::Mask => "mask",
+                AclEntryType::Other => "other",
+            }
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum AclEntryScope {
     Access,
@@ -88,6 +105,19 @@ impl From<&str> for AclEntryScope {
 impl From<String> for AclEntryScope {
     fn from(value: String) -> Self {
         Self::from(value.as_ref())
+    }
+}
+
+impl Display for AclEntryScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                AclEntryScope::Access => "access",
+                AclEntryScope::Default => "default",
+            }
+        )
     }
 }
 
@@ -152,6 +182,25 @@ impl From<&str> for FsAction {
 impl From<String> for FsAction {
     fn from(value: String) -> Self {
         Self::from(value.as_ref())
+    }
+}
+
+impl Display for FsAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                FsAction::None => "---",
+                FsAction::Execute => "--x",
+                FsAction::Write => "-w-",
+                FsAction::WriteExecute => "-wx",
+                FsAction::Read => "r--",
+                FsAction::ReadExecute => "r-x",
+                FsAction::ReadWrite => "rw-",
+                FsAction::PermAll => "rwx",
+            }
+        )
     }
 }
 
