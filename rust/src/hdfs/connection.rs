@@ -479,7 +479,7 @@ impl Packet {
 
         self.header.data_len = data.len() as i32;
 
-        (self.header.clone(), checksum, data)
+        (self.header, checksum, data)
     }
 
     pub(crate) fn get_data(

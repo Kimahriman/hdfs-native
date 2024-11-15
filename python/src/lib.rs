@@ -201,6 +201,7 @@ impl FromIterator<PyAclEntry> for Vec<AclEntry> {
 #[pymethods]
 impl PyAclEntry {
     #[new]
+    #[pyo3(signature = (r#type, scope, permissions, name=None))]
     pub fn new(r#type: String, scope: String, permissions: String, name: Option<String>) -> Self {
         Self {
             r#type,
@@ -296,6 +297,7 @@ impl From<WriteOptions> for PyWriteOptions {
 #[pymethods]
 impl PyWriteOptions {
     #[new]
+    #[pyo3(signature = (block_size=None, replication=None, permission=None, overwrite=None, create_parent=None))]
     pub fn new(
         block_size: Option<u64>,
         replication: Option<u32>,
@@ -459,6 +461,7 @@ impl RawClient {
         Ok(py.allow_threads(|| self.rt.block_on(self.inner.set_times(path, mtime, atime)))?)
     }
 
+    #[pyo3(signature = (path, owner=None, group=None))]
     pub fn set_owner(
         &self,
         path: &str,
@@ -541,7 +544,7 @@ impl RawClient {
 
 /// A Python module implemented in Rust.
 #[pymodule]
-fn _internal(_py: Python, m: &PyModule) -> PyResult<()> {
+fn _internal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RawClient>()?;
     m.add_class::<PyFileStatus>()?;
     m.add_class::<PyContentSummary>()?;

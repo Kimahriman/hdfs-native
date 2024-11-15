@@ -230,7 +230,7 @@ impl ReplicatedBlockStream {
         tokio::spawn(async move {
             loop {
                 let packet = connection.read_packet().await?;
-                let header = packet.header.clone();
+                let header = packet.header;
                 let data = packet.get_data(&checksum_info)?;
 
                 // If the packet is empty it means it's the last packet
