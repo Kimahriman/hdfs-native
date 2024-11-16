@@ -387,12 +387,12 @@ impl ReplicatedBlockWriter {
                 #[cfg(feature = "integration-test")]
                 if *crate::test::WRITE_CONNECTION_FAULT_INJECTOR.lock().unwrap() {
                     debug!("Failing write to active node");
-                    return WriteStatus::Recover(Some(0), Self::drain_queue(packet_receiver).await);
+                    return WriteStatus::Recover(None, Self::drain_queue(packet_receiver).await);
                 }
 
                 if let Err(e) = writer.write_packet(&mut packet).await {
                     warn!("Failed to send packet to DataNode: {:?}", e);
-                    return WriteStatus::Recover(Some(0), Self::drain_queue(packet_receiver).await);
+                    return WriteStatus::Recover(None, Self::drain_queue(packet_receiver).await);
                 }
 
                 let last_packet = packet.header.last_packet_in_block;
