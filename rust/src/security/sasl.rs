@@ -252,7 +252,7 @@ impl SaslReader {
 
         let mut bytes = buf.freeze();
         let rpc_response = RpcResponseHeaderProto::decode_length_delimited(&mut bytes)?;
-        debug!("{:?}", rpc_response);
+        debug!("RPC response: {:?}", rpc_response);
 
         match RpcStatusProto::try_from(rpc_response.status).unwrap() {
             RpcStatusProto::Error => {
@@ -339,6 +339,8 @@ impl SaslWriter {
     }
 
     async fn send_sasl_message(&mut self, message: &RpcSaslProto) -> io::Result<()> {
+        debug!("Sending SASL message {:?}", message);
+
         let header_buf = Self::create_request_header().encode_length_delimited_to_vec();
         let message_buf = message.encode_length_delimited_to_vec();
         let size = (header_buf.len() + message_buf.len()) as u32;
