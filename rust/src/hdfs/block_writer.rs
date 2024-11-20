@@ -7,12 +7,13 @@ use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
     ec::{gf256::Coder, EcSchema},
-    hdfs::connection::{DatanodeConnection, DatanodeReader, DatanodeWriter, Op, Packet},
+    hdfs::{
+        connection::{DatanodeConnection, DatanodeReader, DatanodeWriter, Op, WritePacket},
+        protocol::NamenodeProtocol,
+    },
     proto::hdfs,
     HdfsError, Result,
 };
-
-use super::protocol::NamenodeProtocol;
 
 const HEART_BEAT_SEQNO: i64 = -1;
 const UNKNOWN_SEQNO: i64 = -2;
@@ -84,7 +85,7 @@ impl BlockWriter {
 
 enum WriteStatus {
     Success,
-    Recover(Option<usize>, Vec<Packet>),
+    Recover(Vec<usize>, Vec<WritePacket>),
 }
 
 pub(crate) struct ReplicatedBlockWriter {
@@ -93,17 +94,17 @@ pub(crate) struct ReplicatedBlockWriter {
     block_size: usize,
     server_defaults: hdfs::FsServerDefaultsProto,
 
-    current_packet: Packet,
+    current_packet: WritePacket,
 
     // Tracks the state of acknowledgements. Set to an Err if any error occurs doing receiving
     // acknowledgements. Set to Ok(()) when the last acknowledgement is received.
     ack_listener_handle: Option<JoinHandle<Result<WriteStatus>>>,
     // Tracks the state of packet sender. Set to Err if any error occurs during writing packets,
-    packet_sender_handle: Option<JoinHandle<WriteStatus>>,
+    packet_sender_handle: Option<JoinHandle<Vec<WritePacket>>>,
     // Tracks the heartbeat task so we can abort it when we close
     heartbeat_handle: JoinHandle<()>,
 
-    packet_sender: mpsc::Sender<Packet>,
+    packet_sender: mpsc::Sender<WritePacket>,
 }
 
 impl ReplicatedBlockWriter {
@@ -117,34 +118,32 @@ impl ReplicatedBlockWriter {
 
         // Channel for tracking packets that need to be acked
         let (ack_queue_sender, ack_queue_receiever) =
-            mpsc::channel::<Packet>(WRITE_PACKET_BUFFER_LEN);
-        let (packet_sender, packet_receiver) = mpsc::channel::<Packet>(WRITE_PACKET_BUFFER_LEN);
+            mpsc::channel::<WritePacket>(WRITE_PACKET_BUFFER_LEN);
+        let (packet_sender, packet_receiver) =
+            mpsc::channel::<WritePacket>(WRITE_PACKET_BUFFER_LEN);
 
         let ack_listener_handle = Self::listen_for_acks(reader, ack_queue_receiever);
         let packet_sender_handle =
             Self::start_packet_sender(writer, packet_receiver, ack_queue_sender);
         let heartbeat_handle = Self::start_heartbeat_sender(packet_sender.clone());
 
-        let bytes_per_checksum = server_defaults.bytes_per_checksum;
-        let write_packet_size = server_defaults.write_packet_size;
-
         let bytes_in_last_chunk = block.b.num_bytes() % server_defaults.bytes_per_checksum as u64;
         let current_packet = if bytes_in_last_chunk > 0 {
             // When appending, we want to first send a packet with a single chunk of the data required
             // to get the block to a multiple of bytes_per_checksum. After that, things work the same
             // as create.
-            Packet::empty(
+            WritePacket::empty(
                 block.b.num_bytes() as i64,
                 0,
                 server_defaults.bytes_per_checksum - bytes_in_last_chunk as u32,
                 0,
             )
         } else {
-            Packet::empty(
+            WritePacket::empty(
                 block.b.num_bytes() as i64,
                 0,
-                bytes_per_checksum,
-                write_packet_size,
+                server_defaults.bytes_per_checksum,
+                server_defaults.write_packet_size,
             )
         };
 
@@ -155,8 +154,8 @@ impl ReplicatedBlockWriter {
             server_defaults,
             current_packet,
 
-            ack_listener_handle,
-            packet_sender_handle,
+            ack_listener_handle: Some(ack_listener_handle),
+            packet_sender_handle: Some(packet_sender_handle),
             heartbeat_handle,
 
             packet_sender,
@@ -165,17 +164,31 @@ impl ReplicatedBlockWriter {
         Ok(this)
     }
 
-    async fn recover(&mut self, failed_node: usize) -> Result<()> {
+    async fn recover(&mut self) -> Result<()> {
         if self.block.locs.len() <= 1 {
             return Err(HdfsError::DataTransferError(
                 "All nodes failed for write".to_string(),
             ));
         }
 
+        let packets_to_send = self.packet_sender_handle.take().unwrap().await.unwrap();
+
+        let (failed_nodes, packets_awaiting_ack) =
+            match self.ack_listener_handle.take().unwrap().await.unwrap()? {
+                WriteStatus::Success => {
+                    return Err(HdfsError::DataTransferError(
+                        "Last packet received before trying to recover".to_string(),
+                    ))
+                }
+                WriteStatus::Recover(failed_nodes, packets) => (failed_nodes, packets),
+            };
+
         let mut new_block = self.block.clone();
-        new_block.locs.remove(failed_node);
-        new_block.storage_i_ds.remove(failed_node);
-        new_block.storage_types.remove(failed_node);
+        for failed_node in failed_nodes {
+            new_block.locs.remove(failed_node);
+            new_block.storage_i_ds.remove(failed_node);
+            new_block.storage_types.remove(failed_node);
+        }
 
         self.block = new_block;
 
@@ -187,19 +200,33 @@ impl ReplicatedBlockWriter {
         self.block.b.generation_stamp = updated_block.block.b.generation_stamp;
         self.block.block_token = updated_block.block.block_token;
 
-        let (packet_sender, packet_receiver) = mpsc::channel::<Packet>(WRITE_PACKET_BUFFER_LEN);
-        let (ack_queue_sender, ack_queue_receiever) =
-            mpsc::channel::<Packet>(WRITE_PACKET_BUFFER_LEN);
+        let (reader, writer) =
+            Self::setup_pipeline(&self.protocol, &self.block, &self.server_defaults).await?;
 
-        // This will drop the current sender, closing the packet receiver and and packet sender task
-        // if it hasn't already failed
+        let (packet_sender, packet_receiver) =
+            mpsc::channel::<WritePacket>(WRITE_PACKET_BUFFER_LEN);
+        let (ack_queue_sender, ack_queue_receiever) =
+            mpsc::channel::<WritePacket>(WRITE_PACKET_BUFFER_LEN);
+
         self.heartbeat_handle.abort();
         self.packet_sender = packet_sender;
 
-        let ack_listener_handle = Self::listen_for_acks(reader, ack_queue_receiever);
-        let packet_sender_handle =
-            Self::start_packet_sender(writer, packet_receiver, ack_queue_sender);
-        let heartbeat_handle = Self::start_heartbeat_sender(packet_sender.clone());
+        self.ack_listener_handle = Some(Self::listen_for_acks(reader, ack_queue_receiever));
+        self.packet_sender_handle = Some(Self::start_packet_sender(
+            writer,
+            packet_receiver,
+            ack_queue_sender,
+        ));
+        self.heartbeat_handle = Self::start_heartbeat_sender(self.packet_sender.clone());
+
+        for packet in packets_awaiting_ack
+            .into_iter()
+            .chain(packets_to_send.into_iter())
+        {
+            self.packet_sender.send(packet).await.map_err(|_| {
+                HdfsError::DataTransferError("Failed to replay packets during recovery".to_string())
+            })?;
+        }
 
         Ok(())
     }
@@ -254,8 +281,8 @@ impl ReplicatedBlockWriter {
     }
 
     // Create the next packet and return the current packet
-    fn create_next_packet(&mut self) -> Packet {
-        let next_packet = Packet::empty(
+    fn create_next_packet(&mut self) -> WritePacket {
+        let next_packet = WritePacket::empty(
             self.block.b.num_bytes() as i64,
             self.current_packet.header.seqno + 1,
             self.server_defaults.bytes_per_checksum,
@@ -266,41 +293,20 @@ impl ReplicatedBlockWriter {
 
     async fn send_current_packet(&mut self) -> Result<()> {
         // Create a fresh packet
-        let current_packet = self.create_next_packet();
+        let mut current_packet = self.create_next_packet();
 
-        // Send the packet
-        self.packet_sender.send(current_packet).await.map_err(|_| {
-            HdfsError::DataTransferError("Failed to send to sender queue".to_string())
-        })?;
-
-        Ok(())
-    }
-
-    async fn check_error(&mut self) -> Result<()> {
-        // If either task is finished, attempt to recover
-        if self.ack_listener_handle.as_ref().unwrap().is_finished() {
-            match self.ack_listener_handle.take().unwrap().await.unwrap()? {
-                WriteStatus::Success => {
-                    return Err(HdfsError::DataTransferError(
-                        "Ack listener finished prematurely".to_string(),
-                    ));
+        loop {
+            // Send the packet
+            match self.packet_sender.send(current_packet).await {
+                // Packet sender failed, which means some error happened. The ack listener
+                // should also fail when this happens, so attempt to recover.
+                Ok(_) => return Ok(()),
+                Err(err) => {
+                    current_packet = err.0;
+                    self.recover().await?;
                 }
-                WriteStatus::Recover(failed_node, packets) => {}
             }
         }
-
-        if self.packet_sender_handle.as_ref().unwrap().is_finished() {
-            match self.packet_sender_handle.take().unwrap().await.unwrap() {
-                WriteStatus::Success => {
-                    return Err(HdfsError::DataTransferError(
-                        "Packet sender finished prematurely".to_string(),
-                    ))
-                }
-                WriteStatus::Recover(failed_node, packets) => todo!(),
-            }
-        }
-
-        Ok(())
     }
 
     fn is_full(&self) -> bool {
@@ -312,8 +318,6 @@ impl ReplicatedBlockWriter {
     }
 
     async fn write(&mut self, buf: &mut Bytes) -> Result<()> {
-        self.check_error()?;
-
         // Only write up to what's left in this block
         let bytes_to_write = usize::min(
             buf.len(),
@@ -338,8 +342,6 @@ impl ReplicatedBlockWriter {
 
     /// Send a packet with any remaining data and then send a last packet
     async fn close(mut self) -> Result<()> {
-        self.check_error().await?;
-
         // Send a packet with any remaining data
         if !self.current_packet.is_empty() {
             self.send_current_packet().await?;
@@ -352,69 +354,97 @@ impl ReplicatedBlockWriter {
         self.heartbeat_handle.abort();
 
         // Wait for all packets to be sent
-        self.packet_sender_handle.await.map_err(|_| {
-            HdfsError::DataTransferError(
-                "Packet sender task err while waiting for packets to send".to_string(),
-            )
-        })??;
+        self.packet_sender_handle
+            .take()
+            .unwrap()
+            .await
+            .map_err(|_| {
+                HdfsError::DataTransferError(
+                    "Packet sender task err while waiting for packets to send".to_string(),
+                )
+            })?;
 
         // Wait for the channel to close, meaning all acks have been received or an error occured
-        self.ack_listener_handle.await.map_err(|_| {
-            HdfsError::DataTransferError(
-                "Ack status channel closed while waiting for final ack".to_string(),
-            )
-        })??;
+        self.ack_listener_handle
+            .take()
+            .unwrap()
+            .await
+            .map_err(|_| {
+                HdfsError::DataTransferError(
+                    "Ack status channel closed while waiting for final ack".to_string(),
+                )
+            })??;
 
         Ok(())
     }
 
-    async fn drain_queue(mut queue: mpsc::Receiver<Packet>) -> Vec<Packet> {
+    async fn drain_queue(mut queue: mpsc::Receiver<WritePacket>) -> Vec<WritePacket> {
         queue.close();
 
         let mut packets = Vec::with_capacity(queue.len());
-        queue.recv_many(&mut packets, queue.len()).await;
+        while let Some(packet) = queue.recv().await {
+            packets.push(packet);
+        }
         packets
     }
 
     fn start_packet_sender(
         mut writer: DatanodeWriter,
-        mut packet_receiver: mpsc::Receiver<Packet>,
-        ack_queue: mpsc::Sender<Packet>,
-    ) -> JoinHandle<WriteStatus> {
+        mut packet_receiver: mpsc::Receiver<WritePacket>,
+        ack_queue: mpsc::Sender<WritePacket>,
+    ) -> JoinHandle<Vec<WritePacket>> {
         tokio::spawn(async move {
             while let Some(mut packet) = packet_receiver.recv().await {
                 // Simulate node we are writing to failing
                 #[cfg(feature = "integration-test")]
-                if *crate::test::WRITE_CONNECTION_FAULT_INJECTOR.lock().unwrap() {
+                if crate::test::WRITE_CONNECTION_FAULT_INJECTOR
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .is_some()
+                {
                     debug!("Failing write to active node");
-                    return WriteStatus::Recover(None, Self::drain_queue(packet_receiver).await);
+                    return [packet]
+                        .into_iter()
+                        .chain(Self::drain_queue(packet_receiver).await)
+                        .collect();
                 }
 
                 if let Err(e) = writer.write_packet(&mut packet).await {
                     warn!("Failed to send packet to DataNode: {:?}", e);
-                    return WriteStatus::Recover(None, Self::drain_queue(packet_receiver).await);
+                    return [packet]
+                        .into_iter()
+                        .chain(Self::drain_queue(packet_receiver).await)
+                        .collect();
+                }
+
+                if packet.header.seqno == HEART_BEAT_SEQNO {
+                    continue;
                 }
 
                 let last_packet = packet.header.last_packet_in_block;
 
-                if let Err(_) = ack_queue.send(packet).await {
+                if let Err(err) = ack_queue.send(packet).await {
                     // Ack listener failed, so it will have a failed node
-                    return WriteStatus::Recover(None, Self::drain_queue(packet_receiver).await);
+                    return [err.0]
+                        .into_iter()
+                        .chain(Self::drain_queue(packet_receiver).await)
+                        .collect();
                 };
 
                 if last_packet {
                     break;
                 }
             }
-            WriteStatus::Success
+            vec![]
         })
     }
 
-    fn start_heartbeat_sender(packet_sender: mpsc::Sender<Packet>) -> JoinHandle<()> {
+    fn start_heartbeat_sender(packet_sender: mpsc::Sender<WritePacket>) -> JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(HEARTBEAT_INTERVAL_SECONDS)).await;
-                let heartbeat_packet = Packet::empty(0, HEART_BEAT_SEQNO, 0, 0);
+                let heartbeat_packet = WritePacket::empty(0, HEART_BEAT_SEQNO, 0, 0);
                 // If this fails, sending anymore data packets will generate an error as well
                 if packet_sender.send(heartbeat_packet).await.is_err() {
                     break;
@@ -425,7 +455,7 @@ impl ReplicatedBlockWriter {
 
     fn listen_for_acks(
         mut reader: DatanodeReader,
-        mut ack_queue: mpsc::Receiver<Packet>,
+        mut ack_queue: mpsc::Receiver<WritePacket>,
     ) -> JoinHandle<Result<WriteStatus>> {
         tokio::spawn(async move {
             loop {
@@ -434,11 +464,13 @@ impl ReplicatedBlockWriter {
                     Err(e) => {
                         warn!("Failed to read ack from DataNode: {}", e);
                         return Ok(WriteStatus::Recover(
-                            Some(0),
+                            vec![0],
                             Self::drain_queue(ack_queue).await,
                         ));
                     }
                 };
+
+                let mut failed_nodes: Vec<usize> = vec![];
 
                 for (i, reply) in next_ack.reply().enumerate() {
                     // Simulate node we are replicating to failing
@@ -446,21 +478,24 @@ impl ReplicatedBlockWriter {
                     if crate::test::WRITE_REPLY_FAULT_INJECTOR
                         .lock()
                         .unwrap()
+                        .take()
                         .is_some_and(|j| i == j)
                     {
                         debug!("Failing write to replica node");
-                        return Ok(WriteStatus::Recover(
-                            Some(i),
-                            Self::drain_queue(ack_queue).await,
-                        ));
+                        failed_nodes.push(i);
                     }
 
                     if reply != hdfs::Status::Success {
-                        return Ok(WriteStatus::Recover(
-                            Some(i),
-                            Self::drain_queue(ack_queue).await,
-                        ));
+                        failed_nodes.push(i);
                     }
+                }
+
+                if !failed_nodes.is_empty() {
+                    // I need a way to make sure the packet sender thread dies here
+                    return Ok(WriteStatus::Recover(
+                        failed_nodes,
+                        Self::drain_queue(ack_queue).await,
+                    ));
                 }
 
                 if next_ack.seqno == HEART_BEAT_SEQNO {
@@ -473,6 +508,7 @@ impl ReplicatedBlockWriter {
                 }
 
                 if let Some(packet) = ack_queue.recv().await {
+                    debug!("Next: {}, packet: {}", next_ack.seqno, packet.header.seqno);
                     if next_ack.seqno != packet.header.seqno {
                         return Err(HdfsError::DataTransferError(
                             "Received acknowledgement does not match expected sequence number"
@@ -484,9 +520,10 @@ impl ReplicatedBlockWriter {
                         return Ok(WriteStatus::Success);
                     }
                 } else {
-                    // Error occurred in the packet sender, just return the unacknowledged packets
+                    // Error occurred in the packet sender, which would only happen on errors
+                    // communicating with the DataNode
                     return Ok(WriteStatus::Recover(
-                        None,
+                        vec![0],
                         Self::drain_queue(ack_queue).await,
                     ));
                 }
