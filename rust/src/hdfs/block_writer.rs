@@ -68,14 +68,7 @@ impl BlockWriter {
         }
     }
 
-    pub(crate) fn get_extended_block(&self) -> hdfs::ExtendedBlockProto {
-        match self {
-            Self::Replicated(writer) => writer.get_extended_block(),
-            Self::Striped(writer) => writer.get_extended_block(),
-        }
-    }
-
-    pub(crate) async fn close(self) -> Result<()> {
+    pub(crate) async fn close(self) -> Result<hdfs::ExtendedBlockProto> {
         match self {
             Self::Replicated(writer) => writer.close().await,
             Self::Striped(writer) => writer.close().await,
@@ -88,33 +81,20 @@ enum WriteStatus {
     Recover(Vec<usize>, Vec<WritePacket>),
 }
 
-pub(crate) struct ReplicatedBlockWriter {
-    protocol: Arc<NamenodeProtocol>,
-    block: hdfs::LocatedBlockProto,
-    block_size: usize,
-    server_defaults: hdfs::FsServerDefaultsProto,
-
-    current_packet: WritePacket,
-
+struct Pipeline {
+    packet_sender: mpsc::Sender<WritePacket>,
     // Tracks the state of acknowledgements. Set to an Err if any error occurs doing receiving
-    // acknowledgements. Set to Ok(()) when the last acknowledgement is received.
-    ack_listener_handle: Option<JoinHandle<Result<WriteStatus>>>,
+    // acknowledgements. Set to Ok(WriteStatus::Success) when the last acknowledgement is received.
+    ack_listener_handle: JoinHandle<Result<WriteStatus>>,
     // Tracks the state of packet sender. Set to Err if any error occurs during writing packets,
-    packet_sender_handle: Option<JoinHandle<Vec<WritePacket>>>,
+    packet_sender_handle: JoinHandle<Vec<WritePacket>>,
     // Tracks the heartbeat task so we can abort it when we close
     heartbeat_handle: JoinHandle<()>,
-
-    packet_sender: mpsc::Sender<WritePacket>,
 }
 
-impl ReplicatedBlockWriter {
-    async fn new(
-        protocol: Arc<NamenodeProtocol>,
-        block: hdfs::LocatedBlockProto,
-        block_size: usize,
-        server_defaults: hdfs::FsServerDefaultsProto,
-    ) -> Result<Self> {
-        let (reader, writer) = Self::setup_pipeline(&protocol, &block, &server_defaults).await?;
+impl Pipeline {
+    fn new(connection: DatanodeConnection) -> Self {
+        let (reader, writer) = connection.split();
 
         // Channel for tracking packets that need to be acked
         let (ack_queue_sender, ack_queue_receiever) =
@@ -127,255 +107,38 @@ impl ReplicatedBlockWriter {
             Self::start_packet_sender(writer, packet_receiver, ack_queue_sender);
         let heartbeat_handle = Self::start_heartbeat_sender(packet_sender.clone());
 
-        let bytes_in_last_chunk = block.b.num_bytes() % server_defaults.bytes_per_checksum as u64;
-        let current_packet = if bytes_in_last_chunk > 0 {
-            // When appending, we want to first send a packet with a single chunk of the data required
-            // to get the block to a multiple of bytes_per_checksum. After that, things work the same
-            // as create.
-            WritePacket::empty(
-                block.b.num_bytes() as i64,
-                0,
-                server_defaults.bytes_per_checksum - bytes_in_last_chunk as u32,
-                0,
-            )
-        } else {
-            WritePacket::empty(
-                block.b.num_bytes() as i64,
-                0,
-                server_defaults.bytes_per_checksum,
-                server_defaults.write_packet_size,
-            )
-        };
-
-        let this = Self {
-            protocol,
-            block,
-            block_size,
-            server_defaults,
-            current_packet,
-
-            ack_listener_handle: Some(ack_listener_handle),
-            packet_sender_handle: Some(packet_sender_handle),
-            heartbeat_handle,
-
+        Self {
             packet_sender,
-        };
-
-        Ok(this)
+            ack_listener_handle,
+            packet_sender_handle,
+            heartbeat_handle,
+        }
     }
 
-    async fn recover(&mut self) -> Result<()> {
-        if self.block.locs.len() <= 1 {
-            return Err(HdfsError::DataTransferError(
-                "All nodes failed for write".to_string(),
-            ));
-        }
+    async fn send_packet(&self, packet: WritePacket) -> std::result::Result<(), WritePacket> {
+        self.packet_sender.send(packet).await.map_err(|e| e.0)
+    }
 
-        let packets_to_send = self.packet_sender_handle.take().unwrap().await.unwrap();
+    async fn shutdown(self) -> Result<WriteStatus> {
+        self.heartbeat_handle.abort();
 
-        let (failed_nodes, packets_awaiting_ack) =
-            match self.ack_listener_handle.take().unwrap().await.unwrap()? {
-                WriteStatus::Success => {
+        let (failed_nodes, unacked_packets) = match self.ack_listener_handle.await.unwrap()? {
+            WriteStatus::Success => {
+                if !self.packet_sender_handle.await.unwrap().is_empty() {
                     return Err(HdfsError::DataTransferError(
-                        "Last packet received before trying to recover".to_string(),
-                    ))
+                        "Failed to send all packets to DataNode".to_string(),
+                    ));
                 }
-                WriteStatus::Recover(failed_nodes, packets) => (failed_nodes, packets),
-            };
-
-        let mut new_block = self.block.clone();
-        for failed_node in failed_nodes {
-            new_block.locs.remove(failed_node);
-            new_block.storage_i_ds.remove(failed_node);
-            new_block.storage_types.remove(failed_node);
-        }
-
-        self.block = new_block;
-
-        let updated_block = self
-            .protocol
-            .update_block_for_pipeline(self.block.b.clone())
-            .await?;
-
-        self.block.b.generation_stamp = updated_block.block.b.generation_stamp;
-        self.block.block_token = updated_block.block.block_token;
-
-        let (reader, writer) =
-            Self::setup_pipeline(&self.protocol, &self.block, &self.server_defaults).await?;
-
-        let (packet_sender, packet_receiver) =
-            mpsc::channel::<WritePacket>(WRITE_PACKET_BUFFER_LEN);
-        let (ack_queue_sender, ack_queue_receiever) =
-            mpsc::channel::<WritePacket>(WRITE_PACKET_BUFFER_LEN);
-
-        self.heartbeat_handle.abort();
-        self.packet_sender = packet_sender;
-
-        self.ack_listener_handle = Some(Self::listen_for_acks(reader, ack_queue_receiever));
-        self.packet_sender_handle = Some(Self::start_packet_sender(
-            writer,
-            packet_receiver,
-            ack_queue_sender,
-        ));
-        self.heartbeat_handle = Self::start_heartbeat_sender(self.packet_sender.clone());
-
-        for packet in packets_awaiting_ack
-            .into_iter()
-            .chain(packets_to_send.into_iter())
-        {
-            self.packet_sender.send(packet).await.map_err(|_| {
-                HdfsError::DataTransferError("Failed to replay packets during recovery".to_string())
-            })?;
-        }
-
-        Ok(())
-    }
-
-    async fn setup_pipeline(
-        protocol: &Arc<NamenodeProtocol>,
-        block: &hdfs::LocatedBlockProto,
-        server_defaults: &hdfs::FsServerDefaultsProto,
-    ) -> Result<(DatanodeReader, DatanodeWriter)> {
-        let datanode = &block.locs[0].id;
-        let mut connection = DatanodeConnection::connect(
-            datanode,
-            &block.block_token,
-            protocol.get_cached_data_encryption_key().await?,
-        )
-        .await?;
-
-        let checksum = hdfs::ChecksumProto {
-            r#type: hdfs::ChecksumTypeProto::ChecksumCrc32c as i32,
-            bytes_per_checksum: server_defaults.bytes_per_checksum,
-        };
-
-        let append = block.b.num_bytes() > 0;
-
-        let stage = if append {
-            hdfs::op_write_block_proto::BlockConstructionStage::PipelineSetupAppend as i32
-        } else {
-            hdfs::op_write_block_proto::BlockConstructionStage::PipelineSetupCreate as i32
-        };
-
-        let message = hdfs::OpWriteBlockProto {
-            header: connection.build_header(&block.b, Some(block.block_token.clone())),
-            stage,
-            targets: block.locs[1..].to_vec(),
-            pipeline_size: block.locs.len() as u32,
-            latest_generation_stamp: block.b.generation_stamp,
-            min_bytes_rcvd: block.b.num_bytes(),
-            max_bytes_rcvd: block.b.num_bytes(),
-            requested_checksum: checksum,
-            storage_type: Some(block.storage_types[0]),
-            target_storage_types: block.storage_types[1..].to_vec(),
-            storage_id: Some(block.storage_i_ds[0].clone()),
-            target_storage_ids: block.storage_i_ds[1..].to_vec(),
-            ..Default::default()
-        };
-
-        debug!("Block write request: {:?}", &message);
-        let response = connection.send(Op::WriteBlock, &message).await?;
-        debug!("Block write response: {:?}", response);
-
-        Ok(connection.split())
-    }
-
-    // Create the next packet and return the current packet
-    fn create_next_packet(&mut self) -> WritePacket {
-        let next_packet = WritePacket::empty(
-            self.block.b.num_bytes() as i64,
-            self.current_packet.header.seqno + 1,
-            self.server_defaults.bytes_per_checksum,
-            self.server_defaults.write_packet_size,
-        );
-        std::mem::replace(&mut self.current_packet, next_packet)
-    }
-
-    async fn send_current_packet(&mut self) -> Result<()> {
-        // Create a fresh packet
-        let mut current_packet = self.create_next_packet();
-
-        loop {
-            // Send the packet
-            match self.packet_sender.send(current_packet).await {
-                // Packet sender failed, which means some error happened. The ack listener
-                // should also fail when this happens, so attempt to recover.
-                Ok(_) => return Ok(()),
-                Err(err) => {
-                    current_packet = err.0;
-                    self.recover().await?;
-                }
+                return Ok(WriteStatus::Success);
             }
-        }
-    }
+            WriteStatus::Recover(failed_nodes, unacked_packets) => (failed_nodes, unacked_packets),
+        };
 
-    fn is_full(&self) -> bool {
-        self.block.b.num_bytes() == self.block_size as u64
-    }
+        let packets_to_send = self.packet_sender_handle.await.unwrap();
 
-    fn get_extended_block(&self) -> hdfs::ExtendedBlockProto {
-        self.block.b.clone()
-    }
+        let packets_to_replay = unacked_packets.into_iter().chain(packets_to_send).collect();
 
-    async fn write(&mut self, buf: &mut Bytes) -> Result<()> {
-        // Only write up to what's left in this block
-        let bytes_to_write = usize::min(
-            buf.len(),
-            self.block_size - self.block.b.num_bytes() as usize,
-        );
-        let mut buf_to_write = buf.split_to(bytes_to_write);
-
-        while !buf_to_write.is_empty() {
-            let initial_buf_len = buf_to_write.len();
-            self.current_packet.write(&mut buf_to_write);
-
-            // Track how many bytes are written to this block
-            *self.block.b.num_bytes.as_mut().unwrap() +=
-                (initial_buf_len - buf_to_write.len()) as u64;
-
-            if self.current_packet.is_full() {
-                self.send_current_packet().await?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Send a packet with any remaining data and then send a last packet
-    async fn close(mut self) -> Result<()> {
-        // Send a packet with any remaining data
-        if !self.current_packet.is_empty() {
-            self.send_current_packet().await?;
-        }
-
-        // Send an empty last packet
-        self.current_packet.set_last_packet();
-        self.send_current_packet().await?;
-
-        self.heartbeat_handle.abort();
-
-        // Wait for all packets to be sent
-        self.packet_sender_handle
-            .take()
-            .unwrap()
-            .await
-            .map_err(|_| {
-                HdfsError::DataTransferError(
-                    "Packet sender task err while waiting for packets to send".to_string(),
-                )
-            })?;
-
-        // Wait for the channel to close, meaning all acks have been received or an error occured
-        self.ack_listener_handle
-            .take()
-            .unwrap()
-            .await
-            .map_err(|_| {
-                HdfsError::DataTransferError(
-                    "Ack status channel closed while waiting for final ack".to_string(),
-                )
-            })??;
-
-        Ok(())
+        Ok(WriteStatus::Recover(failed_nodes, packets_to_replay))
     }
 
     async fn drain_queue(mut queue: mpsc::Receiver<WritePacket>) -> Vec<WritePacket> {
@@ -398,10 +161,7 @@ impl ReplicatedBlockWriter {
                 // Simulate node we are writing to failing
                 #[cfg(feature = "integration-test")]
                 if crate::test::WRITE_CONNECTION_FAULT_INJECTOR
-                    .lock()
-                    .unwrap()
-                    .take()
-                    .is_some()
+                    .swap(false, std::sync::atomic::Ordering::SeqCst)
                 {
                     debug!("Failing write to active node");
                     return [packet]
@@ -529,6 +289,269 @@ impl ReplicatedBlockWriter {
                 }
             }
         })
+    }
+}
+
+pub(crate) struct ReplicatedBlockWriter {
+    protocol: Arc<NamenodeProtocol>,
+    block: hdfs::LocatedBlockProto,
+    block_size: usize,
+    server_defaults: hdfs::FsServerDefaultsProto,
+
+    current_packet: WritePacket,
+    pipeline: Option<Pipeline>,
+}
+
+impl ReplicatedBlockWriter {
+    async fn new(
+        protocol: Arc<NamenodeProtocol>,
+        block: hdfs::LocatedBlockProto,
+        block_size: usize,
+        server_defaults: hdfs::FsServerDefaultsProto,
+    ) -> Result<Self> {
+        let pipeline =
+            Self::setup_pipeline(&protocol, &block, &server_defaults, None, None).await?;
+
+        let bytes_in_last_chunk = block.b.num_bytes() % server_defaults.bytes_per_checksum as u64;
+        let current_packet = if bytes_in_last_chunk > 0 {
+            // When appending, we want to first send a packet with a single chunk of the data required
+            // to get the block to a multiple of bytes_per_checksum. After that, things work the same
+            // as create.
+            WritePacket::empty(
+                block.b.num_bytes() as i64,
+                0,
+                server_defaults.bytes_per_checksum - bytes_in_last_chunk as u32,
+                0,
+            )
+        } else {
+            WritePacket::empty(
+                block.b.num_bytes() as i64,
+                0,
+                server_defaults.bytes_per_checksum,
+                server_defaults.write_packet_size,
+            )
+        };
+
+        let this = Self {
+            protocol,
+            block,
+            block_size,
+            server_defaults,
+            current_packet,
+
+            pipeline: Some(pipeline),
+        };
+
+        Ok(this)
+    }
+
+    async fn recover(
+        &mut self,
+        failed_nodes: Vec<usize>,
+        packets_to_replay: Vec<WritePacket>,
+    ) -> Result<()> {
+        debug!(
+            "Failed nodes: {:?}, block locs: {:?}",
+            failed_nodes, self.block.locs
+        );
+        if failed_nodes.len() >= self.block.locs.len() {
+            return Err(HdfsError::DataTransferError(
+                "All nodes failed for write".to_string(),
+            ));
+        }
+
+        debug!("Recovering block writer");
+
+        let mut new_block = self.block.clone();
+        for failed_node in failed_nodes {
+            new_block.locs.remove(failed_node);
+            new_block.storage_i_ds.remove(failed_node);
+            new_block.storage_types.remove(failed_node);
+        }
+
+        let mut bytes_acked = new_block.b.num_bytes();
+        for packet in packets_to_replay.iter() {
+            bytes_acked -= packet.data.len() as u64;
+        }
+
+        let old_block = std::mem::replace(&mut self.block, new_block);
+
+        let updated_block = self
+            .protocol
+            .update_block_for_pipeline(self.block.b.clone())
+            .await?;
+
+        // self.block.b.generation_stamp = updated_block.block.b.generation_stamp;
+        self.block.block_token = updated_block.block.block_token;
+
+        let pipeline = Self::setup_pipeline(
+            &self.protocol,
+            &self.block,
+            &self.server_defaults,
+            Some(updated_block.block.b.generation_stamp),
+            Some(bytes_acked),
+        )
+        .await?;
+
+        self.block.b.generation_stamp = updated_block.block.b.generation_stamp;
+
+        for packet in packets_to_replay {
+            pipeline.send_packet(packet).await.map_err(|_| {
+                HdfsError::DataTransferError("Failed to replay packets during recovery".to_string())
+            })?;
+        }
+
+        self.protocol
+            .update_pipeline(
+                old_block.b,
+                self.block.b.clone(),
+                self.block.locs.iter().map(|l| l.id.clone()).collect(),
+                self.block.storage_i_ds.clone(),
+            )
+            .await?;
+
+        self.pipeline = Some(pipeline);
+
+        Ok(())
+    }
+
+    async fn setup_pipeline(
+        protocol: &Arc<NamenodeProtocol>,
+        block: &hdfs::LocatedBlockProto,
+        server_defaults: &hdfs::FsServerDefaultsProto,
+        new_gs: Option<u64>,
+        bytes_acked: Option<u64>,
+    ) -> Result<Pipeline> {
+        let datanode = &block.locs[0].id;
+        let mut connection = DatanodeConnection::connect(
+            datanode,
+            &block.block_token,
+            protocol.get_cached_data_encryption_key().await?,
+        )
+        .await?;
+
+        let checksum = hdfs::ChecksumProto {
+            r#type: hdfs::ChecksumTypeProto::ChecksumCrc32c as i32,
+            bytes_per_checksum: server_defaults.bytes_per_checksum,
+        };
+
+        let stage = if new_gs.is_some() {
+            hdfs::op_write_block_proto::BlockConstructionStage::PipelineSetupStreamingRecovery
+                as i32
+        } else if block.b.num_bytes() > 0 {
+            hdfs::op_write_block_proto::BlockConstructionStage::PipelineSetupAppend as i32
+        } else {
+            hdfs::op_write_block_proto::BlockConstructionStage::PipelineSetupCreate as i32
+        };
+
+        let message = hdfs::OpWriteBlockProto {
+            header: connection.build_header(&block.b, Some(block.block_token.clone())),
+            stage,
+            targets: block.locs[1..].to_vec(),
+            pipeline_size: block.locs.len() as u32,
+            latest_generation_stamp: new_gs.unwrap_or(0),
+            min_bytes_rcvd: bytes_acked.unwrap_or(block.b.num_bytes()),
+            max_bytes_rcvd: block.b.num_bytes(),
+            requested_checksum: checksum,
+            storage_type: Some(block.storage_types[0]),
+            target_storage_types: block.storage_types[1..].to_vec(),
+            storage_id: Some(block.storage_i_ds[0].clone()),
+            target_storage_ids: block.storage_i_ds[1..].to_vec(),
+            ..Default::default()
+        };
+
+        debug!("Block write request: {:?}", &message);
+        let response = connection.send(Op::WriteBlock, &message).await?;
+        debug!("Block write response: {:?}", response);
+
+        Ok(Pipeline::new(connection))
+    }
+
+    // Create the next packet and return the current packet
+    fn create_next_packet(&mut self) -> WritePacket {
+        let next_packet = WritePacket::empty(
+            self.block.b.num_bytes() as i64,
+            self.current_packet.header.seqno + 1,
+            self.server_defaults.bytes_per_checksum,
+            self.server_defaults.write_packet_size,
+        );
+        std::mem::replace(&mut self.current_packet, next_packet)
+    }
+
+    async fn send_current_packet(&mut self) -> Result<()> {
+        // Create a fresh packet
+        let mut current_packet = self.create_next_packet();
+
+        loop {
+            let pipeline = self.pipeline.take().unwrap();
+
+            if let Err(packet) = pipeline.send_packet(current_packet).await {
+                // Shutdown the pipeline and try to recover
+                current_packet = packet;
+                match pipeline.shutdown().await? {
+                    WriteStatus::Success => {
+                        return Err(HdfsError::DataTransferError(
+                            "Pipeline succeeded but failure was expected".to_string(),
+                        ))
+                    }
+                    WriteStatus::Recover(failed_nodes, packets_to_replay) => {
+                        self.recover(failed_nodes, packets_to_replay).await?;
+                    }
+                }
+            } else {
+                self.pipeline = Some(pipeline);
+                return Ok(());
+            }
+            // Send the packet
+        }
+    }
+
+    fn is_full(&self) -> bool {
+        self.block.b.num_bytes() == self.block_size as u64
+    }
+
+    async fn write(&mut self, buf: &mut Bytes) -> Result<()> {
+        // Only write up to what's left in this block
+        let bytes_to_write = usize::min(
+            buf.len(),
+            self.block_size - self.block.b.num_bytes() as usize,
+        );
+        let mut buf_to_write = buf.split_to(bytes_to_write);
+
+        while !buf_to_write.is_empty() {
+            let initial_buf_len = buf_to_write.len();
+            self.current_packet.write(&mut buf_to_write);
+
+            // Track how many bytes are written to this block
+            *self.block.b.num_bytes.as_mut().unwrap() +=
+                (initial_buf_len - buf_to_write.len()) as u64;
+
+            if self.current_packet.is_full() {
+                self.send_current_packet().await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Send a packet with any remaining data and then send a last packet
+    async fn close(mut self) -> Result<hdfs::ExtendedBlockProto> {
+        // Send a packet with any remaining data
+        if !self.current_packet.is_empty() {
+            self.send_current_packet().await?;
+        }
+
+        // Send an empty last packet
+        self.current_packet.set_last_packet();
+        self.send_current_packet().await?;
+
+        loop {
+            match self.pipeline.take().unwrap().shutdown().await? {
+                WriteStatus::Success => return Ok(self.block.b),
+                WriteStatus::Recover(failed_nodes, packets_to_replay) => {
+                    self.recover(failed_nodes, packets_to_replay).await?
+                }
+            }
+        }
     }
 }
 
@@ -715,7 +738,7 @@ impl StripedBlockWriter {
         Ok(())
     }
 
-    async fn close(mut self) -> Result<()> {
+    async fn close(mut self) -> Result<hdfs::ExtendedBlockProto> {
         if !self.cell_buffer.is_empty() {
             self.write_cells().await?;
         }
@@ -730,19 +753,16 @@ impl StripedBlockWriter {
             close_result?;
         }
 
-        Ok(())
+        let mut extended_block = self.block.b;
+
+        extended_block.num_bytes = Some(self.bytes_written as u64);
+
+        Ok(extended_block)
     }
 
     fn is_full(&self) -> bool {
         self.block_writers
             .iter()
             .all(|writer| writer.as_ref().is_some_and(|w| w.is_full()))
-    }
-
-    fn get_extended_block(&self) -> hdfs::ExtendedBlockProto {
-        let mut extended_block = self.block.b.clone();
-
-        extended_block.num_bytes = Some(self.bytes_written as u64);
-        extended_block
     }
 }

@@ -1,7 +1,7 @@
-use std::sync::Mutex;
+use std::sync::{atomic::AtomicBool, Mutex};
 
 pub static EC_FAULT_INJECTOR: Mutex<Option<EcFaultInjection>> = Mutex::new(None);
-pub static WRITE_CONNECTION_FAULT_INJECTOR: Mutex<Option<()>> = Mutex::new(None);
+pub static WRITE_CONNECTION_FAULT_INJECTOR: AtomicBool = AtomicBool::new(false);
 pub static WRITE_REPLY_FAULT_INJECTOR: Mutex<Option<usize>> = Mutex::new(None);
 
 pub struct EcFaultInjection {
