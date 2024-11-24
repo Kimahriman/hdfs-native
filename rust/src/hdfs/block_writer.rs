@@ -449,7 +449,7 @@ impl ReplicatedBlockWriter {
             stage,
             targets: block.locs[1..].to_vec(),
             pipeline_size: block.locs.len() as u32,
-            latest_generation_stamp: new_gs.unwrap_or(0),
+            latest_generation_stamp: new_gs.unwrap_or(block.b.generation_stamp),
             min_bytes_rcvd: bytes_acked.unwrap_or(block.b.num_bytes()),
             max_bytes_rcvd: block.b.num_bytes(),
             requested_checksum: checksum,
