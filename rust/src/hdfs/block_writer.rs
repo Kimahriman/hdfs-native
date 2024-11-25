@@ -483,7 +483,9 @@ impl ReplicatedBlockWriter {
         let mut current_packet = self.create_next_packet();
 
         loop {
-            let pipeline = self.pipeline.take().unwrap();
+            let pipeline = self.pipeline.take().ok_or(HdfsError::DataTransferError(
+                "Block writer is closed".to_string(),
+            ))?;
 
             if let Err(packet) = pipeline.send_packet(current_packet).await {
                 // Shutdown the pipeline and try to recover
@@ -545,7 +547,15 @@ impl ReplicatedBlockWriter {
         self.send_current_packet().await?;
 
         loop {
-            match self.pipeline.take().unwrap().shutdown().await? {
+            match self
+                .pipeline
+                .take()
+                .ok_or(HdfsError::DataTransferError(
+                    "Block writer closed prematurely".to_string(),
+                ))?
+                .shutdown()
+                .await?
+            {
                 WriteStatus::Success => return Ok(self.block.b),
                 WriteStatus::Recover(failed_nodes, packets_to_replay) => {
                     self.recover(failed_nodes, packets_to_replay).await?
