@@ -208,9 +208,7 @@ impl FileWriter {
             // Not appending to an existing block, just create a new one
             // If there's an existing block writer, close it first
             let extended_block = if let Some(block_writer) = self.block_writer.take() {
-                let extended_block = block_writer.get_extended_block();
-                block_writer.close().await?;
-                Some(extended_block)
+                Some(block_writer.close().await?)
             } else {
                 None
             };
@@ -265,9 +263,7 @@ impl FileWriter {
     pub async fn close(&mut self) -> Result<()> {
         if !self.closed {
             let extended_block = if let Some(block_writer) = self.block_writer.take() {
-                let extended_block = block_writer.get_extended_block();
-                block_writer.close().await?;
-                Some(extended_block)
+                Some(block_writer.close().await?)
             } else {
                 None
             };
