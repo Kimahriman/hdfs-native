@@ -222,6 +222,15 @@ impl ReplicatedBlockStream {
         ))
     }
 
+    async fn get_next_packet(
+        connection: &mut DatanodeConnection,
+        checksum_info: Option<ReadOpChecksumInfoProto>,
+    ) -> Result<(PacketHeaderProto, Bytes)> {
+        let packet = connection.read_packet().await?;
+        let header = packet.header;
+        Ok((header, packet.get_data(&checksum_info)?))
+    }
+
     fn start_packet_listener(
         mut connection: DatanodeConnection,
         checksum_info: Option<ReadOpChecksumInfoProto>,
@@ -229,18 +238,20 @@ impl ReplicatedBlockStream {
     ) -> JoinHandle<Result<DatanodeConnection>> {
         tokio::spawn(async move {
             loop {
-                let packet = connection.read_packet().await?;
-                let header = packet.header;
-                let data = packet.get_data(&checksum_info)?;
-
-                // If the packet is empty it means it's the last packet
-                // so tell the DataNode the read was a success and finish this task
-                if data.is_empty() {
+                let next_packet = Self::get_next_packet(&mut connection, checksum_info).await;
+                if next_packet.as_ref().is_ok_and(|(_, data)| data.is_empty()) {
+                    // If the packet is empty it means it's the last packet
+                    // so tell the DataNode the read was a success and finish this task
                     connection.send_read_success().await?;
                     break;
                 }
 
-                sender.send(Ok((header, data))).await.unwrap();
+                if sender.send(next_packet).await.is_err() {
+                    // The block reader was dropped, so just kill the listener
+                    return Err(HdfsError::DataTransferError(
+                        "Reader was dropped without consuming all data".to_string(),
+                    ));
+                }
             }
             Ok(connection)
         })
