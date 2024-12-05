@@ -88,7 +88,7 @@ fn libgssapi() -> crate::Result<&'static bindings::GSSAPI> {
 #[derive(Debug)]
 struct GssBuf<'a>(bindings::gss_buffer_desc_struct, PhantomData<&'a [u8]>);
 
-impl<'a> GssBuf<'a> {
+impl GssBuf<'_> {
     fn new() -> Self {
         Self(
             bindings::gss_buffer_desc_struct {
@@ -100,7 +100,7 @@ impl<'a> GssBuf<'a> {
     }
 }
 
-impl<'a> Deref for GssBuf<'a> {
+impl Deref for GssBuf<'_> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
@@ -132,7 +132,7 @@ impl<'a> From<&'a str> for GssBuf<'a> {
     }
 }
 
-impl<'a> GssBuf<'a> {
+impl GssBuf<'_> {
     pub(crate) unsafe fn as_ptr(&mut self) -> bindings::gss_buffer_t {
         &mut self.0 as bindings::gss_buffer_t
     }
