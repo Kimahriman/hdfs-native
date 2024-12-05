@@ -106,7 +106,7 @@ public class Main {
         } else {
             MiniDFSNNTopology nnTopology = generateTopology(flags, hdfsConf);
 
-            int numDataNodes = 1;
+            int numDataNodes = 3;
             if (flags.contains("ec")) {
                 // Enough for the largest EC policy
                 numDataNodes = 14;

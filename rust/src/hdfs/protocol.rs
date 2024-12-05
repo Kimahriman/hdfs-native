@@ -217,7 +217,6 @@ impl NamenodeProtocol {
         self.call("addBlock", message, true).await
     }
 
-    #[allow(dead_code)]
     pub(crate) async fn update_block_for_pipeline(
         &self,
         block: hdfs::ExtendedBlockProto,
@@ -228,6 +227,24 @@ impl NamenodeProtocol {
         };
 
         self.call("updateBlockForPipeline", message, true).await
+    }
+
+    pub(crate) async fn update_pipeline(
+        &self,
+        old_block: hdfs::ExtendedBlockProto,
+        new_block: hdfs::ExtendedBlockProto,
+        new_nodes: Vec<hdfs::DatanodeIdProto>,
+        storage_i_ds: Vec<String>,
+    ) -> Result<hdfs::UpdatePipelineResponseProto> {
+        let message = hdfs::UpdatePipelineRequestProto {
+            client_name: self.client_name.clone(),
+            old_block,
+            new_block,
+            new_nodes,
+            storage_i_ds,
+        };
+
+        self.call("updatePipeline", message, true).await
     }
 
     pub(crate) async fn complete(
