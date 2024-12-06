@@ -404,7 +404,7 @@ impl RawClient {
 
 /// A Python module implemented in Rust.
 #[pymodule]
-fn _internal(_py: Python, m: &PyModule) -> PyResult<()> {
+fn _internal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RawClient>()?;
     m.add_class::<PyWriteOptions>()?;
     Ok(())
