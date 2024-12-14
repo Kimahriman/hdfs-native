@@ -50,6 +50,11 @@ yum install krb5-libs
 brew install krb5
 ```
 
+#### WIndows
+Download and install the Microsoft Kerberos package from https://web.mit.edu/kerberos/dist/
+
+Copy the `<INSTALL FOLDER>\MIT\Kerberos\bin\gssapi64.dll` file to a folder in %PATH% and change the name to `gssapi_krb5.dll`
+
 ## Supported HDFS Settings
 The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xml` in the directories `$HADOOP_CONF_DIR` or if that doesn't exist, `$HADOOP_HOME/etc/hadoop`. Currently the supported configs that are used are:
 - `fs.defaultFS` - Client::default() support
