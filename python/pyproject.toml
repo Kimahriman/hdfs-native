@@ -29,6 +29,9 @@ devel = [
 [project.urls]
 repository = "https://github.com/Kimahriman/hdfs-native"
 
+[project.scripts]
+hdfsn = "hdfs_native.cli:main"
+
 [project.entry-points."fsspec.specs"]
 hdfs = "hdfs_native.fsspec.HdfsFileSystem"
 viewfs = "hdfs_native.fsspec.HdfsFileSystem"
