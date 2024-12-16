@@ -10,7 +10,7 @@ build:
   os: ubuntu-24.04
   tools:
     python: "3.13"
-    rust: "1.83"
+    rust: "latest"
 
 # Build documentation in the "docs/" directory with Sphinx
 sphinx:
