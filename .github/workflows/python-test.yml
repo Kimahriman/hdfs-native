@@ -50,7 +50,7 @@ jobs:
           sccache: 'true'
           container: 'off'
           working-directory: ./python
-          args: --extras devel
+          args: --extras devel,docs
       
       - name: Run lints
         run: |
@@ -63,6 +63,11 @@ jobs:
         run: |
           source .venv/bin/activate
           pytest
+
+      - name: Build docs
+        run: |
+          source .venv/bin/activate
+          sphinx-build -M html docs/source/ docs/build/
 
   build:
     runs-on: ubuntu-latest

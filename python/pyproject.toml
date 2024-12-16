@@ -23,9 +23,13 @@ devel = [
     "mypy~=1.13.0",
     "pytest~=8.3",
     "pytest-benchmark~=5.1",
-    "ruff~=0.7.2",
+    "ruff~=0.7.2"
+]
+
+docs = [
     "sphinx~=8.1",
-    "sphinx-rtd-theme=~3.0"
+    "sphinx-automodapi~=0.18",
+    "sphinx-rtd-theme~=3.0"
 ]
 
 [project.urls]
