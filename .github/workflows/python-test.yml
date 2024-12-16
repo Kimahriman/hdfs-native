@@ -51,7 +51,7 @@ jobs:
           container: 'off'
           working-directory: ./python
           args: --extras devel,docs
-      
+
       - name: Run lints
         run: |
           source .venv/bin/activate
@@ -65,6 +65,7 @@ jobs:
           pytest
 
       - name: Build docs
+        if: ${{ matrix.python-version == '3.13' }}
         run: |
           source .venv/bin/activate
           sphinx-build -M html docs/source/ docs/build/
