@@ -51,7 +51,7 @@ jobs:
           container: 'off'
           working-directory: ./python
           args: --extras devel
-      
+
       - name: Run lints
         run: |
           source .venv/bin/activate
@@ -63,6 +63,33 @@ jobs:
         run: |
           source .venv/bin/activate
           pytest
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.13
+
+      - name: Create virtualenv
+        run: |
+          python3 -m venv .venv
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: develop
+          sccache: 'true'
+          container: 'off'
+          working-directory: ./python
+          args: --extras docs
+
+      - name: Build docs
+        run: |
+          source .venv/bin/activate
+          sphinx-build -M html docs/source/ docs/build/
 
   build:
     runs-on: ubuntu-latest
