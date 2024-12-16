@@ -6,12 +6,12 @@
 hdfs-native documentation
 =========================
 
-Add your content using ``reStructuredText`` syntax. See the
-`reStructuredText <https://www.sphinx-doc.org/en/master/usage/restructuredtext/index.html>`_
-documentation for details.
+Python bindings for Rust-based `hdfs-native <https://github.com/Kimahriman/hdfs-native>`_ library.
 
 
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
 
+   usage
+   api
