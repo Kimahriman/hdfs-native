@@ -66,7 +66,8 @@ def mv(args: Namespace):
 
 def main(in_args: Optional[Sequence[str]] = None):
     parser = ArgumentParser(
-        description="Command line utility for interacting with HDFS using hdfs-native"
+        description="""Command line utility for interacting with HDFS using hdfs-native.
+        Globs are not currently supported, all file paths are treated as exact paths."""
     )
 
     subparsers = parser.add_subparsers(title="Subcommands", required=True)
