@@ -1,9 +1,15 @@
+import functools
 import os
 from argparse import ArgumentParser, Namespace
-from typing import Optional, Sequence
+from typing import List, Optional, Sequence
 from urllib.parse import urlparse
 
 from hdfs_native import Client
+
+
+@functools.cache
+def _get_client(connection_url: Optional[str] = None):
+    return Client(connection_url)
 
 
 def _client_for_url(url: str) -> Client:
@@ -13,13 +19,13 @@ def _client_for_url(url: str) -> Client:
         connection_url = f"{parsed.scheme}://{parsed.hostname}"
         if parsed.port:
             connection_url += f":{parsed.port}"
-        return Client(connection_url)
+        return _get_client(connection_url)
     elif parsed.hostname or parsed.port:
         raise ValueError(
             f"Cannot provide host or port without scheme: {parsed.hostname}"
         )
     else:
-        return Client()
+        return _get_client()
 
 
 def _verify_nameservices_match(url: str, *urls: str) -> None:
@@ -37,6 +43,19 @@ def _path_for_url(url: str) -> str:
     return urlparse(url).path
 
 
+def _glob_path(client: Client, glob: str) -> List[str]:
+    # TODO: Actually implement this, for now just pretend we have multiple results
+    return [glob]
+
+
+def mkdir(args: Namespace):
+    create_parent = args.parent
+
+    for path in args.path:
+        client = _client_for_url(path)
+        client.mkdirs(path, create_parent=create_parent)
+
+
 def mv(args: Namespace):
     _verify_nameservices_match(args.dst, *args.src)
 
@@ -49,12 +68,16 @@ def mv(args: Namespace):
     except FileNotFoundError:
         pass
 
-    if len(args.src) > 1 and not dst_isdir:
+    resolved_src = [
+        path for pattern in args.src for path in _glob_path(client, pattern)
+    ]
+
+    if len(resolved_src) > 1 and not dst_isdir:
         raise ValueError(
             "destination must be a directory if multiple sources are provided"
         )
 
-    for src in args.src:
+    for src in resolved_src:
         src_path = _path_for_url(src)
         if dst_isdir:
             target_path = os.path.join(dst_path, os.path.basename(src_path))
@@ -71,6 +94,24 @@ def main(in_args: Optional[Sequence[str]] = None):
     )
 
     subparsers = parser.add_subparsers(title="Subcommands", required=True)
+
+    mkdir_parser = subparsers.add_parser(
+        "mkdir",
+        help="Create a directory",
+        description="Create a directory in a specified path",
+    )
+    mkdir_parser.add_argument(
+        "path",
+        nargs="+",
+        help="Path for the directory to create",
+    )
+    mkdir_parser.add_argument(
+        "-p",
+        "--parent",
+        action="store_true",
+        help="Create any missing parent directories",
+    )
+    mkdir_parser.set_defaults(func=mkdir)
 
     mv_parser = subparsers.add_parser(
         "mv",
