@@ -1,3 +1,4 @@
+import os
 import subprocess
 import urllib
 import urllib.parse
@@ -31,6 +32,8 @@ def minidfs():
 
     output = child.stdout.readline().strip()
     assert output == "Ready!", output
+
+    os.environ["HADOOP_CONF_DIR"] = "target/test"
 
     yield "hdfs://127.0.0.1:9000"
 
