@@ -1,5 +1,6 @@
 import functools
 import os
+import sys
 from argparse import ArgumentParser, Namespace
 from typing import List, Optional, Sequence
 from urllib.parse import urlparse
@@ -48,6 +49,17 @@ def _glob_path(client: Client, glob: str) -> List[str]:
     return [glob]
 
 
+def cat(args: Namespace):
+    for src in args.src:
+        client = _client_for_url(src)
+        for path in _glob_path(client, src):
+            with client.read(path) as file:
+                while chunk := file.read(1024 * 1024):
+                    sys.stdout.buffer.write(chunk)
+
+    sys.stdout.buffer.flush()
+
+
 def mkdir(args: Namespace):
     create_parent = args.parent
 
@@ -94,6 +106,14 @@ def main(in_args: Optional[Sequence[str]] = None):
     )
 
     subparsers = parser.add_subparsers(title="Subcommands", required=True)
+
+    cat_parser = subparsers.add_parser(
+        "cat",
+        help="Print the contents of a file",
+        description="Print the contents of a file to stdout",
+    )
+    cat_parser.add_argument("src", nargs="+", help="File pattern to print")
+    cat_parser.set_defaults(func=cat)
 
     mkdir_parser = subparsers.add_parser(
         "mkdir",
