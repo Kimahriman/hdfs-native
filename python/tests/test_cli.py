@@ -1,3 +1,6 @@
+import contextlib
+import io
+
 import pytest
 
 from hdfs_native import Client
@@ -6,6 +9,29 @@ from hdfs_native.cli import main as cli_main
 
 def test_cli(minidfs: str):
     client = Client(minidfs)
+
+    # cat
+    with client.create("/testfile") as file:
+        file.write(b"1234")
+
+    buf = io.BytesIO()
+    with contextlib.redirect_stdout(io.TextIOWrapper(buf)):
+        cli_main(["cat", "/testfile"])
+        assert buf.getvalue() == b"1234"
+
+    with client.create("/testfile2") as file:
+        file.write(b"5678")
+
+    buf = io.BytesIO()
+    with contextlib.redirect_stdout(io.TextIOWrapper(buf)):
+        cli_main(["cat", "/testfile", "/testfile2"])
+        assert buf.getvalue() == b"12345678"
+
+    with pytest.raises(FileNotFoundError):
+        cli_main(["cat", "/nonexistent"])
+
+    client.delete("/testfile")
+    client.delete("/testfile2")
 
     # mkdir
     cli_main(["mkdir", "/testdir"])
