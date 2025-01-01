@@ -52,7 +52,7 @@ def _glob_path(client: Client, glob: str) -> List[str]:
 def cat(args: Namespace):
     for src in args.src:
         client = _client_for_url(src)
-        for path in _glob_path(client, src):
+        for path in _glob_path(client, _path_for_url(src)):
             with client.read(path) as file:
                 while chunk := file.read(1024 * 1024):
                     sys.stdout.buffer.write(chunk)
