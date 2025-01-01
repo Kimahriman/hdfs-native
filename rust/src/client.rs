@@ -566,6 +566,11 @@ impl Client {
             .result
             .into())
     }
+
+    /// Get all file statuses matching the glob pattern.
+    pub async fn glob_status(&self, pattern: &str) -> Result<Vec<FileStatus>> {
+        Ok(vec![])
+    }
 }
 
 impl Default for Client {

@@ -37,6 +37,7 @@ pub mod ec;
 pub(crate) mod ec;
 pub(crate) mod error;
 pub mod file;
+pub(crate) mod glob;
 pub(crate) mod hdfs;
 #[cfg(any(feature = "integration-test", feature = "benchmark"))]
 pub mod minidfs;
