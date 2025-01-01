@@ -63,9 +63,9 @@ def cat(args: Namespace):
 def mkdir(args: Namespace):
     create_parent = args.parent
 
-    for path in args.path:
-        client = _client_for_url(path)
-        client.mkdirs(path, create_parent=create_parent)
+    for url in args.path:
+        client = _client_for_url(url)
+        client.mkdirs(_path_for_url(url), create_parent=create_parent)
 
 
 def mv(args: Namespace):
@@ -81,7 +81,9 @@ def mv(args: Namespace):
         pass
 
     resolved_src = [
-        path for pattern in args.src for path in _glob_path(client, pattern)
+        path
+        for pattern in args.src
+        for path in _glob_path(client, _path_for_url(pattern))
     ]
 
     if len(resolved_src) > 1 and not dst_isdir:
