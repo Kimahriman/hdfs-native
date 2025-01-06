@@ -7,10 +7,7 @@ from hdfs_native import Client
 from hdfs_native.cli import main as cli_main
 
 
-def test_cli(minidfs: str):
-    client = Client(minidfs)
-
-    # cat
+def test_cat(client: Client):
     with client.create("/testfile") as file:
         file.write(b"1234")
 
@@ -33,7 +30,51 @@ def test_cli(minidfs: str):
     client.delete("/testfile")
     client.delete("/testfile2")
 
-    # mkdir
+
+def test_chown(client: Client):
+    with pytest.raises(FileNotFoundError):
+        cli_main(["chown", "testuser", "/testfile"])
+
+    client.create("/testfile").close()
+    status = client.get_file_info("/testfile")
+    group = status.group
+
+    cli_main(["chown", "testuser", "/testfile"])
+    status = client.get_file_info("/testfile")
+    assert status.owner == "testuser"
+    assert status.group == group
+
+    cli_main(["chown", ":testgroup", "/testfile"])
+    status = client.get_file_info("/testfile")
+    assert status.owner == "testuser"
+    assert status.group == "testgroup"
+
+    cli_main(["chown", "newuser:newgroup", "/testfile"])
+    status = client.get_file_info("/testfile")
+    assert status.owner == "newuser"
+    assert status.group == "newgroup"
+
+    client.delete("/testfile")
+
+    client.mkdirs("/testdir")
+    client.create("/testdir/testfile").close()
+    file_status = client.get_file_info("/testdir/testfile")
+
+    cli_main(["chown", "testuser:testgroup", "/testdir"])
+    status = client.get_file_info("/testdir")
+    assert status.owner == "testuser"
+    assert status.group == "testgroup"
+    status = client.get_file_info("/testdir/testfile")
+    assert status.owner == file_status.owner
+    assert status.group == file_status.group
+
+    cli_main(["chown", "-R", "testuser:testgroup", "/testdir"])
+    status = client.get_file_info("/testdir/testfile")
+    assert status.owner == "testuser"
+    assert status.group == "testgroup"
+
+
+def test_mkdir(client: Client):
     cli_main(["mkdir", "/testdir"])
     assert client.get_file_info("/testdir").isdir
 
@@ -45,7 +86,8 @@ def test_cli(minidfs: str):
 
     client.delete("/testdir", True)
 
-    # mv
+
+def test_mv(client: Client):
     client.create("/testfile").close()
     client.mkdirs("/testdir")
 
