@@ -73,12 +73,14 @@ def test_chown(client: Client):
     assert status.owner == "testuser"
     assert status.group == "testgroup"
 
+    client.delete("/testdir", True)
+
 
 def test_mkdir(client: Client):
     cli_main(["mkdir", "/testdir"])
     assert client.get_file_info("/testdir").isdir
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(FileNotFoundError):
         cli_main(["mkdir", "/testdir/nested/dir"])
 
     cli_main(["mkdir", "-p", "/testdir/nested/dir"])
@@ -98,7 +100,7 @@ def test_mv(client: Client):
     with pytest.raises(ValueError):
         cli_main(["mv", "/testfile2", "hdfs://badnameservice/testfile"])
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(FileNotFoundError):
         cli_main(["mv", "/testfile2", "/nonexistent/testfile"])
 
     cli_main(["mv", "/testfile2", "/testdir"])
