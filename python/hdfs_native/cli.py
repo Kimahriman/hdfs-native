@@ -60,6 +60,28 @@ def cat(args: Namespace):
     sys.stdout.buffer.flush()
 
 
+def chown(args: Namespace):
+    split = args.owner.split(":")
+    if len(split) > 2:
+        raise ValueError(f"Invalid owner and group pattern: {args.owner}")
+
+    if len(split) == 1:
+        owner = split[0]
+        group = None
+    else:
+        owner = split[0] if split[0] else None
+        group = split[1]
+
+    for url in args.path:
+        client = _client_for_url(url)
+        for path in _glob_path(client, _path_for_url(url)):
+            if args.recursive:
+                for status in client.list_status(path, True):
+                    client.set_owner(status.path, owner, group)
+            else:
+                client.set_owner(path, owner, group)
+
+
 def mkdir(args: Namespace):
     create_parent = args.parent
 
@@ -116,6 +138,25 @@ def main(in_args: Optional[Sequence[str]] = None):
     )
     cat_parser.add_argument("src", nargs="+", help="File pattern to print")
     cat_parser.set_defaults(func=cat)
+
+    chown_parser = subparsers.add_parser(
+        "chown",
+        help="Changes owner and group of a file",
+        description="Changes owner and group of a file",
+    )
+    chown_parser.add_argument(
+        "-R",
+        "--recursive",
+        action="store_true",
+        help="Modify files recursively",
+    )
+    chown_parser.add_argument(
+        "owner",
+        metavar="[owner[:group] | :group]",
+        help="Owner and group to set for the file",
+    )
+    chown_parser.add_argument("path", nargs="+", help="File pattern to modify")
+    chown_parser.set_defaults(func=chown)
 
     mkdir_parser = subparsers.add_parser(
         "mkdir",

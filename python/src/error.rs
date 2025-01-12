@@ -12,6 +12,9 @@ impl From<HdfsError> for PythonHdfsError {
 impl From<PythonHdfsError> for PyErr {
     fn from(value: PythonHdfsError) -> Self {
         match value.0 {
+            HdfsError::RPCError(class, message) if class == "java.io.FileNotFoundException" => {
+                PyFileNotFoundError::new_err(message)
+            }
             HdfsError::IOError(err) => PyIOError::new_err(err),
             HdfsError::AlreadyExists(path) => PyFileExistsError::new_err(path),
             HdfsError::FileNotFound(path) => PyFileNotFoundError::new_err(path),

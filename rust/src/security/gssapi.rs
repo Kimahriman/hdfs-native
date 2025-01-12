@@ -125,7 +125,7 @@ impl<'a> From<&'a [u8]> for GssBuf<'a> {
 impl<'a> From<&'a str> for GssBuf<'a> {
     fn from(s: &str) -> Self {
         let gss_buf = bindings::gss_buffer_desc_struct {
-            length: s.as_bytes().len(),
+            length: s.len(),
             value: s.as_ptr() as *mut c_void,
         };
         GssBuf(gss_buf, PhantomData)
