@@ -1,5 +1,6 @@
 import functools
 import os
+import re
 import sys
 from argparse import ArgumentParser, Namespace
 from typing import List, Optional, Sequence
@@ -58,6 +59,22 @@ def cat(args: Namespace):
                     sys.stdout.buffer.write(chunk)
 
     sys.stdout.buffer.flush()
+
+
+def chmod(args: Namespace):
+    if not re.fullmatch(r"1?[0-7]{3}", args.octalmode):
+        raise ValueError(f"Invalid mode supplied: {args.octalmode}")
+
+    permission = int(args.octalmode, base=8)
+
+    for url in args.path:
+        client = _client_for_url(url)
+        for path in _glob_path(client, _path_for_url(url)):
+            if args.recursive:
+                for status in client.list_status(path, True):
+                    client.set_permission(status.path, permission)
+            else:
+                client.set_permission(path, permission)
 
 
 def chown(args: Namespace):
@@ -138,6 +155,24 @@ def main(in_args: Optional[Sequence[str]] = None):
     )
     cat_parser.add_argument("src", nargs="+", help="File pattern to print")
     cat_parser.set_defaults(func=cat)
+
+    chmod_parser = subparsers.add_parser(
+        "chmod",
+        help="Changes permissions of a file",
+        description="Changes permissions of a file. Only octal permissions are supported.",
+    )
+    chmod_parser.add_argument(
+        "-R",
+        "--recursive",
+        action="store_true",
+        help="Modify files recursively",
+    )
+    chmod_parser.add_argument(
+        "octalmode",
+        help="The mode to set the permission to in octal format",
+    )
+    chmod_parser.add_argument("path", nargs="+", help="File pattern to update")
+    chmod_parser.set_defaults(func=chmod)
 
     chown_parser = subparsers.add_parser(
         "chown",
