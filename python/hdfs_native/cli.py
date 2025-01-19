@@ -1,9 +1,11 @@
 import functools
 import os
 import re
+import shutil
 import sys
 from argparse import ArgumentParser, Namespace
-from typing import List, Optional, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 from hdfs_native import Client
@@ -48,6 +50,42 @@ def _path_for_url(url: str) -> str:
 def _glob_path(client: Client, glob: str) -> List[str]:
     # TODO: Actually implement this, for now just pretend we have multiple results
     return [glob]
+
+
+def _download_file(
+    client: Client,
+    remote_src: str,
+    local_dst: str,
+    force: bool = False,
+    preserve: bool = False,
+) -> None:
+    if not force and os.path.exists(local_dst):
+        raise FileExistsError(f"{local_dst} already exists, use --force to overwrite")
+
+    with client.read(remote_src) as remote_file:
+        with open(local_dst, "wb") as local_file:
+            for chunk in remote_file.read_range_stream(0, len(remote_file)):
+                local_file.write(chunk)
+
+    if preserve:
+        status = client.get_file_info(remote_src)
+        os.utime(
+            local_dst,
+            (status.access_time / 1000, status.modification_time / 1000),
+        )
+        os.chmod(local_dst, status.permission)
+
+
+def _upload_file(
+    client: Client,
+    local_src: str,
+    remote_dst: str,
+    force: bool = False,
+    preserve: bool = False,
+) -> None:
+    with open(local_src, "rb") as local_file:
+        with client.create(remote_dst) as remote_file:
+            shutil.copyfileobj(local_file, remote_file)
 
 
 def cat(args: Namespace):
@@ -97,6 +135,48 @@ def chown(args: Namespace):
                     client.set_owner(status.path, owner, group)
             else:
                 client.set_owner(path, owner, group)
+
+
+def get(args: Namespace):
+    paths: List[Tuple[Client, str]] = []
+
+    for url in args.src:
+        client = _client_for_url(url)
+        for path in _glob_path(client, _path_for_url(url)):
+            paths.append((client, path))
+
+    dst_is_dir = os.path.isdir(args.localdst)
+
+    if len(paths) > 1 and not dst_is_dir:
+        raise ValueError("Destination must be directory when copying multiple files")
+    elif not dst_is_dir:
+        _download_file(
+            paths[0][0],
+            paths[0][1],
+            args.localdst,
+            force=args.force,
+            preserve=args.preserve,
+        )
+    else:
+        with ThreadPoolExecutor(args.threads) as executor:
+            futures = []
+            for client, path in paths:
+                filename = os.path.basename(path)
+
+                futures.append(
+                    executor.submit(
+                        _download_file,
+                        client,
+                        path,
+                        os.path.join(args.localdst, filename),
+                        force=args.force,
+                        preserve=args.preserve,
+                    )
+                )
+
+            # Iterate to raise any exceptions thrown
+            for f in as_completed(futures):
+                f.result()
 
 
 def mkdir(args: Namespace):
@@ -192,6 +272,45 @@ def main(in_args: Optional[Sequence[str]] = None):
     )
     chown_parser.add_argument("path", nargs="+", help="File pattern to modify")
     chown_parser.set_defaults(func=chown)
+
+    get_parser = subparsers.add_parser(
+        "get",
+        aliases=["copyToLocal"],
+        help="Copy files to a local destination",
+        description="""Copy files matching a pattern to a local destination.
+            When copying multiple files, the destination must be a directory""",
+    )
+    get_parser.add_argument(
+        "-p",
+        "--preserve",
+        action="store_true",
+        default=False,
+        help="Preserve timestamps and the mode",
+    )
+    get_parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        default=False,
+        help="Overwrite the destination if it already exists",
+    )
+    get_parser.add_argument(
+        "-t",
+        "--threads",
+        type=int,
+        help="Number of threads to use",
+        default=1,
+    )
+    get_parser.add_argument(
+        "src",
+        nargs="+",
+        help="Source patterns to copy",
+    )
+    get_parser.add_argument(
+        "localdst",
+        help="Local destination to write to",
+    )
+    get_parser.set_defaults(func=get)
 
     mkdir_parser = subparsers.add_parser(
         "mkdir",

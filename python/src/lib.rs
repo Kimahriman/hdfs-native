@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use ::hdfs_native::file::{FileReader, FileWriter};
 use ::hdfs_native::WriteOptions;
@@ -9,6 +9,8 @@ use ::hdfs_native::{
     Client,
 };
 use bytes::Bytes;
+use futures::stream::BoxStream;
+use futures::StreamExt;
 use hdfs_native::acl::{AclEntry, AclStatus};
 use hdfs_native::client::ContentSummary;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
@@ -220,6 +222,32 @@ impl PyAclEntry {
     }
 }
 
+#[pyclass(name = "FileReadStream")]
+struct PyFileReadStream {
+    inner: Arc<Mutex<BoxStream<'static, hdfs_native::Result<Bytes>>>>,
+    rt: Arc<Runtime>,
+}
+
+#[pymethods]
+impl PyFileReadStream {
+    pub fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(slf: PyRefMut<'_, Self>) -> PyHdfsResult<Option<Cow<[u8]>>> {
+        let inner = Arc::clone(&slf.inner);
+        let rt = Arc::clone(&slf.rt);
+        if let Some(result) = slf
+            .py()
+            .allow_threads(|| rt.block_on(inner.lock().unwrap().next()))
+        {
+            Ok(Some(Cow::from(result?.to_vec())))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 #[pyclass]
 struct RawFileReader {
     inner: FileReader,
@@ -257,6 +285,16 @@ impl RawFileReader {
             py.allow_threads(|| self.rt.block_on(self.inner.read_range(offset, len)))?
                 .to_vec(),
         ))
+    }
+
+    pub fn read_range_stream(&self, offset: usize, len: usize) -> PyFileReadStream {
+        let stream = Arc::new(Mutex::new(
+            self.inner.read_range_stream(offset, len).boxed(),
+        ));
+        PyFileReadStream {
+            inner: stream,
+            rt: Arc::clone(&self.rt),
+        }
     }
 }
 

@@ -43,9 +43,16 @@ def minidfs():
         child.kill()
 
 
-@pytest.fixture(scope="module")
-def client(minidfs: str) -> Client:
-    return Client(minidfs)
+@pytest.fixture
+def client(minidfs: str):
+    client = Client(minidfs)
+
+    try:
+        yield client
+    finally:
+        statuses = list(client.list_status("/"))
+        for status in statuses:
+            client.delete(status.path, True)
 
 
 @pytest.fixture(scope="module")

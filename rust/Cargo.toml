@@ -22,7 +22,7 @@ crc = "3.2"
 ctr = "0.9"
 des = "0.8"
 dns-lookup = "2"
-futures = "0.3"
+futures = { workspace = true }
 g2p = "1"
 hex = "0.4"
 hmac = "0.12"
