@@ -810,6 +810,7 @@ version = "0.11.0"
 dependencies = [
  "bytes",
  "env_logger",
+ "futures",
  "hdfs-native",
  "log",
  "pyo3",

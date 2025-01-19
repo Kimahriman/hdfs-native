@@ -1,5 +1,8 @@
 import contextlib
 import io
+import os
+import stat
+from tempfile import TemporaryDirectory
 
 import pytest
 
@@ -27,9 +30,6 @@ def test_cat(client: Client):
     with pytest.raises(FileNotFoundError):
         cli_main(["cat", "/nonexistent"])
 
-    client.delete("/testfile")
-    client.delete("/testfile2")
-
 
 def test_chmod(client: Client):
     with pytest.raises(FileNotFoundError):
@@ -52,8 +52,6 @@ def test_chmod(client: Client):
     with pytest.raises(ValueError):
         cli_main(["chmod", "2778", "/testfile"])
 
-    client.delete("/testfile")
-
     client.mkdirs("/testdir")
     client.create("/testdir/testfile").close()
     original_permission = client.get_file_info("/testdir/testfile").permission
@@ -65,8 +63,6 @@ def test_chmod(client: Client):
     cli_main(["chmod", "-R", "700", "/testdir"])
     assert client.get_file_info("/testdir").permission == 0o700
     assert client.get_file_info("/testdir/testfile").permission == 0o700
-
-    client.delete("/testdir", True)
 
 
 def test_chown(client: Client):
@@ -92,8 +88,6 @@ def test_chown(client: Client):
     assert status.owner == "newuser"
     assert status.group == "newgroup"
 
-    client.delete("/testfile")
-
     client.mkdirs("/testdir")
     client.create("/testdir/testfile").close()
     file_status = client.get_file_info("/testdir/testfile")
@@ -111,7 +105,50 @@ def test_chown(client: Client):
     assert status.owner == "testuser"
     assert status.group == "testgroup"
 
-    client.delete("/testdir", True)
+
+def test_get(client: Client):
+    data = b"0123456789"
+
+    with pytest.raises(FileNotFoundError):
+        cli_main(["get", "/testfile", "testfile"])
+
+    with client.create("/testfile") as file:
+        file.write(data)
+
+    status = client.get_file_info("/testfile")
+
+    with TemporaryDirectory() as tmp_dir:
+        cli_main(["get", "/testfile", os.path.join(tmp_dir, "localfile")])
+        with open(os.path.join(tmp_dir, "localfile"), "rb") as file:
+            assert file.read() == data
+
+        cli_main(["get", "/testfile", tmp_dir])
+        with open(os.path.join(tmp_dir, "testfile"), "rb") as file:
+            assert file.read() == data
+
+        with pytest.raises(FileExistsError):
+            cli_main(["get", "/testfile", tmp_dir])
+
+        cli_main(["get", "-f", "-p", "/testfile", tmp_dir])
+        st = os.stat(os.path.join(tmp_dir, "testfile"))
+        assert stat.S_IMODE(st.st_mode) == status.permission
+        assert int(st.st_atime * 1000) == status.access_time
+        assert int(st.st_mtime * 1000) == status.modification_time
+
+    with client.create("/testfile2") as file:
+        file.write(data)
+
+    with pytest.raises(ValueError):
+        cli_main(["get", "/testfile", "/testfile2", "notadir"])
+
+    with TemporaryDirectory() as tmp_dir:
+        cli_main(["get", "/testfile", "/testfile2", tmp_dir])
+
+        with open(os.path.join(tmp_dir, "testfile"), "rb") as file:
+            assert file.read() == data
+
+        with open(os.path.join(tmp_dir, "testfile2"), "rb") as file:
+            assert file.read() == data
 
 
 def test_mkdir(client: Client):
@@ -123,8 +160,6 @@ def test_mkdir(client: Client):
 
     cli_main(["mkdir", "-p", "/testdir/nested/dir"])
     assert client.get_file_info("/testdir/nested/dir").isdir
-
-    client.delete("/testdir", True)
 
 
 def test_mv(client: Client):
