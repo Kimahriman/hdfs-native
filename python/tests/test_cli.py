@@ -31,6 +31,44 @@ def test_cat(client: Client):
     client.delete("/testfile2")
 
 
+def test_chmod(client: Client):
+    with pytest.raises(FileNotFoundError):
+        cli_main(["chmod", "755", "/testfile"])
+
+    client.create("/testfile").close()
+
+    cli_main(["chmod", "700", "/testfile"])
+    assert client.get_file_info("/testfile").permission == 0o700
+
+    cli_main(["chmod", "007", "/testfile"])
+    assert client.get_file_info("/testfile").permission == 0o007
+
+    cli_main(["chmod", "1777", "/testfile"])
+    assert client.get_file_info("/testfile").permission == 0o1777
+
+    with pytest.raises(ValueError):
+        cli_main(["chmod", "2777", "/testfile"])
+
+    with pytest.raises(ValueError):
+        cli_main(["chmod", "2778", "/testfile"])
+
+    client.delete("/testfile")
+
+    client.mkdirs("/testdir")
+    client.create("/testdir/testfile").close()
+    original_permission = client.get_file_info("/testdir/testfile").permission
+
+    cli_main(["chmod", "700", "/testdir"])
+    assert client.get_file_info("/testdir").permission == 0o700
+    assert client.get_file_info("/testdir/testfile").permission == original_permission
+
+    cli_main(["chmod", "-R", "700", "/testdir"])
+    assert client.get_file_info("/testdir").permission == 0o700
+    assert client.get_file_info("/testdir/testfile").permission == 0o700
+
+    client.delete("/testdir", True)
+
+
 def test_chown(client: Client):
     with pytest.raises(FileNotFoundError):
         cli_main(["chown", "testuser", "/testfile"])
