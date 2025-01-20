@@ -1,7 +1,9 @@
 import functools
+import glob
 import os
 import re
 import shutil
+import stat
 import sys
 from argparse import ArgumentParser, Namespace
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9,6 +11,7 @@ from typing import List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 from hdfs_native import Client
+from hdfs_native._internal import WriteOptions
 
 
 @functools.cache
@@ -52,6 +55,10 @@ def _glob_path(client: Client, glob: str) -> List[str]:
     return [glob]
 
 
+def _glob_local_path(glob_pattern: str) -> List[str]:
+    return glob.glob(glob_pattern)
+
+
 def _download_file(
     client: Client,
     remote_src: str,
@@ -80,12 +87,43 @@ def _upload_file(
     client: Client,
     local_src: str,
     remote_dst: str,
+    direct: bool = False,
     force: bool = False,
     preserve: bool = False,
 ) -> None:
+    if not direct and not force:
+        # Check if file already exists before we write it to a temporary file
+        try:
+            client.get_file_info(remote_dst)
+            raise FileExistsError(
+                f"{remote_dst} already exists, use --force to overwrite"
+            )
+        except FileNotFoundError:
+            pass
+
+    if direct:
+        write_destination = remote_dst
+    else:
+        write_destination = f"{remote_dst}.__COPYING__"
+
     with open(local_src, "rb") as local_file:
-        with client.create(remote_dst) as remote_file:
+        with client.create(
+            write_destination,
+            WriteOptions(overwrite=force),
+        ) as remote_file:
             shutil.copyfileobj(local_file, remote_file)
+
+    if preserve:
+        st = os.stat(local_src)
+        client.set_times(
+            write_destination,
+            int(st.st_mtime * 1000),
+            int(st.st_atime * 1000),
+        )
+        client.set_permission(write_destination, stat.S_IMODE(st.st_mode))
+
+    if not direct:
+        client.rename(write_destination, remote_dst, overwrite=force)
 
 
 def cat(args: Namespace):
@@ -220,6 +258,59 @@ def mv(args: Namespace):
         client.rename(src_path, target_path)
 
 
+def put(args: Namespace):
+    paths: List[str] = []
+
+    for pattern in args.localsrc:
+        for path in _glob_local_path(pattern):
+            paths.append(path)
+
+    if len(paths) == 0:
+        raise FileNotFoundError("No files matched patterns")
+
+    client = _client_for_url(args.dst)
+    dst_path = _path_for_url(args.dst)
+
+    dst_is_dir = False
+    try:
+        dst_is_dir = client.get_file_info(dst_path).isdir
+    except FileNotFoundError:
+        pass
+
+    if len(paths) > 1 and not dst_is_dir:
+        raise ValueError("Destination must be directory when copying multiple files")
+    elif not dst_is_dir:
+        _upload_file(
+            client,
+            paths[0],
+            dst_path,
+            direct=args.direct,
+            force=args.force,
+            preserve=args.preserve,
+        )
+    else:
+        with ThreadPoolExecutor(args.threads) as executor:
+            futures = []
+            for path in paths:
+                filename = os.path.basename(path)
+
+                futures.append(
+                    executor.submit(
+                        _upload_file,
+                        client,
+                        path,
+                        os.path.join(dst_path, filename),
+                        direct=args.direct,
+                        force=args.force,
+                        preserve=args.preserve,
+                    )
+                )
+
+            # Iterate to raise any exceptions thrown
+            for f in as_completed(futures):
+                f.result()
+
+
 def main(in_args: Optional[Sequence[str]] = None):
     parser = ArgumentParser(
         description="""Command line utility for interacting with HDFS using hdfs-native.
@@ -339,6 +430,52 @@ def main(in_args: Optional[Sequence[str]] = None):
     mv_parser.add_argument("src", nargs="+", help="Files or directories to move")
     mv_parser.add_argument("dst", help="Target destination of file or directory")
     mv_parser.set_defaults(func=mv)
+
+    put_parser = subparsers.add_parser(
+        "put",
+        aliases=["copyFromLocal"],
+        help="Copy local files to a remote destination",
+        description="""Copy files matching a pattern to a remote destination.
+            When copying multiple files, the destination must be a directory""",
+    )
+    put_parser.add_argument(
+        "-p",
+        "--preserve",
+        action="store_true",
+        default=False,
+        help="Preserve timestamps, ownership, and the mode",
+    )
+    put_parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        default=False,
+        help="Overwrite the destination if it already exists",
+    )
+    put_parser.add_argument(
+        "-d",
+        "--direct",
+        action="store_true",
+        default=False,
+        help="Skip creation of temporary file (<dst>._COPYING_) and write directly to file",
+    )
+    put_parser.add_argument(
+        "-t",
+        "--threads",
+        type=int,
+        help="Number of threads to use",
+        default=1,
+    )
+    put_parser.add_argument(
+        "localsrc",
+        nargs="+",
+        help="Source patterns to copy",
+    )
+    put_parser.add_argument(
+        "dst",
+        help="Local destination to write to",
+    )
+    put_parser.set_defaults(func=put)
 
     args = parser.parse_args(in_args)
     args.func(args)
