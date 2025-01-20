@@ -190,3 +190,60 @@ def test_mv(client: Client):
 
     client.get_file_info("/testdir/testfile1")
     client.get_file_info("/testdir/testfile2")
+
+
+def test_put(client: Client):
+    data = b"0123456789"
+
+    with pytest.raises(FileNotFoundError):
+        cli_main(["put", "testfile", "/testfile"])
+
+    with TemporaryDirectory() as tmp_dir:
+        with open(os.path.join(tmp_dir, "testfile"), "wb") as file:
+            file.write(data)
+
+        cli_main(["put", os.path.join(tmp_dir, "testfile"), "/remotefile"])
+        with client.read("/remotefile") as file:
+            assert file.read() == data
+
+        cli_main(["put", os.path.join(tmp_dir, "testfile"), "/"])
+        with client.read("/testfile") as file:
+            assert file.read() == data
+
+        with pytest.raises(FileExistsError):
+            cli_main(["put", os.path.join(tmp_dir, "testfile"), "/"])
+
+        cli_main(["put", "-f", "-p", os.path.join(tmp_dir, "testfile"), "/"])
+        st = os.stat(os.path.join(tmp_dir, "testfile"))
+        status = client.get_file_info("/testfile")
+        assert stat.S_IMODE(st.st_mode) == status.permission
+        assert int(st.st_atime * 1000) == status.access_time
+        assert int(st.st_mtime * 1000) == status.modification_time
+
+        with open(os.path.join(tmp_dir, "testfile2"), "wb") as file:
+            file.write(data)
+
+        with pytest.raises(ValueError):
+            cli_main(
+                [
+                    "put",
+                    os.path.join(tmp_dir, "testfile"),
+                    os.path.join(tmp_dir, "testfile2"),
+                    "/notadir",
+                ]
+            )
+
+        client.mkdirs("/testdir")
+        cli_main(
+            [
+                "put",
+                os.path.join(tmp_dir, "testfile"),
+                os.path.join(tmp_dir, "testfile2"),
+                "/testdir",
+            ]
+        )
+
+        with client.read("/testdir/testfile") as file:
+            assert file.read() == data
+        with client.read("/testdir/testfile2") as file:
+            assert file.read() == data
