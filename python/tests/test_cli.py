@@ -10,6 +10,14 @@ from hdfs_native import Client
 from hdfs_native.cli import main as cli_main
 
 
+def assert_not_exists(client: Client, path: str):
+    try:
+        client.get_file_info(path)
+        pytest.fail(f"Expected file not to exist: {path}")
+    except FileNotFoundError:
+        pass
+
+
 def test_cat(client: Client):
     with client.create("/testfile") as file:
         file.write(b"1234")
@@ -247,6 +255,30 @@ def test_put(client: Client):
             assert file.read() == data
         with client.read("/testdir/testfile2") as file:
             assert file.read() == data
+
+
+def test_rm(client: Client):
+    with pytest.raises(ValueError):
+        cli_main(["rm", "/testfile"])
+
+    with pytest.raises(FileNotFoundError):
+        cli_main(["rm", "-s", "/testfile"])
+
+    cli_main(["rm", "-f", "-s", "/testfile"])
+
+    client.create("/testfile").close()
+    cli_main(["rm", "-s", "/testfile"])
+    assert_not_exists(client, "/testfile")
+
+    client.mkdirs("/testdir")
+    client.create("/testdir/testfile").close()
+    client.create("/testdir/testfile2").close()
+
+    with pytest.raises(RuntimeError):
+        cli_main(["rm", "-s", "/testdir"])
+
+    cli_main(["rm", "-r", "-s", "/testdir"])
+    assert_not_exists(client, "/testdir")
 
 
 def test_rmdir(client: Client):
