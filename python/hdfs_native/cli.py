@@ -311,6 +311,17 @@ def put(args: Namespace):
                 f.result()
 
 
+def rmdir(args: Namespace):
+    for url in args.dir:
+        client = _client_for_url(url)
+        for path in _glob_path(client, _path_for_url(url)):
+            status = client.get_file_info(path)
+            if not status.isdir:
+                raise ValueError(f"{path} is not a directory")
+
+            client.delete(path)
+
+
 def main(in_args: Optional[Sequence[str]] = None):
     parser = ArgumentParser(
         description="""Command line utility for interacting with HDFS using hdfs-native.
@@ -476,6 +487,18 @@ def main(in_args: Optional[Sequence[str]] = None):
         help="Local destination to write to",
     )
     put_parser.set_defaults(func=put)
+
+    rmdir_parser = subparsers.add_parser(
+        "rmdir",
+        help="Delete an empty directory",
+        description="Delete an empty directory",
+    )
+    rmdir_parser.add_argument(
+        "dir",
+        nargs="+",
+        help="Source patterns to copy",
+    )
+    rmdir_parser.set_defaults(func=rmdir)
 
     args = parser.parse_args(in_args)
     args.func(args)
