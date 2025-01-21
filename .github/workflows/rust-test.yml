@@ -59,7 +59,7 @@ jobs:
         os:
           - ubuntu-latest
           # - macos-latest
-          # - windows-latest
+          - windows-latest
     runs-on: ${{ matrix.os }}
     env:
       # Disable full debug symbol generation to speed up CI build and keep memory down
