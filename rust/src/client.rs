@@ -588,11 +588,12 @@ pub(crate) struct DirListingIterator {
 
 impl DirListingIterator {
     fn new(path: String, mount_table: &Arc<MountTable>, files_only: bool) -> Self {
-        let (link, resolved_path) = mount_table.resolve(&path);
+
+        let (link, resolved_path) = mount_table.resolve(&path.replace("\\","/"));
 
         DirListingIterator {
             path,
-            resolved_path,
+            resolved_path: resolved_path.replace("\\","/"),
             link: link.clone(),
             files_only,
             partial_listing: VecDeque::new(),
