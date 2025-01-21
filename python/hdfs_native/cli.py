@@ -311,6 +311,19 @@ def put(args: Namespace):
                 f.result()
 
 
+def rm(args: Namespace):
+    if not args.skip_trash:
+        raise ValueError(
+            "Moving files to the trash is not currently supported. Pass --skip-trash to permanently delete the files."
+        )
+
+    for url in args.src:
+        client = _client_for_url(url)
+        for path in _glob_path(client, _path_for_url(url)):
+            if not client.delete(path, args.recursive) and not args.force:
+                raise FileNotFoundError(f"Failed to delete {path}")
+
+
 def rmdir(args: Namespace):
     for url in args.dir:
         client = _client_for_url(url)
@@ -487,6 +500,40 @@ def main(in_args: Optional[Sequence[str]] = None):
         help="Local destination to write to",
     )
     put_parser.set_defaults(func=put)
+
+    rm_parser = subparsers.add_parser(
+        "rm",
+        help="Delete files",
+        description="Delete all files matching the specified file patterns",
+    )
+    rm_parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        default=False,
+        help="Ignore if the file does not exist",
+    )
+    rm_parser.add_argument(
+        "-r",
+        "-R",
+        "--recursive",
+        action="store_true",
+        default=False,
+        help="Recursively delete directories",
+    )
+    rm_parser.add_argument(
+        "-s",
+        "--skip-trash",
+        action="store_true",
+        default=False,
+        help="Permanently delete files instead of moving them to the trash",
+    )
+    rm_parser.add_argument(
+        "src",
+        nargs="+",
+        help="File patterns to delete",
+    )
+    rm_parser.set_defaults(func=rm)
 
     rmdir_parser = subparsers.add_parser(
         "rmdir",
