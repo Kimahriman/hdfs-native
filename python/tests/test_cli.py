@@ -247,3 +247,24 @@ def test_put(client: Client):
             assert file.read() == data
         with client.read("/testdir/testfile2") as file:
             assert file.read() == data
+
+
+def test_rmdir(client: Client):
+    with pytest.raises(FileNotFoundError):
+        cli_main(["rmdir", "/testdir"])
+
+    client.mkdirs("/testdir")
+    client.create("/testdir/testfile").close()
+
+    with pytest.raises(RuntimeError):
+        cli_main(["rmdir", "/testdir"])
+
+    client.delete("/testdir/testfile")
+
+    cli_main(["rmdir", "/testdir"])
+
+    try:
+        client.get_file_info("/testdir")
+        pytest.fail("Directory was not removed")
+    except FileNotFoundError:
+        pass
