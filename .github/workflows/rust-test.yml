@@ -86,5 +86,11 @@ jobs:
       - name: Install native libs
         run: sudo apt-get install -y libkrb5-dev krb5-user
 
+      - name: Download Hadoop
+        run: |
+          wget -q https://dlcdn.apache.org/hadoop/common/hadoop-3.4.1/hadoop-3.4.1.tar.gz
+          tar -xf hadoop-3.4.1.tar.gz -C $GITHUB_WORKSPACE
+          echo "$GITHUB_WORKSPACE/hadoop-3.4.1/bin" >> $GITHUB_PATH
+
       - name: Run tests
         run: cargo test --features integration-test
