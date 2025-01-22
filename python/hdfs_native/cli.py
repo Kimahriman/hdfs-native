@@ -7,16 +7,29 @@ import stat
 import sys
 from argparse import ArgumentParser, Namespace
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from typing import List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 from hdfs_native import Client
-from hdfs_native._internal import WriteOptions
+from hdfs_native._internal import FileStatus, WriteOptions
 
 
 @functools.cache
 def _get_client(connection_url: Optional[str] = None):
     return Client(connection_url)
+
+
+def _prefix_for_url(url: str) -> str:
+    parsed = urlparse(url)
+
+    if parsed.scheme:
+        prefix = f"{parsed.scheme}://{parsed.hostname}"
+        if parsed.port:
+            prefix += f":{parsed.port}"
+        return prefix
+
+    return ""
 
 
 def _client_for_url(url: str) -> Client:
@@ -215,6 +228,42 @@ def get(args: Namespace):
             # Iterate to raise any exceptions thrown
             for f in as_completed(futures):
                 f.result()
+
+
+def ls(args: Namespace):
+    # TODO: Add protocol back on
+    def print_file(status: FileStatus, prefix: str):
+        if args.path_only:
+            print(status.path)
+
+        file_time = status.modification_time
+        if args.access_time:
+            file_time = status.access_time
+
+        file_time_string = datetime.fromtimestamp(file_time).strftime(r"%Y-%m-%d %H:%M")
+
+        mode = stat.filemode(status.permission)
+
+        path = prefix + status.path
+
+        print(
+            f"{mode} {status.owner} {status.group} {status.length} {file_time_string} {path}"
+        )
+
+    for url in args.path:
+        client = _client_for_url(url)
+        for path in _glob_path(client, _path_for_url(url)):
+            status = client.get_file_info(path)
+
+            prefix = _prefix_for_url(url)
+
+            if status.isdir:
+                statuses = list(client.list_status(path, args.recursive))
+
+                if not args.path_only:
+                    print(f"Found {len(statuses)} items")
+            else:
+                print_file(status, prefix)
 
 
 def mkdir(args: Namespace):
@@ -426,6 +475,64 @@ def main(in_args: Optional[Sequence[str]] = None):
         help="Local destination to write to",
     )
     get_parser.set_defaults(func=get)
+
+    ls_parser = subparsers.add_parser(
+        "ls",
+        help="List contents that match the specified patterns",
+        description="""List contents that match the specified patterns. For a directory, list its
+        direct children.""",
+    )
+    ls_parser.add_argument(
+        "-C",
+        "--path-only",
+        action="store_true",
+        default=False,
+        help="Display the path of files and directories only.",
+    )
+    ls_parser.add_argument(
+        "-H",
+        "--human-readable",
+        action="store_true",
+        default=False,
+        help="Formats the sizes of files in a human-readable fashion rather than a number of bytes",
+    )
+    ls_parser.add_argument(
+        "-R",
+        "--recursive",
+        action="store_true",
+        default=False,
+        help="Recursively list the contents of directories",
+    )
+    ls_parser.add_argument(
+        "-t",
+        "--sort-time",
+        action="store_true",
+        default=False,
+        help="Sort files by modification time (most recent first)",
+    )
+    ls_parser.add_argument(
+        "-S",
+        "--sort-size",
+        action="store_true",
+        default=False,
+        help="Sort files by size (smallest first)",
+    )
+    ls_parser.add_argument(
+        "-r",
+        "--reverse",
+        action="store_true",
+        default=False,
+        help="Reverse the order of the sort",
+    )
+    ls_parser.add_argument(
+        "-u",
+        "--access-time",
+        action="store_true",
+        default=False,
+        help="Use the last access time instead of modification time for display and sorting",
+    )
+    ls_parser.add_argument("path", nargs="+", help="Path to display contents of")
+    ls_parser.set_defaults(func=ls)
 
     mkdir_parser = subparsers.add_parser(
         "mkdir",
