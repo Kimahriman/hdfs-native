@@ -3,10 +3,13 @@ mod common;
 
 #[cfg(feature = "integration-test")]
 mod test {
-    use crate::common::{assert_bufs_equal, setup, TEST_FILE_INTS};
+    use crate::common::{assert_bufs_equal, TEST_FILE_INTS};
     use bytes::{BufMut, BytesMut};
     use hdfs_native::{
-        acl::AclEntry, client::FileStatus, minidfs::DfsFeatures, Client, Result, WriteOptions,
+        acl::AclEntry,
+        client::FileStatus,
+        minidfs::{DfsFeatures, MiniDfs},
+        Client, Result, WriteOptions,
     };
     use serial_test::serial;
     use std::collections::HashSet;
@@ -171,8 +174,14 @@ mod test {
     pub async fn test_with_features(features: &HashSet<DfsFeatures>) -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let _dfs = setup(features);
+        let _dfs = MiniDfs::with_features(features);
         let client = Client::default();
+
+        let mut file = client.create("/testfile", WriteOptions::default()).await?;
+        for i in 0..TEST_FILE_INTS as i32 {
+            file.write(i.to_be_bytes().to_vec().into()).await?;
+        }
+        file.close().await?;
 
         test_file_info(&client).await?;
         test_listing(&client).await?;
