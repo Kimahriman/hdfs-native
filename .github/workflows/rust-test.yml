@@ -133,6 +133,7 @@ jobs:
           echo "HADOOP_HOME=$env:GITHUB_WORKSPACE\hadoop-3.4.1" >> $env:GITHUB_ENV
           ls $env:GITHUB_WORKSPACE
           ls $env:GITHUB_WORKSPACE\hadoop-3.4.1
+          ls $env:GITHUB_WORKSPACE\hadoop-3.4.1\bin
 
       - name: Run tests
         run: cargo test --features integration-test test_basic_non_ha
