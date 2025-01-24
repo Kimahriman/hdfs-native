@@ -16,7 +16,7 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    async fn test_basic() {
+    async fn test_basic_non_ha() {
         test_with_features(&HashSet::new()).await.unwrap();
     }
 

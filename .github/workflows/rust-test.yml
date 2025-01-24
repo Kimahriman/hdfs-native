@@ -127,4 +127,4 @@ jobs:
           java-version: "17"
 
       - name: Run tests
-        run: cargo test --features integration-test test_basic_ha
+        run: cargo test --features integration-test test_basic_non_ha
