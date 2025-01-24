@@ -130,7 +130,7 @@ jobs:
         run: |
           Invoke-WebRequest -Uri https://dlcdn.apache.org/hadoop/common/hadoop-3.4.1/hadoop-3.4.1-lean.tar.gz -OutFile hadoop-3.4.1.tar.gz
           tar -xf hadoop-3.4.1.tar.gz -C $env:GITHUB_WORKSPACE
-          echo "HADOOP_HOME=$env:GITHUB_WORKSPACE\hadoop3.4.1" >> $env:GITHUB_ENV
+          echo "HADOOP_HOME=$env:GITHUB_WORKSPACE\hadoop-3.4.1" >> $env:GITHUB_ENV
 
       - name: Run tests
         run: cargo test --features integration-test test_basic_non_ha
