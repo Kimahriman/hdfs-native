@@ -110,7 +110,7 @@ jobs:
       RUSTFLAGS: -C debuginfo=1
       RUST_BACKTRACE: "1"
       RUST_LOG: debug
-      HADOOP_HOME: "%$GITHUB_WORKSPACE%\\hadoop-3.4.1"
+      HADOOP_HOME: "$env:GITHUB_WORKSPACE\\hadoop-3.4.1"
 
     steps:
       - uses: actions/checkout@v4
