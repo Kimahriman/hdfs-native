@@ -110,7 +110,6 @@ jobs:
       RUSTFLAGS: -C debuginfo=1
       RUST_BACKTRACE: "1"
       RUST_LOG: debug
-      HADOOP_HOME: "$env:GITHUB_WORKSPACE\\hadoop-3.4.1"
 
     steps:
       - uses: actions/checkout@v4
@@ -130,7 +129,8 @@ jobs:
       - name: Download Hadoop
         run: |
           Invoke-WebRequest -Uri https://dlcdn.apache.org/hadoop/common/hadoop-3.4.1/hadoop-3.4.1.tar.gz -OutFile hadoop-3.4.1.tar.gz
-          tar -xf hadoop-3.4.1.tar.gz
+          tar -xf hadoop-3.4.1.tar.gz -C $env:GITHUB_WORKSAPCE
+          echo "HADOOP_HOME=$env:GITHUB_WORKSPACE\hadoop3.4.1" >> $GITHUB_ENV
 
       - name: Run tests
         run: cargo test --features integration-test test_basic_non_ha
