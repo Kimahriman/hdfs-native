@@ -131,8 +131,7 @@ jobs:
           Invoke-WebRequest -Uri https://dlcdn.apache.org/hadoop/common/hadoop-3.4.1/hadoop-3.4.1-lean.tar.gz -OutFile hadoop-3.4.1.tar.gz
           tar -xf hadoop-3.4.1.tar.gz -C $env:GITHUB_WORKSPACE
           echo "HADOOP_HOME=$env:GITHUB_WORKSPACE\hadoop-3.4.1" >> $env:GITHUB_ENV
-          ls $env:GITHUB_WORKSPACE
-          ls $env:GITHUB_WORKSPACE\hadoop-3.4.1
+          touch $env:GITHUB_WORKSPACE\hadoop-3.4.1\bin\winutils.exe
           ls $env:GITHUB_WORKSPACE\hadoop-3.4.1\bin
 
       - name: Run tests
