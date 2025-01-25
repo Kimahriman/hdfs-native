@@ -128,6 +128,7 @@ public class Main {
                 hdfsConf.set(FS_DEFAULT_NAME_KEY, "hdfs://127.0.0.1:9000");
             }
 
+            System.out.println("Waiting for cluster to be active");
             dfs.waitActive();
 
             int activeNamenode = 0;
@@ -173,6 +174,7 @@ public class Main {
             }
         }
 
+        System.out.println("Writing config file");
         hdfsConf.writeXml(new FileOutputStream("target/test/core-site.xml"));
 
         System.out.println("Ready!");
@@ -182,6 +184,7 @@ public class Main {
 
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
         reader.readLine();
+        System.out.println("Read line, closing");
 
         if (dfs != null) {
             dfs.close();
