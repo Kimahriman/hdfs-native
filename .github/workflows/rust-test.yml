@@ -143,4 +143,4 @@ jobs:
       - name: Run tests
         run: cargo test --features integration-test test_basic_non_ha
         env:
-          HADOOP_HOME: ${{ env.GITHUB_WORKSPACE }}\winutils\hadoop-3.3.6
+          HADOOP_HOME: ${{ github.workspace }}\winutils\hadoop-3.3.6
