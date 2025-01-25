@@ -114,6 +114,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/checkout@v4
+        with:
+          repository: cdarlint/winutils
+
       - name: Install minimal stable with clippy and rustfmt
         uses: dtolnay/rust-toolchain@master
         with:
@@ -126,13 +130,17 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Download Hadoop
-        run: |
-          Invoke-WebRequest -Uri https://dlcdn.apache.org/hadoop/common/hadoop-3.4.1/hadoop-3.4.1-lean.tar.gz -OutFile hadoop-3.4.1.tar.gz
-          tar -xf hadoop-3.4.1.tar.gz -C $env:GITHUB_WORKSPACE
-          echo "HADOOP_HOME=$env:GITHUB_WORKSPACE\hadoop-3.4.1" >> $env:GITHUB_ENV
-          touch $env:GITHUB_WORKSPACE\hadoop-3.4.1\bin\winutils.exe
-          ls $env:GITHUB_WORKSPACE\hadoop-3.4.1\bin
+      # - name: Download Hadoop
+      #   run: |
+      #     Invoke-WebRequest -Uri https://dlcdn.apache.org/hadoop/common/hadoop-3.4.1/hadoop-3.4.1-lean.tar.gz -OutFile hadoop-3.4.1.tar.gz
+      #     tar -xf hadoop-3.4.1.tar.gz -C $env:GITHUB_WORKSPACE
+      #     echo "HADOOP_HOME=$env:GITHUB_WORKSPACE\hadoop-3.4.1" >> $env:GITHUB_ENV
+      #     touch $env:GITHUB_WORKSPACE\hadoop-3.4.1\bin\winutils.exe
+      #     ls $env:GITHUB_WORKSPACE\hadoop-3.4.1\bin
+
+
 
       - name: Run tests
         run: cargo test --features integration-test test_basic_non_ha
+        env:
+          HADOOP_HOME: ${{ env.GITHUB_WORKSPACE }}\winutils\hadoop-3.3.6
