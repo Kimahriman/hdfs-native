@@ -133,6 +133,7 @@ public class Main {
                 System.err.println("!!!!!!!!!!!!!!!!!!!! Waiting for cluster to be active");
                 dfs.waitActive();
             } catch (Exception e) {
+                System.err.println("!!!!!!!!!!!!!!!!!!!! Caught exception");
                 e.printStackTrace();
                 throw e;
             }
