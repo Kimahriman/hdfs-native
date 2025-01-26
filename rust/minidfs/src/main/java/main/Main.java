@@ -113,23 +113,29 @@ public class Main {
                 numDataNodes = 14;
             }
 
-            dfs = new MiniDFSCluster.Builder(hdfsConf)
-                .nameNodePort(9000)
-                .nameNodeHttpPort(9870)
-                .nnTopology(nnTopology)
-                .numDataNodes(numDataNodes)
-                .build();
+            System.err.println("!!!!!!!!!!!!!!!!!!!! Building");
+            try {
+                dfs = new MiniDFSCluster.Builder(hdfsConf)
+                    .nameNodePort(9000)
+                    .nameNodeHttpPort(9870)
+                    .nnTopology(nnTopology)
+                    .numDataNodes(numDataNodes)
+                    .build();
 
-            if (flags.contains("viewfs")) {
-                hdfsConf.set(FS_DEFAULT_NAME_KEY, "viewfs://minidfs-viewfs");
-            } else if (flags.contains("ha")) {
-                hdfsConf.set(FS_DEFAULT_NAME_KEY, "hdfs://minidfs-ns");
-            } else {
-                hdfsConf.set(FS_DEFAULT_NAME_KEY, "hdfs://127.0.0.1:9000");
+                if (flags.contains("viewfs")) {
+                    hdfsConf.set(FS_DEFAULT_NAME_KEY, "viewfs://minidfs-viewfs");
+                } else if (flags.contains("ha")) {
+                    hdfsConf.set(FS_DEFAULT_NAME_KEY, "hdfs://minidfs-ns");
+                } else {
+                    hdfsConf.set(FS_DEFAULT_NAME_KEY, "hdfs://127.0.0.1:9000");
+                }
+
+                System.err.println("!!!!!!!!!!!!!!!!!!!! Waiting for cluster to be active");
+                dfs.waitActive();
+            } catch (Exception e) {
+                e.printStackTrace();
+                throw e;
             }
-
-            System.err.println("Waiting for cluster to be active");
-            dfs.waitActive();
 
             int activeNamenode = 0;
             if (flags.contains("viewfs")) {
@@ -174,7 +180,7 @@ public class Main {
             }
         }
 
-        System.err.println("Writing config file");
+        System.err.println("!!!!!!!!!!!!!!!!!!!! Writing config file");
         hdfsConf.writeXml(new FileOutputStream("target/test/core-site.xml"));
 
         System.out.println("Ready!");
