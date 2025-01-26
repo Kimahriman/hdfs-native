@@ -113,6 +113,8 @@ public class Main {
                 numDataNodes = 14;
             }
 
+            System.err.println("Failing conf: " + DFSConfigKeys.NNTOP_WINDOWS_MINUTES_KEY +
+                " = " +  conf.get(DFSConfigKeys.NNTOP_WINDOWS_MINUTES_KEY));
             System.err.println("!!!!!!!!!!!!!!!!!!!! Building");
             try {
                 dfs = new MiniDFSCluster.Builder(hdfsConf)
