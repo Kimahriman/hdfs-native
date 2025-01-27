@@ -53,7 +53,7 @@ jobs:
         run: cargo check --all-targets --features integration-test,benchmark
 
       - name: Run unit tests
-        run: cargo test -p hdfs-native
+        run: cargo test -p hdfs-native --lib
 
   # test-full:
   #   strategy:
