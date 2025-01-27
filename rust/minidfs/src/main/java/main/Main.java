@@ -182,7 +182,6 @@ public class Main {
 
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
         reader.readLine();
-        System.err.println("Read line, closing");
     
         if (dfs != null) {
             dfs.close();
