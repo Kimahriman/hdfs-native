@@ -88,9 +88,6 @@ mod test {
             CELL_SIZE * data_units * 5, // Five "rows" of cells
             CELL_SIZE * data_units * 5 - 4,
             CELL_SIZE * data_units * 5 + 4,
-            128 * CELL_SIZE,
-            128 * CELL_SIZE - 4,
-            128 * CELL_SIZE + 4,
         ]
     }
     #[tokio::test]

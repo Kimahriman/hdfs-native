@@ -107,10 +107,7 @@ impl MountLink {
             Some(self.hdfs_path.clone())
         } else {
             path.strip_prefix(&format!("{}/", self.viewfs_path))
-                .map(|relative_path| {
-                    println!("Resolving {} and {}", self.hdfs_path, relative_path);
-                    format!("{}/{}", &self.hdfs_path, relative_path)
-                })
+                .map(|relative_path| format!("{}/{}", &self.hdfs_path, relative_path))
         }
     }
 }
@@ -710,10 +707,6 @@ impl FileStatus {
     fn from(value: HdfsFileStatusProto, base_path: &str) -> Self {
         let mut path = base_path.trim_end_matches("/").to_string();
         let relative_path = std::str::from_utf8(&value.path).unwrap();
-        println!(
-            "Creating file status from {} and {}",
-            base_path, relative_path
-        );
         if !relative_path.is_empty() {
             path.push('/');
             path.push_str(relative_path);
