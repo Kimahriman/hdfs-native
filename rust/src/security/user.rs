@@ -5,6 +5,7 @@ use prost::Message;
 use std::env;
 use std::fs;
 use std::io;
+use std::path::Path;
 use std::path::PathBuf;
 
 use whoami::username;
@@ -180,12 +181,12 @@ pub struct Token {
 impl Token {
     fn load_tokens() -> Vec<Self> {
         match env::var(HADOOP_TOKEN_FILE_LOCATION).map(PathBuf::from) {
-            Ok(path) if path.exists() => Self::read_token_file(path).ok().unwrap_or_default(),
+            Ok(path) if path.exists() => Self::read_token_file(&path).ok().unwrap_or_default(),
             _ => Vec::new(),
         }
     }
 
-    fn read_token_file(path: PathBuf) -> std::io::Result<Vec<Self>> {
+    fn read_token_file(path: &Path) -> std::io::Result<Vec<Self>> {
         let mut content = Bytes::from(fs::read(path)?);
 
         let magic = content.copy_to_bytes(4);
@@ -425,12 +426,7 @@ mod tests {
             .unwrap();
         token_file.flush().unwrap();
 
-        env::set_var(
-            HADOOP_TOKEN_FILE_LOCATION,
-            token_file.path().to_str().unwrap(),
-        );
-
-        let tokens = Token::load_tokens();
+        let tokens = Token::read_token_file(token_file.path()).unwrap();
 
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].kind, "HDFS_DELEGATION_TOKEN");
@@ -455,12 +451,7 @@ mod tests {
             .unwrap();
         token_file.flush().unwrap();
 
-        env::set_var(
-            HADOOP_TOKEN_FILE_LOCATION,
-            token_file.path().to_str().unwrap(),
-        );
-
-        let tokens = Token::load_tokens();
+        let tokens = Token::read_token_file(token_file.path()).unwrap();
 
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].kind, "HDFS_DELEGATION_TOKEN");
