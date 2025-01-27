@@ -52,14 +52,15 @@ jobs:
       - name: Check all features
         run: cargo check --all-targets --features integration-test,benchmark
 
-  test:
+      - name: Run unit tests
+        run: cargo test -p hdfs-native --lib
+
+  test-integration:
     strategy:
       fail-fast: false
       matrix:
         os:
           - ubuntu-latest
-          # - macos-latest
-          # - windows-latest
     runs-on: ${{ matrix.os }}
     env:
       # Disable full debug symbol generation to speed up CI build and keep memory down
@@ -88,9 +89,9 @@ jobs:
 
       - name: Download Hadoop
         run: |
-          wget -q https://dlcdn.apache.org/hadoop/common/hadoop-3.4.0/hadoop-3.4.0.tar.gz
-          tar -xf hadoop-3.4.0.tar.gz -C $GITHUB_WORKSPACE
-          echo "$GITHUB_WORKSPACE/hadoop-3.4.0/bin" >> $GITHUB_PATH
+          wget -q https://dlcdn.apache.org/hadoop/common/hadoop-3.4.1/hadoop-3.4.1-lean.tar.gz
+          tar -xf hadoop-3.4.1-lean.tar.gz -C $GITHUB_WORKSPACE
+          echo "$GITHUB_WORKSPACE/hadoop-3.4.1/bin" >> $GITHUB_PATH
 
       - name: Run tests
         run: cargo test --features integration-test

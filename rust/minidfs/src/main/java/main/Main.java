@@ -45,6 +45,7 @@ public class Main {
         new File("target/test/delegation_token").delete();
 
         Configuration conf = new Configuration();
+        conf.set("dfs.blocksize", "16777216"); // 16 MiB instead of 128 MiB
         if (flags.contains("security")) {
             kdc = new MiniKdc(MiniKdc.createConf(), new File("target/test/kdc"));
             kdc.setTransport("UDP");
@@ -181,7 +182,7 @@ public class Main {
 
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
         reader.readLine();
-
+    
         if (dfs != null) {
             dfs.close();
         }

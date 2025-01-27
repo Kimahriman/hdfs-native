@@ -188,6 +188,10 @@ impl Configuration {
 
 #[cfg(test)]
 mod test {
+    use std::net::IpAddr;
+
+    use dns_lookup::lookup_addr;
+
     use crate::common::config::DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN;
 
     use super::{
@@ -282,8 +286,9 @@ mod test {
         };
 
         let urls = config.get_urls_for_nameservice("test").unwrap();
+        let fqdn = lookup_addr(&IpAddr::from([127, 0, 0, 1])).unwrap();
         assert_eq!(urls.len(), 1, "{:?}", urls);
-        assert_eq!(urls[0], "localhost:9000");
+        assert_eq!(urls[0], format!("{}:9000", fqdn));
 
         config.map.insert(
             format!("{}.{}", DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN, "test"),
