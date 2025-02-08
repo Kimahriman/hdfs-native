@@ -223,7 +223,7 @@ def test_ls(client: Client):
 
     with client.create("/testfile2") as f:
         for i in range(1024):
-            f.write(i.to_bytes(4))
+            f.write(i.to_bytes(4, "big"))
 
     client.mkdirs("/testdir")
 
