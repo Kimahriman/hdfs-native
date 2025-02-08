@@ -1,8 +1,11 @@
 import contextlib
+import dataclasses
 import io
 import os
+import re
 import stat
 from tempfile import TemporaryDirectory
+from typing import Callable, Iterator, List, Literal, Optional, Tuple, overload
 
 import pytest
 
@@ -18,22 +21,37 @@ def assert_not_exists(client: Client, path: str):
         pass
 
 
+@overload
+def capture_stdout(func: Callable[[], None], text: Literal[False]) -> bytes: ...
+
+
+@overload
+def capture_stdout(func: Callable[[], None], text: Literal[True] = True) -> str: ...
+
+
+def capture_stdout(func: Callable[[], None], text: bool = True):
+    buf = io.BytesIO()
+    with contextlib.redirect_stdout(io.TextIOWrapper(buf)) as wrapper:
+        func()
+        if text:
+            wrapper.seek(0)
+            return wrapper.read()
+        else:
+            return buf.getvalue()
+
+
 def test_cat(client: Client):
     with client.create("/testfile") as file:
         file.write(b"1234")
 
-    buf = io.BytesIO()
-    with contextlib.redirect_stdout(io.TextIOWrapper(buf)):
-        cli_main(["cat", "/testfile"])
-        assert buf.getvalue() == b"1234"
+    output = capture_stdout(lambda: cli_main(["cat", "/testfile"]), False)
+    assert output == b"1234"
 
     with client.create("/testfile2") as file:
         file.write(b"5678")
 
-    buf = io.BytesIO()
-    with contextlib.redirect_stdout(io.TextIOWrapper(buf)):
-        cli_main(["cat", "/testfile", "/testfile2"])
-        assert buf.getvalue() == b"12345678"
+    output = capture_stdout(lambda: cli_main(["cat", "/testfile", "/testfile2"]), False)
+    assert output == b"12345678"
 
     with pytest.raises(FileNotFoundError):
         cli_main(["cat", "/nonexistent"])
@@ -157,6 +175,81 @@ def test_get(client: Client):
 
         with open(os.path.join(tmp_dir, "testfile2"), "rb") as file:
             assert file.read() == data
+
+
+def test_ls(client: Client):
+    @dataclasses.dataclass
+    class FileOutput:
+        permission: str
+        replication: str
+        size: str
+        path: str
+
+    def parse_output(output: str) -> Iterator[Tuple[int, List[FileOutput]]]:
+        current_items: Optional[int] = None
+        current_batch: List[FileOutput] = []
+
+        for line in output.split("\n"):
+            if match := re.match(r"Found (\d)+ items", line):
+                if current_items is not None:
+                    yield (current_items, current_batch)
+
+                current_items = int(match.group(1))
+                current_batch = []
+
+            elif line.strip():
+                match = re.match(
+                    r"(\S+)\s+(\S+)\s+\S+\s+\S+\s+([0-9.]+(?: \w)?)\s+\S+\s+\S+\s+(\S+)",
+                    line,
+                )
+                assert match is not None
+                current_batch.append(
+                    FileOutput(
+                        permission=match.group(1),
+                        replication=match.group(2),
+                        size=match.group(3),
+                        path=match.group(4),
+                    )
+                )
+
+        if current_items is not None and len(current_batch) > 0:
+            yield (current_items, current_batch)
+
+    with pytest.raises(FileNotFoundError):
+        cli_main(["ls", "/fake"])
+
+    with client.create("/testfile1") as f:
+        f.write(bytes(range(10)))
+
+    with client.create("/testfile2") as f:
+        for i in range(1024):
+            f.write(i.to_bytes(4))
+
+    client.mkdirs("/testdir")
+
+    directory = FileOutput("drwxr-xr-x", "-", "0", "/testdir")
+    file1 = FileOutput("-rw-r--r--", "3", "10", "/testfile1")
+    file2 = FileOutput("-rw-r--r--", "3", "4096", "/testfile2")
+
+    def check_output(command: List[str], expected: List[FileOutput]):
+        groups = list(parse_output(capture_stdout(lambda: cli_main(command))))
+        assert len(groups) == 1
+        assert groups[0][0] == 3
+        assert len(groups[0][1]) == 3
+        assert groups[0][1] == expected
+
+    check_output(["ls", "/"], [directory, file1, file2])
+    check_output(["ls", "-t", "/"], [directory, file2, file1])
+    check_output(["ls", "-r", "-t", "/"], [file1, file2, directory])
+    check_output(["ls", "-S", "/"], [file2, file1, directory])
+    check_output(["ls", "-r", "-S", "/"], [directory, file1, file2])
+
+    check_output(
+        ["ls", "-H", "/"], [directory, file1, dataclasses.replace(file2, size="4.0 K")]
+    )
+
+    output = capture_stdout(lambda: cli_main(["ls", "-C", "/"])).strip().split("\n")
+    assert output == [directory.path, file1.path, file2.path]
 
 
 def test_mkdir(client: Client):
