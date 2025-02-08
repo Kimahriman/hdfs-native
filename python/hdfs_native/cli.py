@@ -6,13 +6,16 @@ import shutil
 import stat
 import sys
 from argparse import ArgumentParser, Namespace
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 from urllib.parse import urlparse
 
 from hdfs_native import Client
 from hdfs_native._internal import FileStatus, WriteOptions
+
+__all__ = ["main"]
 
 
 @functools.cache
@@ -231,24 +234,101 @@ def get(args: Namespace):
 
 
 def ls(args: Namespace):
-    # TODO: Add protocol back on
-    def print_file(status: FileStatus, prefix: str):
-        if args.path_only:
-            print(status.path)
+    def human_size(num: int):
+        if num < 1024:
+            return str(num)
 
+        adjusted = num / 1024.0
+        for unit in ("K", "M", "G", "T", "P", "E", "Z"):
+            if abs(adjusted) < 1024.0:
+                return f"{adjusted:.1f} {unit}"
+            adjusted /= 1024.0
+        return f"{adjusted:.1f} Y"
+
+    def parse_status(status: FileStatus, prefix: str) -> Dict[str, Union[int, str]]:
         file_time = status.modification_time
         if args.access_time:
             file_time = status.access_time
 
-        file_time_string = datetime.fromtimestamp(file_time).strftime(r"%Y-%m-%d %H:%M")
+        file_time_string = datetime.fromtimestamp(file_time / 1000).strftime(
+            r"%Y-%m-%d %H:%M"
+        )
 
-        mode = stat.filemode(status.permission)
+        permission = status.permission
+        if status.isdir:
+            permission |= stat.S_IFDIR
+        else:
+            permission |= stat.S_IFREG
+
+        mode = stat.filemode(permission)
+
+        if args.human_readable:
+            length_string = human_size(status.length)
+        else:
+            length_string = str(status.length)
 
         path = prefix + status.path
 
-        print(
-            f"{mode} {status.owner} {status.group} {status.length} {file_time_string} {path}"
-        )
+        return {
+            "mode": mode,
+            "replication": str(status.replication) if status.replication else "-",
+            "owner": status.owner,
+            "group": status.group,
+            "length": status.length,
+            "length_formatted": length_string,
+            "time": file_time,
+            "time_formatted": file_time_string,
+            "path": path,
+        }
+
+    def get_widths(parsed: list[dict]) -> dict[str, int]:
+        widths: dict[str, int] = defaultdict(lambda: 0)
+
+        for file in parsed:
+            for key, value in file.items():
+                if isinstance(value, str):
+                    widths[key] = max(widths[key], len(value))
+
+        return widths
+
+    def print_files(
+        parsed: List[Dict[str, Union[int, str]]],
+        widths: Optional[Dict[str, int]] = None,
+    ):
+        if args.sort_time:
+            parsed = sorted(parsed, key=lambda x: x["time"], reverse=not args.reverse)
+        elif args.sort_size:
+            parsed = sorted(parsed, key=lambda x: x["length"], reverse=not args.reverse)
+
+        def format(
+            file: Dict[str, Union[int, str]],
+            field: str,
+            right_align: bool = False,
+        ):
+            value = str(file[field])
+
+            width = len(value)
+            if widths and field in widths:
+                width = widths[field]
+
+            if right_align:
+                return f"{value:>{width}}"
+            return f"{value:{width}}"
+
+        for file in parsed:
+            if args.path_only:
+                print(file["path"])
+            else:
+                formatted_fields = [
+                    format(file, "mode"),
+                    format(file, "replication"),
+                    format(file, "owner"),
+                    format(file, "group"),
+                    format(file, "length_formatted", True),
+                    format(file, "time_formatted"),
+                    format(file, "path"),
+                ]
+                print(" ".join(formatted_fields))
 
     for url in args.path:
         client = _client_for_url(url)
@@ -258,12 +338,18 @@ def ls(args: Namespace):
             prefix = _prefix_for_url(url)
 
             if status.isdir:
-                statuses = list(client.list_status(path, args.recursive))
+                parsed = [
+                    parse_status(status, prefix)
+                    for status in client.list_status(path, args.recursive)
+                ]
 
                 if not args.path_only:
-                    print(f"Found {len(statuses)} items")
+                    print(f"Found {len(parsed)} items")
+
+                widths = get_widths(parsed)
+                print_files(parsed, widths)
             else:
-                print_file(status, prefix)
+                print_files([parse_status(status, prefix)])
 
 
 def mkdir(args: Namespace):
@@ -515,7 +601,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         "--sort-size",
         action="store_true",
         default=False,
-        help="Sort files by size (smallest first)",
+        help="Sort files by size (largest first)",
     )
     ls_parser.add_argument(
         "-r",
