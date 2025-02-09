@@ -10,6 +10,7 @@ use crate::{
     hdfs::{
         connection::{DatanodeConnection, DatanodeReader, DatanodeWriter, Op, WritePacket},
         protocol::NamenodeProtocol,
+        replace_datanode::ReplaceDatanodeOnFailure,
     },
     proto::hdfs,
     HdfsError, Result,
@@ -300,6 +301,7 @@ pub(crate) struct ReplicatedBlockWriter {
 
     current_packet: WritePacket,
     pipeline: Option<Pipeline>,
+    replace_datanode: ReplaceDatanodeOnFailure,
 }
 
 impl ReplicatedBlockWriter {
@@ -340,6 +342,7 @@ impl ReplicatedBlockWriter {
             current_packet,
 
             pipeline: Some(pipeline),
+            replace_datanode: ReplaceDatanodeOnFailure::default(),
         };
 
         Ok(this)
@@ -363,10 +366,51 @@ impl ReplicatedBlockWriter {
         debug!("Recovering block writer");
 
         let mut new_block = self.block.clone();
-        for failed_node in failed_nodes {
-            new_block.locs.remove(failed_node);
-            new_block.storage_i_ds.remove(failed_node);
-            new_block.storage_types.remove(failed_node);
+
+        // Check if we should try to replace failed datanodes
+        let should_replace = self.replace_datanode.should_replace(
+            new_block.locs.len() as u32,
+            &new_block.locs,
+            new_block.b.num_bytes() > 0,
+            false,
+        );
+
+        if should_replace && self.replace_datanode.check_enabled() {
+            // Request additional datanodes to replace failed ones
+            let additional_nodes = self
+                .protocol
+                .get_additional_datanodes(&new_block.b, &new_block.locs, failed_nodes.len() as u32)
+                .await;
+
+            match additional_nodes {
+                Ok(new_nodes) => {
+                    // Replace failed nodes with new ones
+                    for (failed_idx, new_node) in failed_nodes.iter().zip(new_nodes.into_iter()) {
+                        if *failed_idx < new_block.locs.len() {
+                            new_block.locs[*failed_idx] = new_node;
+                        }
+                    }
+                }
+                Err(e) => {
+                    if !self.replace_datanode.is_best_effort() {
+                        return Err(e);
+                    }
+                    // In best effort mode, continue with remaining nodes
+                    warn!("Failed to get replacement nodes: {}", e);
+                    for failed_node in failed_nodes {
+                        new_block.locs.remove(failed_node);
+                        new_block.storage_i_ds.remove(failed_node);
+                        new_block.storage_types.remove(failed_node);
+                    }
+                }
+            }
+        } else {
+            // Original behavior - remove failed nodes
+            for failed_node in failed_nodes {
+                new_block.locs.remove(failed_node);
+                new_block.storage_i_ds.remove(failed_node);
+                new_block.storage_types.remove(failed_node);
+            }
         }
 
         let mut bytes_acked = new_block.b.num_bytes();
