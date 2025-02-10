@@ -8,7 +8,7 @@ import sys
 from argparse import ArgumentParser, Namespace
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 from urllib.parse import urlparse
 
@@ -470,6 +470,40 @@ def rmdir(args: Namespace):
             client.delete(path)
 
 
+def touch(args: Namespace):
+    for url in args.path:
+        client = _client_for_url(url)
+        for path in _glob_path(client, _path_for_url(url)):
+            if args.access_time and args.modification_time:
+                raise ValueError(
+                    "--access-time and --modification-time cannot both be passed"
+                )
+            timestamp = None
+            if args.timestamp:
+                timestamp = datetime.strptime(args.timestamp, r"%Y%m%d:%H%M%S")
+
+            try:
+                status = client.get_file_info(path)
+                if timestamp is None:
+                    timestamp = datetime.now(timezone.utc)
+            except FileNotFoundError:
+                if args.only_change:
+                    return
+
+                client.create(path).close()
+                status = client.get_file_info(path)
+
+            if timestamp:
+                access_time = int(timestamp.timestamp() * 1000)
+                modification_time = int(timestamp.timestamp() * 1000)
+                if args.access_time:
+                    modification_time = status.modification_time
+                if args.modification_time:
+                    access_time = status.access_time
+
+                client.set_times(path, modification_time, access_time)
+
+
 def main(in_args: Optional[Sequence[str]] = None):
     parser = ArgumentParser(
         description="""Command line utility for interacting with HDFS using hdfs-native.
@@ -739,6 +773,45 @@ def main(in_args: Optional[Sequence[str]] = None):
         help="Source patterns to copy",
     )
     rmdir_parser.set_defaults(func=rmdir)
+
+    touch_parser = subparsers.add_parser(
+        "touch",
+        help="Updates the access and modification times of a file or creates it if it doesn't exist",
+        description="""Updates the access and modification times of the file specified by the <path> to
+                    the current time. If the file does not exist, then a zero length file is created
+                    at <path> with current time as the timestamp of that <path>.""",
+    )
+    touch_parser.add_argument(
+        "-a",
+        "--access-time",
+        action="store_true",
+        default=False,
+        help="Only change the access time",
+    )
+    touch_parser.add_argument(
+        "-m",
+        "--modification-time",
+        action="store_true",
+        default=False,
+        help="Only change the modification time",
+    )
+    touch_parser.add_argument(
+        "-t",
+        "--timestamp",
+        help="Use specified timestamp instead of current time in the format yyyyMMdd:HHmmss",
+    )
+    touch_parser.add_argument(
+        "-c",
+        "--only-change",
+        action="store_true",
+        default=False,
+        help="Don't create the file if it doesn't exist",
+    )
+    touch_parser.add_argument(
+        "path",
+        nargs="+",
+    )
+    touch_parser.set_defaults(func=touch)
 
     args = parser.parse_args(in_args)
     args.func(args)
