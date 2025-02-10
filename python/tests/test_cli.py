@@ -4,6 +4,7 @@ import io
 import os
 import re
 import stat
+from datetime import datetime
 from tempfile import TemporaryDirectory
 from typing import Callable, Iterator, List, Literal, Optional, Tuple, overload
 
@@ -393,3 +394,31 @@ def test_rmdir(client: Client):
         pytest.fail("Directory was not removed")
     except FileNotFoundError:
         pass
+
+
+def test_touch(client: Client):
+    cli_main(["touch", "/testfile"])
+    client.get_file_info("/testfile")
+
+    cli_main(["touch", "-c", "/testfile2"])
+    try:
+        client.get_file_info("/testfile2")
+        pytest.fail("File should not have been created")
+    except FileNotFoundError:
+        pass
+
+    cli_main(["touch", "-a", "/testfile"])
+    status = client.get_file_info("/testfile")
+    assert status.access_time > status.modification_time
+
+    cli_main(["touch", "-m", "/testfile"])
+    status = client.get_file_info("/testfile")
+    assert status.modification_time > status.access_time
+
+    cli_main(["touch", "-t", "20240101:000000", "/testfile"])
+    timestamp = int(
+        datetime.strptime("20240101:000000", r"%Y%m%d:%H%M%S").timestamp() * 1000
+    )
+    status = client.get_file_info("/testfile")
+    assert status.modification_time == timestamp
+    assert status.access_time == timestamp
