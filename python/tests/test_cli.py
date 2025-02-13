@@ -4,6 +4,7 @@ import io
 import os
 import re
 import stat
+import time
 from datetime import datetime
 from tempfile import TemporaryDirectory
 from typing import Callable, Iterator, List, Literal, Optional, Tuple, overload
@@ -268,9 +269,14 @@ def test_ls(client: Client):
     with client.create("/testfile1") as f:
         f.write(bytes(range(10)))
 
+    # Make sure we wait a few milliseconds so we don't get the exact same timestamp
+    time.sleep(0.01)
+
     with client.create("/testfile2") as f:
         for i in range(1024):
             f.write(i.to_bytes(4, "big"))
+
+    time.sleep(0.01)
 
     client.mkdirs("/testdir")
 
