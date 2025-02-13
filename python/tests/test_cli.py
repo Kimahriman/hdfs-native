@@ -133,6 +133,52 @@ def test_chown(client: Client):
     assert status.group == "testgroup"
 
 
+def test_du(client: Client):
+    with client.create("/testfile") as file:
+        file.write(b"1234")
+
+    client.mkdirs("/testdir")
+
+    with client.create("/testdir/testfile") as file:
+        for i in range(1024):
+            file.write(i.to_bytes(4, "big"))
+
+    assert capture_stdout(lambda: cli_main(["du", "/"])).strip().split("\n") == [
+        "4096  12288  /testdir ",
+        "   4     12  /testfile",
+    ]
+
+    assert capture_stdout(lambda: cli_main(["du", "-h", "/"])).strip().split("\n") == [
+        "4.0K  12.0K  /testdir ",
+        "   4     12  /testfile",
+    ]
+
+    assert capture_stdout(lambda: cli_main(["du", "-s", "/"])).strip().split("\n") == [
+        "4100  12300  /",
+    ]
+
+    assert capture_stdout(lambda: cli_main(["du", "-fh", "/"])).strip().split("\n") == [
+        "4.0K  12.0K  /testdir   1  1",
+        "   4     12  /testfile  1  0",
+    ]
+
+    assert capture_stdout(lambda: cli_main(["du", "-vfh", "/"])).strip().split(
+        "\n"
+    ) == [
+        "File Size  Disk Size  Path       File Count  Directory Count",
+        "     4.0K      12.0K  /testdir            1                1",
+        "        4         12  /testfile           1                0",
+    ]
+
+    assert capture_stdout(
+        lambda: cli_main(["du", "-vsfh", "/testdir", "/testfile"])
+    ).strip().split("\n") == [
+        "File Size  Disk Size  Path       File Count  Directory Count",
+        "     4.0K      12.0K  /testdir            1                1",
+        "        4         12  /testfile           1                0",
+    ]
+
+
 def test_get(client: Client):
     data = b"0123456789"
 

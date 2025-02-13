@@ -215,6 +215,20 @@ def chown(args: Namespace):
 
 
 def du(args: Namespace):
+    parsed: List[Dict[str, str]] = []
+
+    if args.verbose:
+        header = {
+            "file_size": "File Size",
+            "disk_size": "Disk Size",
+            "path": "Path",
+        }
+        if args.file_count:
+            header["file_count"] = "File Count"
+            header["directory_count"] = "Directory Count"
+
+        parsed.append(header)
+
     for url in args.path:
         client = _client_for_url(url)
         for path in _glob_path(client, _path_for_url(url)):
@@ -228,20 +242,6 @@ def du(args: Namespace):
                     summaries.append(
                         (prefix + status.path, client.get_content_summary(status.path))
                     )
-
-            parsed: List[Dict[str, str]] = []
-
-            if args.verbose:
-                header = {
-                    "file_size": "File Size",
-                    "disk_size": "Disk Size",
-                    "path": "Path",
-                }
-                if args.file_count:
-                    header["file_count"] = "File Count"
-                    header["directory_count"] = "Directory Count"
-
-                parsed.append(header)
 
             for path, summary in summaries:
                 if args.human_readable:
@@ -263,34 +263,34 @@ def du(args: Namespace):
 
                 parsed.append(parsed_file)
 
-            widths = _get_widths(parsed)
+    widths = _get_widths(parsed)
 
-            def format(
-                file: Dict[str, str],
-                field: str,
-                right_align: bool = False,
-            ):
-                value = str(file[field])
+    def format(
+        file: Dict[str, str],
+        field: str,
+        right_align: bool = False,
+    ):
+        value = str(file[field])
 
-                width = len(value)
-                if widths and field in widths:
-                    width = widths[field]
+        width = len(value)
+        if widths and field in widths:
+            width = widths[field]
 
-                if right_align:
-                    return f"{value:>{width}}"
-                return f"{value:{width}}"
+        if right_align:
+            return f"{value:>{width}}"
+        return f"{value:{width}}"
 
-            for file in parsed:
-                formatted_fields = [
-                    format(file, "file_size", True),
-                    format(file, "disk_size", True),
-                    format(file, "path"),
-                ]
-                if args.file_count:
-                    formatted_fields.append(format(file, "file_count", True))
-                    formatted_fields.append(format(file, "directory_count", True))
+    for file in parsed:
+        formatted_fields = [
+            format(file, "file_size", True),
+            format(file, "disk_size", True),
+            format(file, "path"),
+        ]
+        if args.file_count:
+            formatted_fields.append(format(file, "file_count", True))
+            formatted_fields.append(format(file, "directory_count", True))
 
-                print("  ".join(formatted_fields))
+        print("  ".join(formatted_fields))
 
 
 def get(args: Namespace):
