@@ -4,9 +4,9 @@ import io
 import os
 import re
 import stat
+import time
 from datetime import datetime
 from tempfile import TemporaryDirectory
-import time
 from typing import Callable, Iterator, List, Literal, Optional, Tuple, overload
 
 import pytest
