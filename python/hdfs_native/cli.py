@@ -142,6 +142,29 @@ def _upload_file(
         client.rename(write_destination, remote_dst, overwrite=force)
 
 
+def _get_widths(parsed: list[dict]) -> dict[str, int]:
+    widths: dict[str, int] = defaultdict(lambda: 0)
+
+    for file in parsed:
+        for key, value in file.items():
+            if isinstance(value, str):
+                widths[key] = max(widths[key], len(value))
+
+    return widths
+
+
+def _human_size(num: int):
+    if num < 1024:
+        return str(num)
+
+    adjusted = num / 1024.0
+    for unit in ("K", "M", "G", "T", "P", "E", "Z"):
+        if abs(adjusted) < 1024.0:
+            return f"{adjusted:.1f}{unit}"
+        adjusted /= 1024.0
+    return f"{adjusted:.1f}Y"
+
+
 def cat(args: Namespace):
     for src in args.src:
         client = _client_for_url(src)
@@ -191,6 +214,85 @@ def chown(args: Namespace):
                 client.set_owner(path, owner, group)
 
 
+def du(args: Namespace):
+    for url in args.path:
+        client = _client_for_url(url)
+        for path in _glob_path(client, _path_for_url(url)):
+            prefix = _prefix_for_url(url)
+
+            if args.summary:
+                summaries = [(prefix + path, client.get_content_summary(path))]
+            else:
+                summaries = []
+                for status in client.list_status(path):
+                    summaries.append(
+                        (prefix + status.path, client.get_content_summary(status.path))
+                    )
+
+            parsed: List[Dict[str, str]] = []
+
+            if args.verbose:
+                header = {
+                    "file_size": "File Size",
+                    "disk_size": "Disk Size",
+                    "path": "Path",
+                }
+                if args.file_count:
+                    header["file_count"] = "File Count"
+                    header["directory_count"] = "Directory Count"
+
+                parsed.append(header)
+
+            for path, summary in summaries:
+                if args.human_readable:
+                    file_size = _human_size(summary.length)
+                    disk_size = _human_size(summary.space_consumed)
+                else:
+                    file_size = str(summary.length)
+                    disk_size = str(summary.space_consumed)
+
+                parsed_file = {
+                    "file_size": file_size,
+                    "disk_size": disk_size,
+                    "path": path,
+                }
+
+                if args.file_count:
+                    parsed_file["file_count"] = str(summary.file_count)
+                    parsed_file["directory_count"] = str(summary.directory_count)
+
+                parsed.append(parsed_file)
+
+            widths = _get_widths(parsed)
+
+            def format(
+                file: Dict[str, str],
+                field: str,
+                right_align: bool = False,
+            ):
+                value = str(file[field])
+
+                width = len(value)
+                if widths and field in widths:
+                    width = widths[field]
+
+                if right_align:
+                    return f"{value:>{width}}"
+                return f"{value:{width}}"
+
+            for file in parsed:
+                formatted_fields = [
+                    format(file, "file_size", True),
+                    format(file, "disk_size", True),
+                    format(file, "path"),
+                ]
+                if args.file_count:
+                    formatted_fields.append(format(file, "file_count", True))
+                    formatted_fields.append(format(file, "directory_count", True))
+
+                print("  ".join(formatted_fields))
+
+
 def get(args: Namespace):
     paths: List[Tuple[Client, str]] = []
 
@@ -234,17 +336,6 @@ def get(args: Namespace):
 
 
 def ls(args: Namespace):
-    def human_size(num: int):
-        if num < 1024:
-            return str(num)
-
-        adjusted = num / 1024.0
-        for unit in ("K", "M", "G", "T", "P", "E", "Z"):
-            if abs(adjusted) < 1024.0:
-                return f"{adjusted:.1f} {unit}"
-            adjusted /= 1024.0
-        return f"{adjusted:.1f} Y"
-
     def parse_status(status: FileStatus, prefix: str) -> Dict[str, Union[int, str]]:
         file_time = status.modification_time
         if args.access_time:
@@ -263,7 +354,7 @@ def ls(args: Namespace):
         mode = stat.filemode(permission)
 
         if args.human_readable:
-            length_string = human_size(status.length)
+            length_string = _human_size(status.length)
         else:
             length_string = str(status.length)
 
@@ -280,16 +371,6 @@ def ls(args: Namespace):
             "time_formatted": file_time_string,
             "path": path,
         }
-
-    def get_widths(parsed: list[dict]) -> dict[str, int]:
-        widths: dict[str, int] = defaultdict(lambda: 0)
-
-        for file in parsed:
-            for key, value in file.items():
-                if isinstance(value, str):
-                    widths[key] = max(widths[key], len(value))
-
-        return widths
 
     def print_files(
         parsed: List[Dict[str, Union[int, str]]],
@@ -346,7 +427,7 @@ def ls(args: Namespace):
                 if not args.path_only:
                     print(f"Found {len(parsed)} items")
 
-                widths = get_widths(parsed)
+                widths = _get_widths(parsed)
                 print_files(parsed, widths)
             else:
                 print_files([parse_status(status, prefix)])
@@ -474,10 +555,6 @@ def touch(args: Namespace):
     for url in args.path:
         client = _client_for_url(url)
         for path in _glob_path(client, _path_for_url(url)):
-            if args.access_time and args.modification_time:
-                raise ValueError(
-                    "--access-time and --modification-time cannot both be passed"
-                )
             timestamp = None
             if args.timestamp:
                 timestamp = datetime.strptime(args.timestamp, r"%Y%m%d:%H%M%S")
@@ -516,6 +593,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         "cat",
         help="Print the contents of a file",
         description="Print the contents of a file to stdout",
+        add_help=False,
     )
     cat_parser.add_argument("src", nargs="+", help="File pattern to print")
     cat_parser.set_defaults(func=cat)
@@ -524,6 +602,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         "chmod",
         help="Changes permissions of a file",
         description="Changes permissions of a file. Only octal permissions are supported.",
+        add_help=False,
     )
     chmod_parser.add_argument(
         "-R",
@@ -542,6 +621,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         "chown",
         help="Changes owner and group of a file",
         description="Changes owner and group of a file",
+        add_help=False,
     )
     chown_parser.add_argument(
         "-R",
@@ -557,12 +637,50 @@ def main(in_args: Optional[Sequence[str]] = None):
     chown_parser.add_argument("path", nargs="+", help="File pattern to modify")
     chown_parser.set_defaults(func=chown)
 
+    du_parser = subparsers.add_parser(
+        "du",
+        help="Show the amount of space used by the files that match the specified file pattern",
+        description="Show the amount of space used by the files that match the specified file pattern",
+        add_help=False,
+    )
+    du_parser.add_argument(
+        "-s",
+        "--summary",
+        action="store_true",
+        default=False,
+        help="Show the total size of matching directories instead of traversing their children",
+    )
+    du_parser.add_argument(
+        "-h",
+        "--human-readable",
+        action="store_true",
+        default=False,
+        help="Format the size in a human-readable fashion",
+    )
+    du_parser.add_argument(
+        "-f",
+        "--file-count",
+        action="store_true",
+        default=False,
+        help="Include the file count",
+    )
+    du_parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Include a header line",
+    )
+    du_parser.add_argument("path", nargs="+")
+    du_parser.set_defaults(func=du)
+
     get_parser = subparsers.add_parser(
         "get",
         aliases=["copyToLocal"],
         help="Copy files to a local destination",
         description="""Copy files matching a pattern to a local destination.
             When copying multiple files, the destination must be a directory""",
+        add_help=False,
     )
     get_parser.add_argument(
         "-p",
@@ -601,6 +719,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         help="List contents that match the specified patterns",
         description="""List contents that match the specified patterns. For a directory, list its
         direct children.""",
+        add_help=False,
     )
     ls_parser.add_argument(
         "-C",
@@ -610,7 +729,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         help="Display the path of files and directories only.",
     )
     ls_parser.add_argument(
-        "-H",
+        "-h",
         "--human-readable",
         action="store_true",
         default=False,
@@ -658,6 +777,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         "mkdir",
         help="Create a directory",
         description="Create a directory in a specified path",
+        add_help=False,
     )
     mkdir_parser.add_argument(
         "path",
@@ -677,6 +797,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         help="Move files or directories",
         description="""Move a file or directory from <src> to <dst>. Must be part of the same name service.
         If multiple src are provided, dst must be a directory""",
+        add_help=False,
     )
     mv_parser.add_argument("src", nargs="+", help="Files or directories to move")
     mv_parser.add_argument("dst", help="Target destination of file or directory")
@@ -688,6 +809,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         help="Copy local files to a remote destination",
         description="""Copy files matching a pattern to a remote destination.
             When copying multiple files, the destination must be a directory""",
+        add_help=False,
     )
     put_parser.add_argument(
         "-p",
@@ -732,6 +854,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         "rm",
         help="Delete files",
         description="Delete all files matching the specified file patterns",
+        add_help=False,
     )
     rm_parser.add_argument(
         "-f",
@@ -766,6 +889,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         "rmdir",
         help="Delete an empty directory",
         description="Delete an empty directory",
+        add_help=False,
     )
     rmdir_parser.add_argument(
         "dir",
@@ -780,15 +904,17 @@ def main(in_args: Optional[Sequence[str]] = None):
         description="""Updates the access and modification times of the file specified by the <path> to
                     the current time. If the file does not exist, then a zero length file is created
                     at <path> with current time as the timestamp of that <path>.""",
+        add_help=False,
     )
-    touch_parser.add_argument(
+    touch_parser_time_group = touch_parser.add_mutually_exclusive_group()
+    touch_parser_time_group.add_argument(
         "-a",
         "--access-time",
         action="store_true",
         default=False,
         help="Only change the access time",
     )
-    touch_parser.add_argument(
+    touch_parser_time_group.add_argument(
         "-m",
         "--modification-time",
         action="store_true",
@@ -812,6 +938,23 @@ def main(in_args: Optional[Sequence[str]] = None):
         nargs="+",
     )
     touch_parser.set_defaults(func=touch)
+
+    def show_help(args: Namespace):
+        subparsers.choices[args.cmd].print_help()
+
+    subparser_keys = list(subparsers.choices.keys())
+
+    help_parser = subparsers.add_parser(
+        "help",
+        help="Display usage of a subcommand",
+        description="Display usage of a subcommand",
+    )
+    help_parser.add_argument(
+        "cmd",
+        choices=subparser_keys,
+        help="Command to show usage for",
+    )
+    help_parser.set_defaults(func=show_help)
 
     args = parser.parse_args(in_args)
     args.func(args)

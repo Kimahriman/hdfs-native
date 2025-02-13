@@ -200,7 +200,7 @@ def test_ls(client: Client):
 
             elif line.strip():
                 match = re.match(
-                    r"(\S+)\s+(\S+)\s+\S+\s+\S+\s+([0-9.]+(?: \w)?)\s+\S+\s+\S+\s+(\S+)",
+                    r"(\S+)\s+(\S+)\s+\S+\s+\S+\s+([0-9.]+\w?)\s+\S+\s+\S+\s+(\S+)",
                     line,
                 )
                 assert match is not None
@@ -246,7 +246,7 @@ def test_ls(client: Client):
     check_output(["ls", "-r", "-S", "/"], [directory, file1, file2])
 
     check_output(
-        ["ls", "-H", "/"], [directory, file1, dataclasses.replace(file2, size="4.0 K")]
+        ["ls", "-h", "/"], [directory, file1, dataclasses.replace(file2, size="4.0K")]
     )
 
     output = capture_stdout(lambda: cli_main(["ls", "-C", "/"])).strip().split("\n")
