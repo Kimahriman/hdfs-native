@@ -24,7 +24,7 @@ def test_dirs(fs: HdfsFileSystem):
     fs.mkdir("/testdir/nested/dir")
     assert fs.info("/testdir/nested/dir")["type"] == "directory"
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(FileNotFoundError):
         fs.mkdir("/testdir/nested2/dir", create_parents=False)
 
     with pytest.raises(RuntimeError):

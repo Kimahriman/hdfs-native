@@ -80,6 +80,12 @@ class RawFileReader:
     def read_range(self, offset: int, len: int) -> bytes:
         """Read `len` bytes from the file starting at `offset`. Doesn't affect the position in the file"""
 
+    def read_range_stream(self, offset: int, len: int) -> Iterator[bytes]:
+        """
+        Read `len` bytes from the file starting at `offset` as an iterator of bytes. Doesn't affect
+        the position in the file.
+        """
+
 class RawFileWriter:
     def write(self, buf: Buffer) -> int:
         """Writes `buf` to the file"""

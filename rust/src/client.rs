@@ -1,5 +1,4 @@
 use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use futures::stream::BoxStream;
@@ -86,8 +85,8 @@ impl WriteOptions {
 
 #[derive(Debug, Clone)]
 struct MountLink {
-    viewfs_path: PathBuf,
-    hdfs_path: PathBuf,
+    viewfs_path: String,
+    hdfs_path: String,
     protocol: Arc<NamenodeProtocol>,
 }
 
@@ -95,25 +94,20 @@ impl MountLink {
     fn new(viewfs_path: &str, hdfs_path: &str, protocol: Arc<NamenodeProtocol>) -> Self {
         // We should never have an empty path, we always want things mounted at root ("/") by default.
         Self {
-            viewfs_path: PathBuf::from(if viewfs_path.is_empty() {
-                "/"
-            } else {
-                viewfs_path
-            }),
-            hdfs_path: PathBuf::from(if hdfs_path.is_empty() { "/" } else { hdfs_path }),
+            viewfs_path: viewfs_path.trim_end_matches("/").to_string(),
+            hdfs_path: hdfs_path.trim_end_matches("/").to_string(),
             protocol,
         }
     }
     /// Convert a viewfs path into a name service path if it matches this link
-    fn resolve(&self, path: &Path) -> Option<PathBuf> {
-        if let Ok(relative_path) = path.strip_prefix(&self.viewfs_path) {
-            if relative_path.components().count() == 0 {
-                Some(self.hdfs_path.clone())
-            } else {
-                Some(self.hdfs_path.join(relative_path))
-            }
+    fn resolve(&self, path: &str) -> Option<String> {
+        // Make sure we don't partially match the last component. It either needs to be an exact
+        // match to a viewfs path, or needs to match with a trailing slash
+        if path == self.viewfs_path {
+            Some(self.hdfs_path.clone())
         } else {
-            None
+            path.strip_prefix(&format!("{}/", self.viewfs_path))
+                .map(|relative_path| format!("{}/{}", &self.hdfs_path, relative_path))
         }
     }
 }
@@ -126,20 +120,12 @@ struct MountTable {
 
 impl MountTable {
     fn resolve(&self, src: &str) -> (&MountLink, String) {
-        let path = Path::new(src);
         for link in self.mounts.iter() {
-            if let Some(resolved) = link.resolve(path) {
-                return (link, resolved.to_string_lossy().into());
+            if let Some(resolved) = link.resolve(src) {
+                return (link, resolved);
             }
         }
-        (
-            &self.fallback,
-            self.fallback
-                .resolve(path)
-                .unwrap()
-                .to_string_lossy()
-                .into(),
-        )
+        (&self.fallback, self.fallback.resolve(src).unwrap())
     }
 }
 
@@ -246,7 +232,7 @@ impl Client {
 
         if let Some(fallback) = fallback {
             // Sort the mount table from longest viewfs path to shortest. This makes sure more specific paths are considered first.
-            mounts.sort_by_key(|m| m.viewfs_path.components().count());
+            mounts.sort_by_key(|m| m.viewfs_path.chars().filter(|c| *c == '/').count());
             mounts.reverse();
 
             Ok(MountTable { mounts, fallback })
@@ -724,19 +710,16 @@ pub struct FileStatus {
 
 impl FileStatus {
     fn from(value: HdfsFileStatusProto, base_path: &str) -> Self {
-        let mut path = PathBuf::from(base_path);
-        if let Ok(relative_path) = std::str::from_utf8(&value.path) {
-            if !relative_path.is_empty() {
-                path.push(relative_path)
-            }
+        let mut path = base_path.trim_end_matches("/").to_string();
+        let relative_path = std::str::from_utf8(&value.path).unwrap();
+        if !relative_path.is_empty() {
+            path.push('/');
+            path.push_str(relative_path);
         }
 
         FileStatus {
             isdir: value.file_type() == FileType::IsDir,
-            path: path
-                .to_str()
-                .map(|x| x.to_string())
-                .unwrap_or(String::new()),
+            path,
             length: value.length as usize,
             permission: value.permission.perm as u16,
             owner: value.owner,
@@ -774,10 +757,7 @@ impl From<ContentSummaryProto> for ContentSummary {
 
 #[cfg(test)]
 mod test {
-    use std::{
-        path::{Path, PathBuf},
-        sync::Arc,
-    };
+    use std::sync::Arc;
 
     use url::Url;
 
@@ -842,34 +822,22 @@ mod test {
         let protocol = create_protocol("hdfs://127.0.0.1:9000");
         let link = MountLink::new("/view", "/hdfs", protocol);
 
-        assert_eq!(
-            link.resolve(Path::new("/view/dir/file")).unwrap(),
-            PathBuf::from("/hdfs/dir/file")
-        );
-        assert_eq!(
-            link.resolve(Path::new("/view")).unwrap(),
-            PathBuf::from("/hdfs")
-        );
-        assert!(link.resolve(Path::new("/hdfs/path")).is_none());
+        assert_eq!(link.resolve("/view/dir/file").unwrap(), "/hdfs/dir/file");
+        assert_eq!(link.resolve("/view").unwrap(), "/hdfs");
+        assert!(link.resolve("/hdfs/path").is_none());
     }
 
     #[test]
     fn test_fallback_link() {
         let protocol = create_protocol("hdfs://127.0.0.1:9000");
-        let link = MountLink::new("", "/hdfs", protocol);
+        let link = MountLink::new("", "/hdfs", Arc::clone(&protocol));
 
-        assert_eq!(
-            link.resolve(Path::new("/path/to/file")).unwrap(),
-            PathBuf::from("/hdfs/path/to/file")
-        );
-        assert_eq!(
-            link.resolve(Path::new("/")).unwrap(),
-            PathBuf::from("/hdfs")
-        );
-        assert_eq!(
-            link.resolve(Path::new("/hdfs/path")).unwrap(),
-            PathBuf::from("/hdfs/hdfs/path")
-        );
+        assert_eq!(link.resolve("/path/to/file").unwrap(), "/hdfs/path/to/file");
+        assert_eq!(link.resolve("/").unwrap(), "/hdfs/");
+        assert_eq!(link.resolve("/hdfs/path").unwrap(), "/hdfs/hdfs/path");
+
+        let link = MountLink::new("", "", protocol);
+        assert_eq!(link.resolve("/").unwrap(), "/");
     }
 
     #[test]
@@ -898,25 +866,25 @@ mod test {
 
         // Exact mount path resolves to the exact HDFS path
         let (link, resolved) = mount_table.resolve("/mount1");
-        assert_eq!(link.viewfs_path, Path::new("/mount1"));
+        assert_eq!(link.viewfs_path, "/mount1");
         assert_eq!(resolved, "/path1/nested");
 
         // Trailing slash is treated the same
         let (link, resolved) = mount_table.resolve("/mount1/");
-        assert_eq!(link.viewfs_path, Path::new("/mount1"));
-        assert_eq!(resolved, "/path1/nested");
+        assert_eq!(link.viewfs_path, "/mount1");
+        assert_eq!(resolved, "/path1/nested/");
 
         // Doesn't do partial matches on a directory name
         let (link, resolved) = mount_table.resolve("/mount12");
-        assert_eq!(link.viewfs_path, Path::new("/"));
+        assert_eq!(link.viewfs_path, "");
         assert_eq!(resolved, "/path4/mount12");
 
         let (link, resolved) = mount_table.resolve("/mount3/file");
-        assert_eq!(link.viewfs_path, Path::new("/"));
+        assert_eq!(link.viewfs_path, "");
         assert_eq!(resolved, "/path4/mount3/file");
 
         let (link, resolved) = mount_table.resolve("/mount3/nested/file");
-        assert_eq!(link.viewfs_path, Path::new("/mount3/nested"));
+        assert_eq!(link.viewfs_path, "/mount3/nested");
         assert_eq!(resolved, "/path3/file");
     }
 }

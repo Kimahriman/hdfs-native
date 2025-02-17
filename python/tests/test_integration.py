@@ -49,8 +49,17 @@ def test_integration(client: Client):
     with client.read("/testfile") as file:
         data = io.BytesIO(file.read())
 
-    for i in range(0, 33 * 1024 * 1024):
-        assert data.read(4) == i.to_bytes(4, "big")
+        for i in range(0, 33 * 1024 * 1024):
+            assert data.read(4) == i.to_bytes(4, "big")
+
+        data = io.BytesIO()
+        for chunk in file:
+            data.write(chunk)
+
+        data.seek(0)
+
+        for i in range(0, 33 * 1024 * 1024):
+            assert data.read(4) == i.to_bytes(4, "big")
 
     with client.read("/testfile") as file:
         # Skip first two ints

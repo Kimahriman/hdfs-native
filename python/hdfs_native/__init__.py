@@ -39,6 +39,9 @@ class FileReader(io.RawIOBase):
     def __len__(self) -> int:
         return self.inner.file_length()
 
+    def __iter__(self) -> Iterator[bytes]:
+        return self.read_range_stream(0, len(self))
+
     def __enter__(self):
         # Don't need to do anything special here
         return self
@@ -81,6 +84,15 @@ class FileReader(io.RawIOBase):
     def read_range(self, offset: int, len: int) -> bytes:
         """Read `len` bytes from the file starting at `offset`. Doesn't affect the position in the file"""
         return self.inner.read_range(offset, len)
+
+    def read_range_stream(self, offset: int, len: int) -> Iterator[bytes]:
+        """
+        Read `len` bytes from the file starting at `offset` as an iterator of bytes. Doesn't affect
+        the position in the file.
+
+        This is the most efficient way to iteratively read a file.
+        """
+        return self.inner.read_range_stream(offset, len)
 
     def close(self) -> None:
         pass
