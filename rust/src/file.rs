@@ -88,6 +88,7 @@ impl FileReader {
             let offset = self.position;
             self.position = usize::min(self.position + buf.len(), self.file_length());
             let read_bytes = self.position - offset;
+            let buf = &mut buf[..read_bytes];
             self.read_range_buf(buf, offset).await?;
             Ok(read_bytes)
         }
@@ -110,8 +111,7 @@ impl FileReader {
     ///
     /// Panics if the requested range is outside of the file
     pub async fn read_range_buf(&self, mut buf: &mut [u8], offset: usize) -> Result<()> {
-        let read_length = usize::min(buf.len(), self.file_length() - offset);
-        let mut stream = self.read_range_stream(offset, read_length).boxed();
+        let mut stream = self.read_range_stream(offset, buf.len()).boxed();
         while let Some(bytes) = stream.next().await.transpose()? {
             buf.put(bytes);
         }
