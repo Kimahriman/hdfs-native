@@ -88,6 +88,7 @@ impl FileReader {
             let offset = self.position;
             self.position = usize::min(self.position + buf.len(), self.file_length());
             let read_bytes = self.position - offset;
+            let buf = &mut buf[..read_bytes];
             self.read_range_buf(buf, offset).await?;
             Ok(read_bytes)
         }
