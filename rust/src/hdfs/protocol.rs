@@ -445,12 +445,12 @@ impl NamenodeProtocol {
         self.call("getAclStatus", message, false).await
     }
 
-    pub(crate) async fn get_additional_datanodes(
+    pub(crate) async fn get_additional_datanode(
         &self,
         block: &hdfs::ExtendedBlockProto,
         existing_nodes: &[hdfs::DatanodeInfoProto],
         num_additional_nodes: u32,
-    ) -> Result<Vec<hdfs::DatanodeInfoProto>> {
+    ) -> Result<hdfs::LocatedBlockProto> {
         let message = hdfs::GetAdditionalDatanodeRequestProto {
             src: "".to_string(), // Not used by the namenode
             blk: block.clone(),
@@ -465,7 +465,7 @@ impl NamenodeProtocol {
         let response: hdfs::GetAdditionalDatanodeResponseProto =
             self.call("getAdditionalDatanode", message, true).await?;
 
-        Ok(response.block.locs)
+        Ok(response.block)
     }
 }
 

@@ -25,11 +25,6 @@ impl ReplaceDatanodeOnFailure {
         }
     }
 
-    /// Check if the feature is enabled
-    pub fn check_enabled(&self) -> bool {
-        self.policy != Policy::Disable
-    }
-
     /// Best effort means that the client will try to replace the failed datanode
     /// (provided that the policy is satisfied), however, it will continue the
     /// write operation in case that the datanode replacement also fails.

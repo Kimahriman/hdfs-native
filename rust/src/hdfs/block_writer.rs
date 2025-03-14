@@ -12,7 +12,7 @@ use crate::{
         protocol::NamenodeProtocol,
         replace_datanode::ReplaceDatanodeOnFailure,
     },
-    proto::hdfs,
+    proto::{common, hdfs},
     HdfsError, Result,
 };
 
@@ -352,6 +352,7 @@ impl ReplicatedBlockWriter {
         &mut self,
         failed_nodes: Vec<usize>,
         packets_to_replay: Vec<WritePacket>,
+        is_closing: bool,
     ) -> Result<()> {
         debug!(
             "Failed nodes: {:?}, block locs: {:?}",
@@ -367,45 +368,35 @@ impl ReplicatedBlockWriter {
 
         let mut new_block = self.block.clone();
 
-        // Check if we should try to replace failed datanodes
-        let should_replace = self.replace_datanode.should_replace(
-            new_block.locs.len() as u32,
-            &new_block.locs,
-            new_block.b.num_bytes() > 0,
-            false,
-        );
+        let should_replace = !is_closing
+            && self.replace_datanode.should_replace(
+                new_block.locs.len() as u32,
+                &new_block.locs,
+                new_block.b.num_bytes() > 0,
+                false,
+            );
 
-        if should_replace && self.replace_datanode.check_enabled() {
-            // Request additional datanodes to replace failed ones
-            let additional_nodes = self
-                .protocol
-                .get_additional_datanodes(&new_block.b, &new_block.locs, failed_nodes.len() as u32)
-                .await;
-
-            match additional_nodes {
-                Ok(new_nodes) => {
-                    // Replace failed nodes with new ones
-                    for (failed_idx, new_node) in failed_nodes.iter().zip(new_nodes.into_iter()) {
-                        if *failed_idx < new_block.locs.len() {
-                            new_block.locs[*failed_idx] = new_node;
-                        }
-                    }
+        if should_replace {
+            match self.add_datanode_to_pipeline().await {
+                Ok(located_block) => {
+                    // Successfully added new datanode
+                    new_block.locs = located_block.locs;
+                    new_block.storage_i_ds = located_block.storage_i_ds;
+                    new_block.storage_types = located_block.storage_types;
                 }
                 Err(e) => {
                     if !self.replace_datanode.is_best_effort() {
                         return Err(e);
                     }
-                    // In best effort mode, continue with remaining nodes
-                    warn!("Failed to get replacement nodes: {}", e);
-                    for failed_node in failed_nodes {
-                        new_block.locs.remove(failed_node);
-                        new_block.storage_i_ds.remove(failed_node);
-                        new_block.storage_types.remove(failed_node);
+                    warn!("Failed to add replacement datanode: {}", e);
+                    for failed_node in &failed_nodes {
+                        new_block.locs.remove(*failed_node);
+                        new_block.storage_i_ds.remove(*failed_node);
+                        new_block.storage_types.remove(*failed_node);
                     }
                 }
             }
         } else {
-            // Original behavior - remove failed nodes
             for failed_node in failed_nodes {
                 new_block.locs.remove(failed_node);
                 new_block.storage_i_ds.remove(failed_node);
@@ -541,7 +532,7 @@ impl ReplicatedBlockWriter {
                         ))
                     }
                     WriteStatus::Recover(failed_nodes, packets_to_replay) => {
-                        self.recover(failed_nodes, packets_to_replay).await?;
+                        self.recover(failed_nodes, packets_to_replay, false).await?;
                     }
                 }
             } else {
@@ -602,10 +593,90 @@ impl ReplicatedBlockWriter {
             {
                 WriteStatus::Success => return Ok(self.block.b),
                 WriteStatus::Recover(failed_nodes, packets_to_replay) => {
-                    self.recover(failed_nodes, packets_to_replay).await?
+                    self.recover(failed_nodes, packets_to_replay, true).await?
                 }
             }
         }
+    }
+
+    /// Transfer a block from a source datanode to target datanodes
+    async fn transfer_block(
+        &self,
+        src_node: &hdfs::DatanodeInfoProto,
+        target_nodes: &[hdfs::DatanodeInfoProto],
+        target_storage_types: &[i32],
+        block_token: &common::TokenProto,
+    ) -> Result<()> {
+        // Connect to the source datanode
+        let mut connection = DatanodeConnection::connect(
+            &src_node.id,
+            block_token,
+            self.protocol.get_cached_data_encryption_key().await?,
+        )
+        .await?;
+
+        // Create the transfer block request
+        let message = hdfs::OpTransferBlockProto {
+            header: connection.build_header(&self.block.b, Some(block_token.clone())),
+            targets: target_nodes.to_vec(),
+            target_storage_types: target_storage_types.to_vec(),
+            target_storage_ids: self.block.storage_i_ds.clone(),
+        };
+
+        debug!("Transfer block request: {:?}", &message);
+
+        // Send the transfer block request
+        let response = connection.send(Op::TransferBlock, &message).await?;
+
+        debug!("Transfer block response: {:?}", response);
+
+        // Check the response status
+        if response.status != hdfs::Status::Success as i32 {
+            return Err(HdfsError::DataTransferError(
+                "Failed to add a datanode".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Add a new datanode to the existing pipeline
+    async fn add_datanode_to_pipeline(&mut self) -> Result<hdfs::LocatedBlockProto> {
+        let original_nodes = self.block.locs.clone();
+        let located_block = self
+            .protocol
+            .get_additional_datanode(&self.block.b, &self.block.locs, 1)
+            .await?;
+
+        let new_nodes = &located_block.locs;
+        let new_node_idx = new_nodes
+            .iter()
+            .position(|node| {
+                !original_nodes.iter().any(|orig| {
+                    orig.id.ip_addr == node.id.ip_addr && orig.id.xfer_port == node.id.xfer_port
+                })
+            })
+            .ok_or_else(|| {
+                HdfsError::DataTransferError(
+                    "No new datanode found in updated block locations".to_string(),
+                )
+            })?;
+
+        let src_node = if new_node_idx == 0 {
+            new_nodes[1].clone()
+        } else {
+            new_nodes[new_node_idx - 1].clone()
+        };
+
+        self.transfer_block(
+            &src_node,
+            &[new_nodes[new_node_idx].clone()],
+            &[self.block.storage_types[0]], // Use the first storage type for the new node
+            &self.block.block_token,
+        )
+        .await?;
+
+        Ok(located_block)
     }
 }
 
