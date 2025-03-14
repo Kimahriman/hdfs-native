@@ -38,6 +38,7 @@ impl BlockWriter {
         block_size: usize,
         server_defaults: hdfs::FsServerDefaultsProto,
         ec_schema: Option<&EcSchema>,
+        replace_datanode_on_failure: ReplaceDatanodeOnFailure,
     ) -> Result<Self> {
         let block_writer = if let Some(ec_schema) = ec_schema {
             Self::Striped(StripedBlockWriter::new(
@@ -49,7 +50,14 @@ impl BlockWriter {
             ))
         } else {
             Self::Replicated(
-                ReplicatedBlockWriter::new(protocol, block, block_size, server_defaults).await?,
+                ReplicatedBlockWriter::new(
+                    protocol,
+                    block,
+                    block_size,
+                    server_defaults,
+                    replace_datanode_on_failure,
+                )
+                .await?,
             )
         };
         Ok(block_writer)
@@ -310,6 +318,7 @@ impl ReplicatedBlockWriter {
         block: hdfs::LocatedBlockProto,
         block_size: usize,
         server_defaults: hdfs::FsServerDefaultsProto,
+        replace_datanode_on_failure: ReplaceDatanodeOnFailure,
     ) -> Result<Self> {
         let pipeline =
             Self::setup_pipeline(&protocol, &block, &server_defaults, None, None).await?;
@@ -342,7 +351,7 @@ impl ReplicatedBlockWriter {
             current_packet,
 
             pipeline: Some(pipeline),
-            replace_datanode: ReplaceDatanodeOnFailure::default(),
+            replace_datanode: replace_datanode_on_failure,
         };
 
         Ok(this)
@@ -379,7 +388,6 @@ impl ReplicatedBlockWriter {
         if should_replace {
             match self.add_datanode_to_pipeline().await {
                 Ok(located_block) => {
-                    // Successfully added new datanode
                     new_block.locs = located_block.locs;
                     new_block.storage_i_ds = located_block.storage_i_ds;
                     new_block.storage_types = located_block.storage_types;
@@ -599,7 +607,6 @@ impl ReplicatedBlockWriter {
         }
     }
 
-    /// Transfer a block from a source datanode to target datanodes
     async fn transfer_block(
         &self,
         src_node: &hdfs::DatanodeInfoProto,
@@ -607,7 +614,6 @@ impl ReplicatedBlockWriter {
         target_storage_types: &[i32],
         block_token: &common::TokenProto,
     ) -> Result<()> {
-        // Connect to the source datanode
         let mut connection = DatanodeConnection::connect(
             &src_node.id,
             block_token,
@@ -615,7 +621,6 @@ impl ReplicatedBlockWriter {
         )
         .await?;
 
-        // Create the transfer block request
         let message = hdfs::OpTransferBlockProto {
             header: connection.build_header(&self.block.b, Some(block_token.clone())),
             targets: target_nodes.to_vec(),
@@ -625,12 +630,10 @@ impl ReplicatedBlockWriter {
 
         debug!("Transfer block request: {:?}", &message);
 
-        // Send the transfer block request
         let response = connection.send(Op::TransferBlock, &message).await?;
 
         debug!("Transfer block response: {:?}", response);
 
-        // Check the response status
         if response.status != hdfs::Status::Success as i32 {
             return Err(HdfsError::DataTransferError(
                 "Failed to add a datanode".to_string(),
@@ -640,7 +643,6 @@ impl ReplicatedBlockWriter {
         Ok(())
     }
 
-    /// Add a new datanode to the existing pipeline
     async fn add_datanode_to_pipeline(&mut self) -> Result<hdfs::LocatedBlockProto> {
         let original_nodes = self.block.locs.clone();
         let located_block = self
@@ -830,6 +832,10 @@ impl StripedBlockWriter {
                         cloned,
                         self.block_size,
                         self.server_defaults.clone(),
+                        ReplaceDatanodeOnFailure::new(
+                            super::replace_datanode::Policy::Disable,
+                            false,
+                        ),
                     )
                     .await?,
                 )

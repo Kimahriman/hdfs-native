@@ -12,6 +12,7 @@ pub enum Policy {
     Always,
 }
 
+#[derive(Debug, Clone)]
 pub struct ReplaceDatanodeOnFailure {
     policy: Policy,
     best_effort: bool,
@@ -74,5 +75,94 @@ impl Default for ReplaceDatanodeOnFailure {
             policy: Policy::Default,
             best_effort: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_should_replace_policy_disable() {
+        let replace = ReplaceDatanodeOnFailure::new(Policy::Disable, true);
+        assert!(!replace.should_replace(3, &[], false, false));
+        assert!(!replace.should_replace(3, &[DatanodeInfoProto::default()], false, false));
+        assert!(!replace.should_replace(
+            3,
+            &[DatanodeInfoProto::default(), DatanodeInfoProto::default()],
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn test_should_replace_policy_never() {
+        let replace = ReplaceDatanodeOnFailure::new(Policy::Never, true);
+        assert!(!replace.should_replace(3, &[], false, false));
+        assert!(!replace.should_replace(3, &[DatanodeInfoProto::default()], false, false));
+        assert!(!replace.should_replace(
+            3,
+            &[DatanodeInfoProto::default(), DatanodeInfoProto::default()],
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn test_should_replace_policy_always() {
+        let replace = ReplaceDatanodeOnFailure::new(Policy::Always, true);
+        assert!(!replace.should_replace(3, &[], false, false));
+        assert!(replace.should_replace(3, &[DatanodeInfoProto::default()], false, false));
+        assert!(replace.should_replace(
+            3,
+            &[DatanodeInfoProto::default(), DatanodeInfoProto::default()],
+            false,
+            false
+        ));
+        assert!(!replace.should_replace(
+            3,
+            &[
+                DatanodeInfoProto::default(),
+                DatanodeInfoProto::default(),
+                DatanodeInfoProto::default()
+            ],
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn test_should_replace_policy_default() {
+        let replace = ReplaceDatanodeOnFailure::new(Policy::Default, true);
+
+        // Replication < 3, should never replace
+        assert!(!replace.should_replace(2, &[DatanodeInfoProto::default()], false, false));
+
+        // Replication >= 3, n <= r/2, should replace
+        assert!(replace.should_replace(3, &[DatanodeInfoProto::default()], false, false));
+
+        // Replication >= 3, n > r/2, not append/hflushed, should not replace
+        assert!(!replace.should_replace(
+            3,
+            &[DatanodeInfoProto::default(), DatanodeInfoProto::default()],
+            false,
+            false
+        ));
+
+        // Replication >= 3, n > r/2, append, should replace
+        assert!(replace.should_replace(
+            3,
+            &[DatanodeInfoProto::default(), DatanodeInfoProto::default()],
+            true,
+            false
+        ));
+
+        // Replication >= 3, n > r/2, hflushed, should replace
+        assert!(replace.should_replace(
+            3,
+            &[DatanodeInfoProto::default(), DatanodeInfoProto::default()],
+            false,
+            true
+        ));
     }
 }
