@@ -346,7 +346,7 @@ mod test {
             map: HashMap::new(),
         };
         let policy = config.get_replace_datanode_on_failure_policy();
-        assert_eq!(policy.is_best_effort(), false);
+        assert!(policy.is_best_effort());
 
         // Test disabled policy
         let config = Configuration {
@@ -358,7 +358,7 @@ mod test {
             .collect(),
         };
         let policy = config.get_replace_datanode_on_failure_policy();
-        assert_eq!(policy.is_best_effort(), false);
+        assert!(policy.is_best_effort());
 
         // Test NEVER policy
         let config = Configuration {
@@ -376,7 +376,7 @@ mod test {
             .collect(),
         };
         let policy = config.get_replace_datanode_on_failure_policy();
-        assert_eq!(policy.is_best_effort(), true);
+        assert!(policy.is_best_effort());
 
         // Test ALWAYS policy
         let config = Configuration {
@@ -394,6 +394,6 @@ mod test {
             .collect(),
         };
         let policy = config.get_replace_datanode_on_failure_policy();
-        assert_eq!(policy.is_best_effort(), true);
+        assert!(policy.is_best_effort());
     }
 }

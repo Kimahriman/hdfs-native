@@ -1,4 +1,4 @@
-// #[cfg(feature = "integration-test")]
+#[cfg(feature = "integration-test")]
 mod test {
 
     use std::{
