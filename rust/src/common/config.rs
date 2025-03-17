@@ -162,7 +162,7 @@ impl Configuration {
         );
 
         if !enabled {
-            return ReplaceDatanodeOnFailure::new(Policy::Disable, false);
+            return ReplaceDatanodeOnFailure::new(Policy::Disable, true);
         }
 
         let policy_str = self
@@ -177,7 +177,6 @@ impl Configuration {
             _ => Policy::Default,
         };
 
-        // Best effort is always true when enabled
         ReplaceDatanodeOnFailure::new(policy, true)
     }
 
