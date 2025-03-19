@@ -659,7 +659,7 @@ impl ReplicatedBlockWriter {
         let original_nodes = self.block.locs.clone();
         let located_block = self
             .protocol
-            .get_additional_datanode(&self.src, &block.b, &block.locs, &exclude_nodes, &block.storage_i_ds, 1)
+            .get_additional_datanode(&self.src, &block.b, &block.locs, exclude_nodes, &block.storage_i_ds, 1)
             .await?;
 
         let new_nodes = &located_block.locs;

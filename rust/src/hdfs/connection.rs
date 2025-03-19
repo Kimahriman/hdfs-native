@@ -376,6 +376,7 @@ impl RpcListener {
     }
 }
 
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum Op {
     WriteBlock,
     ReadBlock,
