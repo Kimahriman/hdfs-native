@@ -387,7 +387,7 @@ impl Op {
         match self {
             Self::WriteBlock => 80,
             Self::ReadBlock => 81,
-            Self::TransferBlock => 82,
+            Self::TransferBlock => 86,
         }
     }
 }

@@ -233,6 +233,7 @@ impl FileWriter {
                 .map(resolve_ec_policy)
                 .transpose()?
                 .as_ref(),
+            &self.src,
             self.replace_datanode_on_failure.clone(),
         )
         .await?;

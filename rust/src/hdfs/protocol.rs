@@ -447,18 +447,21 @@ impl NamenodeProtocol {
 
     pub(crate) async fn get_additional_datanode(
         &self,
+        path: &str,
         block: &hdfs::ExtendedBlockProto,
         existing_nodes: &[hdfs::DatanodeInfoProto],
+        exclude_nodes: &[hdfs::DatanodeInfoProto],
+        existing_storage_uuids: &[String],
         num_additional_nodes: u32,
     ) -> Result<hdfs::LocatedBlockProto> {
         let message = hdfs::GetAdditionalDatanodeRequestProto {
-            src: "".to_string(), // Not used by the namenode
+            src: path.to_string(),
             blk: block.clone(),
             existings: existing_nodes.to_vec(),
-            excludes: vec![], // No excluded nodes
+            excludes: exclude_nodes.to_vec(),
             num_additional_nodes,
             client_name: self.client_name.clone(),
-            existing_storage_uuids: vec![], // Not used in this context
+            existing_storage_uuids: existing_storage_uuids.to_vec(),
             ..Default::default()
         };
 
