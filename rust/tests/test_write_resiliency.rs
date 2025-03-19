@@ -1,5 +1,4 @@
-// #[cfg(feature = "integration-test")]
-// #[cfg(feature = "integration-test")]
+#[cfg(feature = "integration-test")]
 mod test {
 
     use std::{
@@ -83,7 +82,7 @@ mod test {
             "ALWAYS".to_string(),
         );
 
-        for (i, client) in vec![
+        for (i, client) in [
             Client::default(),
             Client::default_with_config(replace_dn_on_failure_conf).unwrap(),
         ]
