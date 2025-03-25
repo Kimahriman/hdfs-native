@@ -388,14 +388,14 @@ impl ReplicatedBlockWriter {
             existing_block.storage_i_ds.remove(*failed_node);
             existing_block.storage_types.remove(*failed_node);
         }
-        let mut new_block = self.block.clone();
-
         let should_replace = self.replace_datanode.should_replace(
-                new_block.locs.len() as u32,
+                self.block.locs.len() as u32,
                 &existing_block.locs,
-                new_block.b.num_bytes() > 0,
+                self.block.b.num_bytes() > 0,
                 false,
             );
+
+        let mut new_block = self.block.clone();
 
         if should_replace {
             match self.add_datanode_to_pipeline(existing_block, &exclude_nodes).await {
@@ -637,7 +637,7 @@ impl ReplicatedBlockWriter {
             header: connection.build_header(&self.block.b, Some(block_token.clone())),
             targets: target_nodes.to_vec(),
             target_storage_types: target_storage_types.to_vec(),
-            target_storage_ids: self.block.storage_i_ds.clone(),
+            target_storage_ids: vec![],
         };
 
         debug!("Transfer block request: {:?}", &message);
@@ -687,7 +687,7 @@ impl ReplicatedBlockWriter {
             &src_node,
             &[new_nodes[new_node_idx].clone()],
             &[self.block.storage_types[0]],
-            &self.block.block_token,
+            &located_block.block_token,
         )
         .await?;
         debug!("Finished to transfer block. src_node: {:?} target_node: {:?}", src_node, new_nodes[new_node_idx]);
