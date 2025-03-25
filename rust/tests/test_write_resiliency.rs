@@ -192,7 +192,7 @@ mod test {
         let client = Client::default_with_config(replace_dn_on_failure_conf).unwrap();
 
         let file = "/testfile_replace_failed_datanode";
-        let bytes_to_write = 2usize * 1024 * 1024; 
+        let bytes_to_write = 2usize * 1024 * 1024;
 
         let mut data = BytesMut::with_capacity(bytes_to_write);
         for i in 0..(bytes_to_write / 4) {
@@ -207,7 +207,9 @@ mod test {
         writer.write(data.slice(..bytes_to_write / 3)).await?;
 
         WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
-        writer.write(data.slice(bytes_to_write / 3..2 * bytes_to_write / 3)).await?;
+        writer
+            .write(data.slice(bytes_to_write / 3..2 * bytes_to_write / 3))
+            .await?;
         WRITE_CONNECTION_FAULT_INJECTOR.store(false, Ordering::SeqCst);
 
         WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
@@ -233,5 +235,4 @@ mod test {
         }
         Ok(())
     }
-
 }

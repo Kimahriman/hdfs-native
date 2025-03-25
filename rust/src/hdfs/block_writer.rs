@@ -389,16 +389,19 @@ impl ReplicatedBlockWriter {
             existing_block.storage_types.remove(*failed_node);
         }
         let should_replace = self.replace_datanode.should_replace(
-                self.block.locs.len() as u32,
-                &existing_block.locs,
-                self.block.b.num_bytes() > 0,
-                false,
-            );
+            self.block.locs.len() as u32,
+            &existing_block.locs,
+            self.block.b.num_bytes() > 0,
+            false,
+        );
 
         let mut new_block = self.block.clone();
 
         if should_replace {
-            match self.add_datanode_to_pipeline(existing_block, &exclude_nodes).await {
+            match self
+                .add_datanode_to_pipeline(existing_block, &exclude_nodes)
+                .await
+            {
                 Ok(located_block) => {
                     new_block.locs = located_block.locs;
                     new_block.storage_i_ds = located_block.storage_i_ds;
@@ -655,11 +658,22 @@ impl ReplicatedBlockWriter {
         Ok(())
     }
 
-    async fn add_datanode_to_pipeline(&mut self, block: hdfs::LocatedBlockProto, exclude_nodes: &[hdfs::DatanodeInfoProto]) -> Result<hdfs::LocatedBlockProto> {
+    async fn add_datanode_to_pipeline(
+        &mut self,
+        block: hdfs::LocatedBlockProto,
+        exclude_nodes: &[hdfs::DatanodeInfoProto],
+    ) -> Result<hdfs::LocatedBlockProto> {
         let original_nodes = self.block.locs.clone();
         let located_block = self
             .protocol
-            .get_additional_datanode(&self.src, &block.b, &block.locs, exclude_nodes, &block.storage_i_ds, 1)
+            .get_additional_datanode(
+                &self.src,
+                &block.b,
+                &block.locs,
+                exclude_nodes,
+                &block.storage_i_ds,
+                1,
+            )
             .await?;
 
         let new_nodes = &located_block.locs;
@@ -682,7 +696,10 @@ impl ReplicatedBlockWriter {
             new_nodes[new_node_idx - 1].clone()
         };
 
-        debug!("Start to transfer block. src_node: {:?} target_node: {:?}", src_node, new_nodes[new_node_idx]);
+        debug!(
+            "Start to transfer block. src_node: {:?} target_node: {:?}",
+            src_node, new_nodes[new_node_idx]
+        );
         self.transfer_block(
             &src_node,
             &[new_nodes[new_node_idx].clone()],
@@ -690,7 +707,10 @@ impl ReplicatedBlockWriter {
             &located_block.block_token,
         )
         .await?;
-        debug!("Finished to transfer block. src_node: {:?} target_node: {:?}", src_node, new_nodes[new_node_idx]);
+        debug!(
+            "Finished to transfer block. src_node: {:?} target_node: {:?}",
+            src_node, new_nodes[new_node_idx]
+        );
 
         Ok(located_block)
     }
