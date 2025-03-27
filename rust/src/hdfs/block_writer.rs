@@ -35,10 +35,10 @@ impl BlockWriter {
     pub(crate) async fn new(
         protocol: Arc<NamenodeProtocol>,
         block: hdfs::LocatedBlockProto,
-        block_size: usize,
         server_defaults: hdfs::FsServerDefaultsProto,
         ec_schema: Option<&EcSchema>,
         src: &str,
+        status: &hdfs::HdfsFileStatusProto,
         replace_datanode_on_failure: ReplaceDatanodeOnFailure,
     ) -> Result<Self> {
         let block_writer = if let Some(ec_schema) = ec_schema {
@@ -46,8 +46,8 @@ impl BlockWriter {
                 protocol,
                 block,
                 ec_schema,
-                block_size,
                 server_defaults,
+                status,
             ))
         } else {
             Self::Replicated(
@@ -55,8 +55,8 @@ impl BlockWriter {
                     src,
                     protocol,
                     block,
-                    block_size,
                     server_defaults,
+                    status,
                     replace_datanode_on_failure,
                 )
                 .await?,
@@ -312,6 +312,7 @@ pub(crate) struct ReplicatedBlockWriter {
 
     current_packet: WritePacket,
     pipeline: Option<Pipeline>,
+    status: hdfs::HdfsFileStatusProto,
     replace_datanode: ReplaceDatanodeOnFailure,
 }
 
@@ -320,8 +321,8 @@ impl ReplicatedBlockWriter {
         src: &str,
         protocol: Arc<NamenodeProtocol>,
         block: hdfs::LocatedBlockProto,
-        block_size: usize,
         server_defaults: hdfs::FsServerDefaultsProto,
+        status: &hdfs::HdfsFileStatusProto,
         replace_datanode_on_failure: ReplaceDatanodeOnFailure,
     ) -> Result<Self> {
         let pipeline =
@@ -351,11 +352,11 @@ impl ReplicatedBlockWriter {
             src: src.to_string(),
             protocol,
             block,
-            block_size,
+            block_size: status.blocksize() as usize,
             server_defaults,
             current_packet,
-
             pipeline: Some(pipeline),
+            status: status.clone(),
             replace_datanode: replace_datanode_on_failure,
         };
 
@@ -389,7 +390,7 @@ impl ReplicatedBlockWriter {
             existing_block.storage_types.remove(*failed_node);
         }
         let should_replace = self.replace_datanode.should_replace(
-            self.block.locs.len() as u32,
+            self.status.block_replication.unwrap(),
             &existing_block.locs,
             self.block.b.num_bytes() > 0,
             false,
@@ -805,11 +806,11 @@ pub(crate) struct StripedBlockWriter {
     protocol: Arc<NamenodeProtocol>,
     block: hdfs::LocatedBlockProto,
     server_defaults: hdfs::FsServerDefaultsProto,
-    block_size: usize,
     block_writers: Vec<Option<ReplicatedBlockWriter>>,
     cell_buffer: CellBuffer,
     bytes_written: usize,
     capacity: usize,
+    status: hdfs::HdfsFileStatusProto,
 }
 
 impl StripedBlockWriter {
@@ -817,20 +818,20 @@ impl StripedBlockWriter {
         protocol: Arc<NamenodeProtocol>,
         block: hdfs::LocatedBlockProto,
         ec_schema: &EcSchema,
-        block_size: usize,
         server_defaults: hdfs::FsServerDefaultsProto,
+        status: &hdfs::HdfsFileStatusProto,
     ) -> Self {
         let block_writers = (0..block.block_indices().len()).map(|_| None).collect();
 
         Self {
             protocol,
             block,
-            block_size,
             server_defaults,
             block_writers,
             cell_buffer: CellBuffer::new(ec_schema),
             bytes_written: 0,
-            capacity: ec_schema.data_units * block_size,
+            capacity: ec_schema.data_units * status.blocksize() as usize,
+            status: status.clone(),
         }
     }
 
@@ -865,8 +866,8 @@ impl StripedBlockWriter {
                         "",
                         Arc::clone(&self.protocol),
                         cloned,
-                        self.block_size,
                         self.server_defaults.clone(),
+                        &self.status,
                         ReplaceDatanodeOnFailure::new(
                             super::replace_datanode::Policy::Disable,
                             false,

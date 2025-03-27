@@ -225,7 +225,6 @@ impl FileWriter {
         let block_writer = BlockWriter::new(
             Arc::clone(&self.protocol),
             new_block,
-            self.status.blocksize() as usize,
             self.protocol.get_cached_server_defaults().await?,
             self.status
                 .ec_policy
@@ -234,6 +233,7 @@ impl FileWriter {
                 .transpose()?
                 .as_ref(),
             &self.src,
+            &self.status,
             self.replace_datanode_on_failure.clone(),
         )
         .await?;
