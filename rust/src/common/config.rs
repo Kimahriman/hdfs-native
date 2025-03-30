@@ -160,15 +160,15 @@ impl Configuration {
 
         let enabled = self.get_boolean(
             DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY,
-            false,
+            true,
         );
         if !enabled {
-            return ReplaceDatanodeOnFailure::new(Policy::Disable, true);
+            return ReplaceDatanodeOnFailure::new(Policy::Disable, false);
         }
 
         let best_effort = self.get_boolean(
             DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_BEST_EFFORT_KEY,
-            true,
+            false,
         );
 
         let policy_str = self
@@ -352,7 +352,7 @@ mod test {
             map: HashMap::new(),
         };
         let policy = config.get_replace_datanode_on_failure_policy();
-        assert!(policy.is_best_effort());
+        assert!(!policy.is_best_effort());
 
         // Test disabled policy
         let config = Configuration {
@@ -364,7 +364,7 @@ mod test {
             .collect(),
         };
         let policy = config.get_replace_datanode_on_failure_policy();
-        assert!(policy.is_best_effort());
+        assert!(!policy.is_best_effort());
 
         // Test NEVER policy
         let config = Configuration {
@@ -382,7 +382,7 @@ mod test {
             .collect(),
         };
         let policy = config.get_replace_datanode_on_failure_policy();
-        assert!(policy.is_best_effort());
+        assert!(!policy.is_best_effort());
 
         // Test ALWAYS policy
         let config = Configuration {
@@ -400,7 +400,7 @@ mod test {
             .collect(),
         };
         let policy = config.get_replace_datanode_on_failure_policy();
-        assert!(policy.is_best_effort());
+        assert!(!policy.is_best_effort());
 
         // Test best-effort disabled
         let config = Configuration {
@@ -438,7 +438,7 @@ mod test {
         let policy = config.get_replace_datanode_on_failure_policy();
         assert!(policy.is_best_effort());
 
-        // Test best-effort with invalid value (should use default true)
+        // Test best-effort with invalid value (should use default false)
         let config = Configuration {
             map: [
                 (
