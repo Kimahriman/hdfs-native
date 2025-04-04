@@ -27,7 +27,14 @@ const DFS_CLIENT_FAILOVER_RANDOM_ORDER: &str = "dfs.client.failover.random.order
 // Viewfs settings
 const VIEWFS_MOUNTTABLE_PREFIX: &str = "fs.viewfs.mounttable";
 
-#[derive(Debug)]
+const DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY: &str =
+    "dfs.client.block.write.replace-datanode-on-failure.enable";
+const DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_POLICY_KEY: &str =
+    "dfs.client.block.write.replace-datanode-on-failure.policy";
+const DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_BEST_EFFORT_KEY: &str =
+    "dfs.client.block.write.replace-datanode-on-failure.best-effort";
+
+#[derive(Debug, Clone)]
 pub struct Configuration {
     map: HashMap<String, String>,
 }
@@ -145,6 +152,40 @@ impl Configuration {
             .collect()
     }
 
+    /// Get the replace datanode on failure policy from configuration
+    pub fn get_replace_datanode_on_failure_policy(
+        &self,
+    ) -> crate::hdfs::replace_datanode::ReplaceDatanodeOnFailure {
+        use crate::hdfs::replace_datanode::{Policy, ReplaceDatanodeOnFailure};
+
+        let enabled = self.get_boolean(
+            DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY,
+            true,
+        );
+        if !enabled {
+            return ReplaceDatanodeOnFailure::new(Policy::Disable, false);
+        }
+
+        let best_effort = self.get_boolean(
+            DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_BEST_EFFORT_KEY,
+            false,
+        );
+
+        let policy_str = self
+            .get(DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_POLICY_KEY)
+            .unwrap_or_else(|| "DEFAULT".to_string())
+            .to_uppercase();
+
+        let policy = match policy_str.as_str() {
+            "NEVER" => Policy::Never,
+            "DEFAULT" => Policy::Default,
+            "ALWAYS" => Policy::Always,
+            _ => Policy::Default,
+        };
+
+        ReplaceDatanodeOnFailure::new(policy, best_effort)
+    }
+
     fn read_from_file(path: &Path) -> io::Result<Vec<(String, String)>> {
         let content = fs::read_to_string(path)?;
         let tree = roxmltree::Document::parse(&content).unwrap();
@@ -188,6 +229,7 @@ impl Configuration {
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashMap;
     use std::net::IpAddr;
 
     use dns_lookup::lookup_addr;
@@ -195,7 +237,10 @@ mod test {
     use crate::common::config::DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN;
 
     use super::{
-        Configuration, DFS_CLIENT_FAILOVER_RESOLVE_NEEDED, HA_NAMENODES_PREFIX,
+        Configuration, DFS_CLIENT_FAILOVER_RESOLVE_NEEDED,
+        DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_BEST_EFFORT_KEY,
+        DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY,
+        DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_POLICY_KEY, HA_NAMENODES_PREFIX,
         HA_NAMENODE_RPC_ADDRESS_PREFIX, VIEWFS_MOUNTTABLE_PREFIX,
     };
 
@@ -298,5 +343,139 @@ mod test {
         let urls = config.get_urls_for_nameservice("test").unwrap();
         assert_eq!(urls.len(), 1, "{:?}", urls);
         assert_eq!(urls[0], "127.0.0.1:9000");
+    }
+
+    #[test]
+    fn test_replace_datanode_policy_config() {
+        // Test default policy
+        let config = Configuration {
+            map: HashMap::new(),
+        };
+        let policy = config.get_replace_datanode_on_failure_policy();
+        assert!(!policy.is_best_effort());
+
+        // Test disabled policy
+        let config = Configuration {
+            map: [(
+                DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY.to_string(),
+                "false".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let policy = config.get_replace_datanode_on_failure_policy();
+        assert!(!policy.is_best_effort());
+
+        // Test NEVER policy
+        let config = Configuration {
+            map: [
+                (
+                    DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY.to_string(),
+                    "true".to_string(),
+                ),
+                (
+                    DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_POLICY_KEY.to_string(),
+                    "NEVER".to_string(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let policy = config.get_replace_datanode_on_failure_policy();
+        assert!(!policy.is_best_effort());
+
+        // Test ALWAYS policy
+        let config = Configuration {
+            map: [
+                (
+                    DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY.to_string(),
+                    "true".to_string(),
+                ),
+                (
+                    DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_POLICY_KEY.to_string(),
+                    "ALWAYS".to_string(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let policy = config.get_replace_datanode_on_failure_policy();
+        assert!(!policy.is_best_effort());
+
+        // Test best-effort disabled
+        let config = Configuration {
+            map: [
+                (
+                    DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY.to_string(),
+                    "true".to_string(),
+                ),
+                (
+                    DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_BEST_EFFORT_KEY.to_string(),
+                    "false".to_string(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let policy = config.get_replace_datanode_on_failure_policy();
+        assert!(!policy.is_best_effort());
+
+        // Test best-effort enabled (explicit)
+        let config = Configuration {
+            map: [
+                (
+                    DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY.to_string(),
+                    "true".to_string(),
+                ),
+                (
+                    DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_BEST_EFFORT_KEY.to_string(),
+                    "true".to_string(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let policy = config.get_replace_datanode_on_failure_policy();
+        assert!(policy.is_best_effort());
+
+        // Test best-effort with invalid value (should use default false)
+        let config = Configuration {
+            map: [
+                (
+                    DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY.to_string(),
+                    "true".to_string(),
+                ),
+                (
+                    DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_BEST_EFFORT_KEY.to_string(),
+                    "invalid".to_string(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let policy = config.get_replace_datanode_on_failure_policy();
+        assert!(!policy.is_best_effort()); // Invalid values treated as false
+
+        // Test policy with both policy and best-effort config
+        let config = Configuration {
+            map: [
+                (
+                    DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY.to_string(),
+                    "true".to_string(),
+                ),
+                (
+                    DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_POLICY_KEY.to_string(),
+                    "ALWAYS".to_string(),
+                ),
+                (
+                    DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_BEST_EFFORT_KEY.to_string(),
+                    "false".to_string(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let policy = config.get_replace_datanode_on_failure_policy();
+        assert!(!policy.is_best_effort());
     }
 }

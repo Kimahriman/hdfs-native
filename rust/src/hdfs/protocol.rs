@@ -444,6 +444,32 @@ impl NamenodeProtocol {
         };
         self.call("getAclStatus", message, false).await
     }
+
+    pub(crate) async fn get_additional_datanode(
+        &self,
+        path: &str,
+        block: &hdfs::ExtendedBlockProto,
+        existing_nodes: &[hdfs::DatanodeInfoProto],
+        exclude_nodes: &[hdfs::DatanodeInfoProto],
+        existing_storage_uuids: &[String],
+        num_additional_nodes: u32,
+    ) -> Result<hdfs::LocatedBlockProto> {
+        let message = hdfs::GetAdditionalDatanodeRequestProto {
+            src: path.to_string(),
+            blk: block.clone(),
+            existings: existing_nodes.to_vec(),
+            excludes: exclude_nodes.to_vec(),
+            num_additional_nodes,
+            client_name: self.client_name.clone(),
+            existing_storage_uuids: existing_storage_uuids.to_vec(),
+            ..Default::default()
+        };
+
+        let response: hdfs::GetAdditionalDatanodeResponseProto =
+            self.call("getAdditionalDatanode", message, true).await?;
+
+        Ok(response.block)
+    }
 }
 
 impl Drop for NamenodeProtocol {

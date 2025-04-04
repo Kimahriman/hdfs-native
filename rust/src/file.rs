@@ -168,6 +168,7 @@ pub struct FileWriter {
     last_block: Option<hdfs::LocatedBlockProto>,
     closed: bool,
     bytes_written: usize,
+    replace_datanode_on_failure: crate::hdfs::replace_datanode::ReplaceDatanodeOnFailure,
 }
 
 impl FileWriter {
@@ -177,6 +178,7 @@ impl FileWriter {
         status: hdfs::HdfsFileStatusProto,
         // Some for append, None for create
         last_block: Option<hdfs::LocatedBlockProto>,
+        replace_datanode_on_failure: crate::hdfs::replace_datanode::ReplaceDatanodeOnFailure,
     ) -> Self {
         protocol.add_file_lease(status.file_id(), status.namespace.clone());
         Self {
@@ -187,6 +189,7 @@ impl FileWriter {
             last_block,
             closed: false,
             bytes_written: 0,
+            replace_datanode_on_failure,
         }
     }
 
@@ -222,7 +225,6 @@ impl FileWriter {
         let block_writer = BlockWriter::new(
             Arc::clone(&self.protocol),
             new_block,
-            self.status.blocksize() as usize,
             self.protocol.get_cached_server_defaults().await?,
             self.status
                 .ec_policy
@@ -230,6 +232,9 @@ impl FileWriter {
                 .map(resolve_ec_policy)
                 .transpose()?
                 .as_ref(),
+            &self.src,
+            &self.status,
+            self.replace_datanode_on_failure.clone(),
         )
         .await?;
 
