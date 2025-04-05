@@ -367,6 +367,7 @@ impl ReplicatedBlockWriter {
         &mut self,
         failed_nodes: Vec<usize>,
         packets_to_replay: Vec<WritePacket>,
+        next_packet: Option<&WritePacket>,
     ) -> Result<()> {
         debug!(
             "Failed nodes: {:?}, block locs: {:?}",
@@ -431,6 +432,10 @@ impl ReplicatedBlockWriter {
         let mut bytes_acked = new_block.b.num_bytes();
         for packet in packets_to_replay.iter() {
             bytes_acked -= packet.data.len() as u64;
+        }
+
+        if let Some(next_packet) = next_packet {
+            bytes_acked -= next_packet.data.len() as u64;
         }
 
         let old_block = std::mem::replace(&mut self.block, new_block);
@@ -556,7 +561,8 @@ impl ReplicatedBlockWriter {
                         ))
                     }
                     WriteStatus::Recover(failed_nodes, packets_to_replay) => {
-                        self.recover(failed_nodes, packets_to_replay).await?;
+                        self.recover(failed_nodes, packets_to_replay, Some(&current_packet))
+                            .await?;
                     }
                 }
             } else {
@@ -617,7 +623,7 @@ impl ReplicatedBlockWriter {
             {
                 WriteStatus::Success => return Ok(self.block.b),
                 WriteStatus::Recover(failed_nodes, packets_to_replay) => {
-                    self.recover(failed_nodes, packets_to_replay).await?
+                    self.recover(failed_nodes, packets_to_replay, None).await?
                 }
             }
         }
