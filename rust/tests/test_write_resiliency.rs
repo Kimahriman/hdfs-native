@@ -72,19 +72,22 @@ mod test {
     }
 
     async fn test_write_failures() -> Result<()> {
-        let mut replace_dn_on_failure_conf: HashMap<String, String> = HashMap::new();
-        replace_dn_on_failure_conf.insert(
-            "dfs.client.block.write.replace-datanode-on-failure.enable".to_string(),
-            "true".to_string(),
-        );
-        replace_dn_on_failure_conf.insert(
-            "dfs.client.block.write.replace-datanode-on-failure.policy".to_string(),
-            "ALWAYS".to_string(),
-        );
+        fn replace_dn_conf(should_replace: bool) -> HashMap<String, String> {
+            HashMap::from([
+                (
+                    "dfs.client.block.write.replace-datanode-on-failure.enable".to_string(),
+                    should_replace.to_string(),
+                ),
+                (
+                    "dfs.client.block.write.replace-datanode-on-failure.policy".to_string(),
+                    "ALWAYS".to_string(),
+                ),
+            ])
+        }
 
         for (i, client) in [
-            Client::default(),
-            Client::default_with_config(replace_dn_on_failure_conf).unwrap(),
+            Client::default_with_config(replace_dn_conf(true)).unwrap(),
+            Client::default_with_config(replace_dn_conf(false)).unwrap(),
         ]
         .iter()
         .enumerate()
@@ -210,15 +213,18 @@ mod test {
         writer
             .write(data.slice(bytes_to_write / 3..2 * bytes_to_write / 3))
             .await?;
-        WRITE_CONNECTION_FAULT_INJECTOR.store(false, Ordering::SeqCst);
+        // Give a little time for the packets to send
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
         writer.write(data.slice(2 * bytes_to_write / 3..)).await?;
-        WRITE_CONNECTION_FAULT_INJECTOR.store(false, Ordering::SeqCst);
+        // Give a little time for the packets to send
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
         writer.close().await?;
-        WRITE_CONNECTION_FAULT_INJECTOR.store(false, Ordering::SeqCst);
+        // Give a little time for the packets to send
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         let reader = client.read(file).await?;
         check_file_content(&reader, data).await?;
