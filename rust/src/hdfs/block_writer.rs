@@ -6,6 +6,7 @@ use log::{debug, warn};
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
+    common::config::Configuration,
     ec::{gf256::Coder, EcSchema},
     hdfs::{
         connection::{DatanodeConnection, DatanodeReader, DatanodeWriter, Op, WritePacket},
@@ -36,10 +37,10 @@ impl BlockWriter {
         protocol: Arc<NamenodeProtocol>,
         block: hdfs::LocatedBlockProto,
         server_defaults: hdfs::FsServerDefaultsProto,
+        config: Arc<Configuration>,
         ec_schema: Option<&EcSchema>,
         src: &str,
         status: &hdfs::HdfsFileStatusProto,
-        replace_datanode_on_failure: ReplaceDatanodeOnFailure,
     ) -> Result<Self> {
         let block_writer = if let Some(ec_schema) = ec_schema {
             Self::Striped(StripedBlockWriter::new(
@@ -47,19 +48,13 @@ impl BlockWriter {
                 block,
                 ec_schema,
                 server_defaults,
+                config,
                 status,
             ))
         } else {
             Self::Replicated(
-                ReplicatedBlockWriter::new(
-                    src,
-                    protocol,
-                    block,
-                    server_defaults,
-                    status,
-                    replace_datanode_on_failure,
-                )
-                .await?,
+                ReplicatedBlockWriter::new(src, protocol, block, server_defaults, config, status)
+                    .await?,
             )
         };
         Ok(block_writer)
@@ -322,8 +317,8 @@ impl ReplicatedBlockWriter {
         protocol: Arc<NamenodeProtocol>,
         block: hdfs::LocatedBlockProto,
         server_defaults: hdfs::FsServerDefaultsProto,
+        config: Arc<Configuration>,
         status: &hdfs::HdfsFileStatusProto,
-        replace_datanode_on_failure: ReplaceDatanodeOnFailure,
     ) -> Result<Self> {
         let pipeline =
             Self::setup_pipeline(&protocol, &block, &server_defaults, None, None).await?;
@@ -357,7 +352,7 @@ impl ReplicatedBlockWriter {
             current_packet,
             pipeline: Some(pipeline),
             status: status.clone(),
-            replace_datanode: replace_datanode_on_failure,
+            replace_datanode: config.get_replace_datanode_on_failure_policy(),
         };
 
         Ok(this)
@@ -806,6 +801,7 @@ pub(crate) struct StripedBlockWriter {
     protocol: Arc<NamenodeProtocol>,
     block: hdfs::LocatedBlockProto,
     server_defaults: hdfs::FsServerDefaultsProto,
+    config: Arc<Configuration>,
     block_writers: Vec<Option<ReplicatedBlockWriter>>,
     cell_buffer: CellBuffer,
     bytes_written: usize,
@@ -819,6 +815,7 @@ impl StripedBlockWriter {
         block: hdfs::LocatedBlockProto,
         ec_schema: &EcSchema,
         server_defaults: hdfs::FsServerDefaultsProto,
+        config: Arc<Configuration>,
         status: &hdfs::HdfsFileStatusProto,
     ) -> Self {
         let block_writers = (0..block.block_indices().len()).map(|_| None).collect();
@@ -827,6 +824,7 @@ impl StripedBlockWriter {
             protocol,
             block,
             server_defaults,
+            config,
             block_writers,
             cell_buffer: CellBuffer::new(ec_schema),
             bytes_written: 0,
@@ -867,11 +865,8 @@ impl StripedBlockWriter {
                         Arc::clone(&self.protocol),
                         cloned,
                         self.server_defaults.clone(),
+                        Arc::clone(&self.config),
                         &self.status,
-                        ReplaceDatanodeOnFailure::new(
-                            super::replace_datanode::Policy::Disable,
-                            false,
-                        ),
                     )
                     .await?,
                 )

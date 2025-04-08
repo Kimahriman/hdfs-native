@@ -6,6 +6,7 @@ use futures::stream::BoxStream;
 use futures::{stream, Stream, StreamExt};
 use log::warn;
 
+use crate::common::config::Configuration;
 use crate::ec::{resolve_ec_policy, EcSchema};
 use crate::hdfs::block_reader::get_block_stream;
 use crate::hdfs::block_writer::BlockWriter;
@@ -164,11 +165,11 @@ pub struct FileWriter {
     src: String,
     protocol: Arc<NamenodeProtocol>,
     status: hdfs::HdfsFileStatusProto,
+    config: Arc<Configuration>,
     block_writer: Option<BlockWriter>,
     last_block: Option<hdfs::LocatedBlockProto>,
     closed: bool,
     bytes_written: usize,
-    replace_datanode_on_failure: crate::hdfs::replace_datanode::ReplaceDatanodeOnFailure,
 }
 
 impl FileWriter {
@@ -176,20 +177,20 @@ impl FileWriter {
         protocol: Arc<NamenodeProtocol>,
         src: String,
         status: hdfs::HdfsFileStatusProto,
+        config: Arc<Configuration>,
         // Some for append, None for create
         last_block: Option<hdfs::LocatedBlockProto>,
-        replace_datanode_on_failure: crate::hdfs::replace_datanode::ReplaceDatanodeOnFailure,
     ) -> Self {
         protocol.add_file_lease(status.file_id(), status.namespace.clone());
         Self {
             protocol,
             src,
             status,
+            config,
             block_writer: None,
             last_block,
             closed: false,
             bytes_written: 0,
-            replace_datanode_on_failure,
         }
     }
 
@@ -226,6 +227,7 @@ impl FileWriter {
             Arc::clone(&self.protocol),
             new_block,
             self.protocol.get_cached_server_defaults().await?,
+            Arc::clone(&self.config),
             self.status
                 .ec_policy
                 .as_ref()
@@ -234,7 +236,6 @@ impl FileWriter {
                 .as_ref(),
             &self.src,
             &self.status,
-            self.replace_datanode_on_failure.clone(),
         )
         .await?;
 
