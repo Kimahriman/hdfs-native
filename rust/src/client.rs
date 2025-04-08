@@ -132,7 +132,7 @@ impl MountTable {
 #[derive(Debug)]
 pub struct Client {
     mount_table: Arc<MountTable>,
-    replace_datanode_on_failure: crate::hdfs::replace_datanode::ReplaceDatanodeOnFailure,
+    config: Arc<Configuration>,
 }
 
 impl Client {
@@ -195,11 +195,9 @@ impl Client {
             }
         };
 
-        let replace_datanode_on_failure = config.get_replace_datanode_on_failure_policy();
-
         Ok(Self {
             mount_table: Arc::new(mount_table),
-            replace_datanode_on_failure,
+            config: Arc::new(config),
         })
     }
 
@@ -346,8 +344,8 @@ impl Client {
                     Arc::clone(&link.protocol),
                     resolved_path,
                     status,
+                    Arc::clone(&self.config),
                     None,
-                    self.replace_datanode_on_failure.clone(),
                 ))
             }
             None => Err(HdfsError::FileNotFound(src.to_string())),
@@ -387,8 +385,8 @@ impl Client {
                     Arc::clone(&link.protocol),
                     resolved_path,
                     status,
+                    Arc::clone(&self.config),
                     append_response.block,
-                    self.replace_datanode_on_failure.clone(),
                 ))
             }
             None => Err(HdfsError::FileNotFound(src.to_string())),
