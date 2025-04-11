@@ -1,6 +1,6 @@
 [package]
 name = "hdfs-native"
-version = "0.11.1"
+version = "0.11.2"
 edition = "2021"
 authors = ["Adam Binford <adamq43@gmail.com>"]
 homepage = "https://github.com/Kimahriman/hdfs-native"
