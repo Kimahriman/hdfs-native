@@ -309,6 +309,10 @@ mod test {
 
         assert!(client.delete("/newfile", false).await.is_ok_and(|r| r));
 
+        client.mkdirs("/testdir", 0o755, true).await?;
+        assert!(client.read("/testdir").await.is_err());
+        client.delete("/testdir", true).await?;
+
         Ok(())
     }
 
