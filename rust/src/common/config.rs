@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use dns_lookup::lookup_addr;
 use log::debug;
+use rand::rng;
 use rand::seq::SliceRandom;
-use rand::thread_rng;
 
 use crate::Result;
 
@@ -130,7 +130,7 @@ impl Configuration {
             &format!("{}.{}", DFS_CLIENT_FAILOVER_RANDOM_ORDER, nameservice),
             false,
         ) {
-            urls.shuffle(&mut thread_rng());
+            urls.shuffle(&mut rng());
         }
         Ok(urls)
     }
