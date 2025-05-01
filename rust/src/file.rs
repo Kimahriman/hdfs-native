@@ -19,7 +19,6 @@ const COMPLETE_RETRIES: u32 = 5;
 
 pub struct FileReader {
     protocol: Arc<NamenodeProtocol>,
-    status: hdfs::HdfsFileStatusProto,
     located_blocks: hdfs::LocatedBlocksProto,
     ec_schema: Option<EcSchema>,
     position: usize,
@@ -28,13 +27,11 @@ pub struct FileReader {
 impl FileReader {
     pub(crate) fn new(
         protocol: Arc<NamenodeProtocol>,
-        status: hdfs::HdfsFileStatusProto,
         located_blocks: hdfs::LocatedBlocksProto,
         ec_schema: Option<EcSchema>,
     ) -> Self {
         Self {
             protocol,
-            status,
             located_blocks,
             ec_schema,
             position: 0,
@@ -43,7 +40,7 @@ impl FileReader {
 
     /// Returns the total size of the file
     pub fn file_length(&self) -> usize {
-        self.status.length as usize
+        self.located_blocks.file_length as usize
     }
 
     /// Returns the remaining bytes left based on the current cursor position.

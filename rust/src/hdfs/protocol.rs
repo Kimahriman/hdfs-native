@@ -90,15 +90,18 @@ impl NamenodeProtocol {
         self.call("getListing", message, false).await
     }
 
-    pub(crate) async fn get_located_file_info(
+    pub(crate) async fn get_block_locations(
         &self,
         src: &str,
-    ) -> Result<hdfs::GetLocatedFileInfoResponseProto> {
-        let message = hdfs::GetLocatedFileInfoRequestProto {
-            src: Some(src.to_string()),
-            need_block_token: Some(true),
+        offset: u64,
+        length: u64,
+    ) -> Result<hdfs::GetBlockLocationsResponseProto> {
+        let message = hdfs::GetBlockLocationsRequestProto {
+            src: src.to_string(),
+            offset,
+            length,
         };
-        self.call("getLocatedFileInfo", message, false).await
+        self.call("getBlockLocations", message, false).await
     }
 
     pub(crate) async fn get_server_defaults(&self) -> Result<hdfs::GetServerDefaultsResponseProto> {
