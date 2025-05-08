@@ -28,6 +28,8 @@ devel = [
 ]
 
 docs = [
+    # https://github.com/snowballstem/snowball/issues/229
+    "snowballstemmer<3",
     "sphinx~=8.1",
     "sphinx-automodapi~=0.18",
     "sphinx-rtd-theme~=3.0"
