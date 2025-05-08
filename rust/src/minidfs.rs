@@ -56,7 +56,7 @@ pub struct MiniDfs {
 
 impl MiniDfs {
     pub fn with_features(features: &HashSet<DfsFeatures>) -> Self {
-        let mvn_exec = which("mvn").expect("Failed to find java executable");
+        let mvn_exec = which("mvn").expect("Failed to find mvn executable");
 
         let mut feature_args: Vec<&str> = Vec::new();
         for feature in features.iter() {
