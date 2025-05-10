@@ -296,12 +296,19 @@ def du(args: Namespace):
 def get(args: Namespace):
     paths: List[Tuple[Client, str]] = []
 
-    for url in args.src:
+    if len(args.src) > 1:
+        srcs = args.src[:-1]
+        dst = args.src[-1]
+    else:
+        srcs = args.src
+        dst = os.getcwd()
+
+    for url in srcs:
         client = _client_for_url(url)
         for path in _glob_path(client, _path_for_url(url)):
             paths.append((client, path))
 
-    dst_is_dir = os.path.isdir(args.localdst)
+    dst_is_dir = os.path.isdir(dst)
 
     if len(paths) > 1 and not dst_is_dir:
         raise ValueError("Destination must be directory when copying multiple files")
@@ -309,7 +316,7 @@ def get(args: Namespace):
         _download_file(
             paths[0][0],
             paths[0][1],
-            args.localdst,
+            dst,
             force=args.force,
             preserve=args.preserve,
         )
@@ -324,7 +331,7 @@ def get(args: Namespace):
                         _download_file,
                         client,
                         path,
-                        os.path.join(args.localdst, filename),
+                        os.path.join(dst, filename),
                         force=args.force,
                         preserve=args.preserve,
                     )
@@ -710,7 +717,8 @@ def main(in_args: Optional[Sequence[str]] = None):
     )
     get_parser.add_argument(
         "localdst",
-        help="Local destination to write to",
+        nargs="?",
+        help="Local destination to write to. Defaults to current directory.",
     )
     get_parser.set_defaults(func=get)
 
