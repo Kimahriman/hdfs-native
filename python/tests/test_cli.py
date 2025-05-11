@@ -180,7 +180,7 @@ def test_du(client: Client):
     ]
 
 
-def test_get(client: Client):
+def test_get(client: Client, monkeypatch: pytest.MonkeyPatch):
     data = b"0123456789"
 
     with pytest.raises(FileNotFoundError):
@@ -197,6 +197,15 @@ def test_get(client: Client):
             assert file.read() == data
 
         cli_main(["get", "/testfile", tmp_dir])
+        with open(os.path.join(tmp_dir, "testfile"), "rb") as file:
+            assert file.read() == data
+
+        os.remove(os.path.join(tmp_dir, "testfile"))
+
+        with monkeypatch.context() as m:
+            m.chdir(tmp_dir)
+            cli_main(["get", "/testfile"])
+
         with open(os.path.join(tmp_dir, "testfile"), "rb") as file:
             assert file.read() == data
 

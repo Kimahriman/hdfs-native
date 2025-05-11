@@ -9,7 +9,7 @@
 project = "hdfs-native"
 copyright = "2024, Adam Binford"
 author = "Adam Binford"
-release = "0.11.1"
+release = "0.11.2"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

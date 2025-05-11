@@ -4,7 +4,7 @@ mod common;
 #[cfg(feature = "integration-test")]
 mod test {
     use crate::common::TEST_FILE_INTS;
-    use bytes::Buf;
+    use bytes::{Buf, BytesMut};
     use hdfs_native::{
         minidfs::{DfsFeatures, MiniDfs},
         Client, Result, WriteOptions,
@@ -60,7 +60,7 @@ mod test {
         file.close().await?;
 
         // Read the whole file
-        let reader = client.read("/testfile").await?;
+        let mut reader = client.read("/testfile").await?;
         let mut buf = reader.read_range(0, TEST_FILE_INTS * 4).await?;
         for i in 0..TEST_FILE_INTS as i32 {
             assert_eq!(buf.get_i32(), i);
@@ -81,6 +81,26 @@ mod test {
             }
             offset += 1024 * 1024;
         }
+
+        // Positioned reads
+        let mut buf = reader.read(reader.file_length()).await?;
+        for i in 0..TEST_FILE_INTS as i32 {
+            assert_eq!(buf.get_i32(), i);
+        }
+
+        reader.seek(0);
+
+        let mut buf = BytesMut::zeroed(reader.file_length());
+        assert_eq!(reader.read_buf(&mut buf).await?, reader.file_length());
+        for i in 0..TEST_FILE_INTS as i32 {
+            assert_eq!(buf.get_i32(), i);
+        }
+
+        // Trying to read again should return nothing
+        assert!(reader.read(1).await?.is_empty());
+
+        // Same with reading into a provided buffer
+        assert_eq!(reader.read_buf(&mut [0u8]).await?, 0);
 
         Ok(())
     }

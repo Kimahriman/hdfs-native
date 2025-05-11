@@ -63,6 +63,9 @@ The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xm
 - `dfs.client.failover.resolve-needed.*` - DNS based NameNode discovery
 - `dfs.client.failover.resolver.useFQDN.*` - DNS based NameNode discovery
 - `dfs.client.failover.random.order.*` - Randomize order of NameNodes to try
+- `dfs.client.block.write.replace-datanode-on-failure.enable`
+- `dfs.client.block.write.replace-datanode-on-failure.policy`
+- `dfs.client.block.write.replace-datanode-on-failure.best-effort`
 - `fs.viewfs.mounttable.*.link.*` - ViewFS links
 - `fs.viewfs.mounttable.*.linkFallback` - ViewFS link fallback
 
@@ -75,7 +78,7 @@ cargo build
 ```
 
 ## Object store implementation
-An object_store implementation for HDFS is provided in the [hdfs-native-object-store](./crates/hdfs-native-object-store/) crate.
+An object_store implementation for HDFS is provided in the [hdfs-native-object-store](https://github.com/datafusion-contrib/hdfs-native-object-store) crate.
 
 ## Running tests
 The tests are mostly integration tests that utilize a small Java application in `rust/mindifs/` that runs a custom `MiniDFSCluster`. To run the tests, you need to have Java, Maven, Hadoop binaries, and Kerberos tools available and on your path. Any Java version between 8 and 17 should work.

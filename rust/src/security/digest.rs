@@ -134,8 +134,8 @@ fn kd(k: impl AsRef<[u8]>, v: impl AsRef<[u8]>) -> Vec<u8> {
 }
 
 fn gen_nonce() -> String {
-    let mut gen = rand::thread_rng();
-    let cnonce_bytes: Vec<u8> = (0..12).map(|_| gen.gen()).collect();
+    let mut gen = rand::rng();
+    let cnonce_bytes: Vec<u8> = (0..12).map(|_| gen.random()).collect();
     general_purpose::STANDARD.encode(cnonce_bytes)
 }
 

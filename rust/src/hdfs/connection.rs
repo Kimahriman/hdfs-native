@@ -376,9 +376,11 @@ impl RpcListener {
     }
 }
 
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum Op {
     WriteBlock,
     ReadBlock,
+    TransferBlock,
 }
 
 impl Op {
@@ -386,6 +388,7 @@ impl Op {
         match self {
             Self::WriteBlock => 80,
             Self::ReadBlock => 81,
+            Self::TransferBlock => 86,
         }
     }
 }

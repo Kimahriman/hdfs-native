@@ -90,15 +90,18 @@ impl NamenodeProtocol {
         self.call("getListing", message, false).await
     }
 
-    pub(crate) async fn get_located_file_info(
+    pub(crate) async fn get_block_locations(
         &self,
         src: &str,
-    ) -> Result<hdfs::GetLocatedFileInfoResponseProto> {
-        let message = hdfs::GetLocatedFileInfoRequestProto {
-            src: Some(src.to_string()),
-            need_block_token: Some(true),
+        offset: u64,
+        length: u64,
+    ) -> Result<hdfs::GetBlockLocationsResponseProto> {
+        let message = hdfs::GetBlockLocationsRequestProto {
+            src: src.to_string(),
+            offset,
+            length,
         };
-        self.call("getLocatedFileInfo", message, false).await
+        self.call("getBlockLocations", message, false).await
     }
 
     pub(crate) async fn get_server_defaults(&self) -> Result<hdfs::GetServerDefaultsResponseProto> {
@@ -443,6 +446,32 @@ impl NamenodeProtocol {
             src: path.to_string(),
         };
         self.call("getAclStatus", message, false).await
+    }
+
+    pub(crate) async fn get_additional_datanode(
+        &self,
+        path: &str,
+        block: &hdfs::ExtendedBlockProto,
+        existing_nodes: &[hdfs::DatanodeInfoProto],
+        exclude_nodes: &[hdfs::DatanodeInfoProto],
+        existing_storage_uuids: &[String],
+        num_additional_nodes: u32,
+    ) -> Result<hdfs::LocatedBlockProto> {
+        let message = hdfs::GetAdditionalDatanodeRequestProto {
+            src: path.to_string(),
+            blk: block.clone(),
+            existings: existing_nodes.to_vec(),
+            excludes: exclude_nodes.to_vec(),
+            num_additional_nodes,
+            client_name: self.client_name.clone(),
+            existing_storage_uuids: existing_storage_uuids.to_vec(),
+            ..Default::default()
+        };
+
+        let response: hdfs::GetAdditionalDatanodeResponseProto =
+            self.call("getAdditionalDatanode", message, true).await?;
+
+        Ok(response.block)
     }
 }
 

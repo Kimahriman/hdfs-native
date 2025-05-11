@@ -6,6 +6,7 @@ use futures::stream::BoxStream;
 use futures::{stream, Stream, StreamExt};
 use log::warn;
 
+use crate::common::config::Configuration;
 use crate::ec::{resolve_ec_policy, EcSchema};
 use crate::hdfs::block_reader::get_block_stream;
 use crate::hdfs::block_writer::BlockWriter;
@@ -18,7 +19,6 @@ const COMPLETE_RETRIES: u32 = 5;
 
 pub struct FileReader {
     protocol: Arc<NamenodeProtocol>,
-    status: hdfs::HdfsFileStatusProto,
     located_blocks: hdfs::LocatedBlocksProto,
     ec_schema: Option<EcSchema>,
     position: usize,
@@ -27,13 +27,11 @@ pub struct FileReader {
 impl FileReader {
     pub(crate) fn new(
         protocol: Arc<NamenodeProtocol>,
-        status: hdfs::HdfsFileStatusProto,
         located_blocks: hdfs::LocatedBlocksProto,
         ec_schema: Option<EcSchema>,
     ) -> Self {
         Self {
             protocol,
-            status,
             located_blocks,
             ec_schema,
             position: 0,
@@ -42,7 +40,7 @@ impl FileReader {
 
     /// Returns the total size of the file
     pub fn file_length(&self) -> usize {
-        self.status.length as usize
+        self.located_blocks.file_length as usize
     }
 
     /// Returns the remaining bytes left based on the current cursor position.
@@ -88,7 +86,7 @@ impl FileReader {
             let offset = self.position;
             self.position = usize::min(self.position + buf.len(), self.file_length());
             let read_bytes = self.position - offset;
-            self.read_range_buf(buf, offset).await?;
+            self.read_range_buf(&mut buf[..read_bytes], offset).await?;
             Ok(read_bytes)
         }
     }
@@ -98,7 +96,7 @@ impl FileReader {
     ///
     /// Panics if the requested range is outside of the file
     pub async fn read_range(&self, offset: usize, len: usize) -> Result<Bytes> {
-        let mut stream = self.read_range_stream(offset, len).boxed();
+        let mut stream = self.read_range_stream(offset, len);
         let mut buf = BytesMut::with_capacity(len);
         while let Some(bytes) = stream.next().await.transpose()? {
             buf.put(bytes);
@@ -110,7 +108,7 @@ impl FileReader {
     ///
     /// Panics if the requested range is outside of the file
     pub async fn read_range_buf(&self, mut buf: &mut [u8], offset: usize) -> Result<()> {
-        let mut stream = self.read_range_stream(offset, buf.len()).boxed();
+        let mut stream = self.read_range_stream(offset, buf.len());
         while let Some(bytes) = stream.next().await.transpose()? {
             buf.put(bytes);
         }
@@ -164,6 +162,7 @@ pub struct FileWriter {
     src: String,
     protocol: Arc<NamenodeProtocol>,
     status: hdfs::HdfsFileStatusProto,
+    config: Arc<Configuration>,
     block_writer: Option<BlockWriter>,
     last_block: Option<hdfs::LocatedBlockProto>,
     closed: bool,
@@ -175,6 +174,7 @@ impl FileWriter {
         protocol: Arc<NamenodeProtocol>,
         src: String,
         status: hdfs::HdfsFileStatusProto,
+        config: Arc<Configuration>,
         // Some for append, None for create
         last_block: Option<hdfs::LocatedBlockProto>,
     ) -> Self {
@@ -183,6 +183,7 @@ impl FileWriter {
             protocol,
             src,
             status,
+            config,
             block_writer: None,
             last_block,
             closed: false,
@@ -222,14 +223,16 @@ impl FileWriter {
         let block_writer = BlockWriter::new(
             Arc::clone(&self.protocol),
             new_block,
-            self.status.blocksize() as usize,
             self.protocol.get_cached_server_defaults().await?,
+            Arc::clone(&self.config),
             self.status
                 .ec_policy
                 .as_ref()
                 .map(resolve_ec_policy)
                 .transpose()?
                 .as_ref(),
+            &self.src,
+            &self.status,
         )
         .await?;
 

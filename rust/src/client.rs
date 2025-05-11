@@ -132,6 +132,7 @@ impl MountTable {
 #[derive(Debug)]
 pub struct Client {
     mount_table: Arc<MountTable>,
+    config: Arc<Configuration>,
 }
 
 impl Client {
@@ -196,6 +197,7 @@ impl Client {
 
         Ok(Self {
             mount_table: Arc::new(mount_table),
+            config: Arc::new(config),
         })
     }
 
@@ -277,34 +279,30 @@ impl Client {
     /// Opens a file reader for the file at `path`. Path should not include a scheme.
     pub async fn read(&self, path: &str) -> Result<FileReader> {
         let (link, resolved_path) = self.mount_table.resolve(path);
-        let located_info = link.protocol.get_located_file_info(&resolved_path).await?;
-        match located_info.fs {
-            Some(mut status) => {
-                let ec_schema = if let Some(ec_policy) = status.ec_policy.as_ref() {
-                    Some(resolve_ec_policy(ec_policy)?)
-                } else {
-                    None
-                };
+        // Get all block locations. Length is actually a signed value, but the proto uses an unsigned value
+        let located_info = link
+            .protocol
+            .get_block_locations(&resolved_path, 0, i64::MAX as u64)
+            .await?;
 
-                if status.file_encryption_info.is_some() {
-                    return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
-                }
-                if status.file_type() == FileType::IsDir {
-                    return Err(HdfsError::IsADirectoryError(path.to_string()));
-                }
+        if let Some(locations) = located_info.locations {
+            let ec_schema = if let Some(ec_policy) = locations.ec_policy.as_ref() {
+                Some(resolve_ec_policy(ec_policy)?)
+            } else {
+                None
+            };
 
-                if let Some(locations) = status.locations.take() {
-                    Ok(FileReader::new(
-                        Arc::clone(&link.protocol),
-                        status,
-                        locations,
-                        ec_schema,
-                    ))
-                } else {
-                    Err(HdfsError::BlocksNotFound(path.to_string()))
-                }
+            if locations.file_encryption_info.is_some() {
+                return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
             }
-            None => Err(HdfsError::FileNotFound(path.to_string())),
+
+            Ok(FileReader::new(
+                Arc::clone(&link.protocol),
+                locations,
+                ec_schema,
+            ))
+        } else {
+            Err(HdfsError::FileNotFound(path.to_string()))
         }
     }
 
@@ -342,6 +340,7 @@ impl Client {
                     Arc::clone(&link.protocol),
                     resolved_path,
                     status,
+                    Arc::clone(&self.config),
                     None,
                 ))
             }
@@ -382,6 +381,7 @@ impl Client {
                     Arc::clone(&link.protocol),
                     resolved_path,
                     status,
+                    Arc::clone(&self.config),
                     append_response.block,
                 ))
             }

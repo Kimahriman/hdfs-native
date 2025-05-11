@@ -1,6 +1,6 @@
 [package]
 name = "hdfs-native"
-version = "0.11.1"
+version = "0.11.2"
 edition = "2021"
 authors = ["Adam Binford <adamq43@gmail.com>"]
 homepage = "https://github.com/Kimahriman/hdfs-native"
@@ -34,7 +34,7 @@ num-traits = "0.2"
 once_cell = "1"
 prost = "0.13"
 prost-types = "0.13"
-rand = "0.8"
+rand = "0.9"
 regex = "1"
 roxmltree = "0.20"
 socket2 = "0.5"

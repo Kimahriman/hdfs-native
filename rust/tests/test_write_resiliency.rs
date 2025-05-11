@@ -1,7 +1,11 @@
 #[cfg(feature = "integration-test")]
 mod test {
 
-    use std::{collections::HashSet, sync::atomic::Ordering, time::Duration};
+    use std::{
+        collections::{HashMap, HashSet},
+        sync::atomic::Ordering,
+        time::Duration,
+    };
 
     use bytes::{Buf, BufMut, Bytes, BytesMut};
     use hdfs_native::{
@@ -68,78 +72,162 @@ mod test {
     }
 
     async fn test_write_failures() -> Result<()> {
-        let client = Client::default();
+        fn replace_dn_conf(should_replace: bool) -> HashMap<String, String> {
+            HashMap::from([
+                (
+                    "dfs.client.block.write.replace-datanode-on-failure.enable".to_string(),
+                    should_replace.to_string(),
+                ),
+                (
+                    "dfs.client.block.write.replace-datanode-on-failure.policy".to_string(),
+                    "ALWAYS".to_string(),
+                ),
+            ])
+        }
 
-        let file = "/testfile";
+        for (i, client) in [
+            Client::default_with_config(replace_dn_conf(true)).unwrap(),
+            Client::default_with_config(replace_dn_conf(false)).unwrap(),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let file = format!("/testfile{}", i);
+            let bytes_to_write = 2usize * 1024 * 1024;
+
+            let mut data = BytesMut::with_capacity(bytes_to_write);
+            for i in 0..(bytes_to_write / 4) {
+                data.put_i32(i as i32);
+            }
+
+            // Test connection failure before writing data
+            let mut writer = client
+                .create(&file, WriteOptions::default().replication(3))
+                .await?;
+
+            WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
+
+            let data = data.freeze();
+            writer.write(data.clone()).await?;
+            writer.close().await?;
+
+            let reader = client.read(&file).await?;
+            check_file_content(&reader, data.clone()).await?;
+
+            // Test connection failure after data has been written
+            let mut writer = client
+                .create(
+                    &file,
+                    WriteOptions::default().replication(3).overwrite(true),
+                )
+                .await?;
+
+            writer.write(data.slice(..bytes_to_write / 2)).await?;
+
+            // Give a little time for the packets to send
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
+
+            writer.write(data.slice(bytes_to_write / 2..)).await?;
+            writer.close().await?;
+
+            let reader = client.read(&file).await?;
+            check_file_content(&reader, data.clone()).await?;
+
+            // Test failure in from ack status before any data is written
+            let mut writer = client
+                .create(
+                    &file,
+                    WriteOptions::default().replication(3).overwrite(true),
+                )
+                .await?;
+
+            *WRITE_REPLY_FAULT_INJECTOR.lock().unwrap() = Some(2);
+
+            writer.write(data.clone()).await?;
+            writer.close().await?;
+
+            let reader = client.read(&file).await?;
+            check_file_content(&reader, data.clone()).await?;
+
+            // Test failure in from ack status after some data has been written
+            let mut writer = client
+                .create(
+                    &file,
+                    WriteOptions::default().replication(3).overwrite(true),
+                )
+                .await?;
+
+            writer.write(data.slice(..bytes_to_write / 2)).await?;
+
+            // Give a little time for the packets to send
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            *WRITE_REPLY_FAULT_INJECTOR.lock().unwrap() = Some(2);
+
+            writer.write(data.slice(bytes_to_write / 2..)).await?;
+            writer.close().await?;
+
+            let reader = client.read(&file).await?;
+            check_file_content(&reader, data.clone()).await?;
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_replace_failed_datanode() -> Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let mut replace_dn_on_failure_conf: HashMap<String, String> = HashMap::new();
+        replace_dn_on_failure_conf.insert(
+            "dfs.client.block.write.replace-datanode-on-failure.enable".to_string(),
+            "true".to_string(),
+        );
+        replace_dn_on_failure_conf.insert(
+            "dfs.client.block.write.replace-datanode-on-failure.policy".to_string(),
+            "ALWAYS".to_string(),
+        );
+
+        let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::HA]));
+        let client = Client::default_with_config(replace_dn_on_failure_conf).unwrap();
+
+        let file = "/testfile_replace_failed_datanode";
         let bytes_to_write = 2usize * 1024 * 1024;
 
         let mut data = BytesMut::with_capacity(bytes_to_write);
         for i in 0..(bytes_to_write / 4) {
             data.put_i32(i as i32);
         }
+        let data = data.freeze();
 
-        // Test connection failure before writing data
         let mut writer = client
             .create(file, WriteOptions::default().replication(3))
             .await?;
 
+        writer.write(data.slice(..bytes_to_write / 3)).await?;
+
         WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
-
-        let data = data.freeze();
-        writer.write(data.clone()).await?;
-        writer.close().await?;
-
-        let reader = client.read("/testfile").await?;
-        check_file_content(&reader, data.clone()).await?;
-
-        // Test connection failure after data has been written
-        let mut writer = client
-            .create(file, WriteOptions::default().replication(3).overwrite(true))
+        writer
+            .write(data.slice(bytes_to_write / 3..2 * bytes_to_write / 3))
             .await?;
-
-        writer.write(data.slice(..bytes_to_write / 2)).await?;
-
         // Give a little time for the packets to send
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
-
-        writer.write(data.slice(bytes_to_write / 2..)).await?;
-        writer.close().await?;
-
-        let reader = client.read("/testfile").await?;
-        check_file_content(&reader, data.clone()).await?;
-
-        // Test failure in from ack status before any data is written
-        let mut writer = client
-            .create(file, WriteOptions::default().replication(3).overwrite(true))
-            .await?;
-
-        *WRITE_REPLY_FAULT_INJECTOR.lock().unwrap() = Some(2);
-
-        writer.write(data.clone()).await?;
-        writer.close().await?;
-
-        let reader = client.read("/testfile").await?;
-        check_file_content(&reader, data.clone()).await?;
-
-        // Test failure in from ack status after some data has been written
-        let mut writer = client
-            .create(file, WriteOptions::default().replication(3).overwrite(true))
-            .await?;
-
-        writer.write(data.slice(..bytes_to_write / 2)).await?;
-
+        writer.write(data.slice(2 * bytes_to_write / 3..)).await?;
         // Give a little time for the packets to send
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        *WRITE_REPLY_FAULT_INJECTOR.lock().unwrap() = Some(2);
-
-        writer.write(data.slice(bytes_to_write / 2..)).await?;
+        WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
         writer.close().await?;
+        // Give a little time for the packets to send
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let reader = client.read("/testfile").await?;
-        check_file_content(&reader, data.clone()).await?;
+        let reader = client.read(file).await?;
+        check_file_content(&reader, data).await?;
 
         Ok(())
     }

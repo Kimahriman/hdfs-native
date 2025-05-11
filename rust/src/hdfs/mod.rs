@@ -3,3 +3,4 @@ pub(crate) mod block_writer;
 pub(crate) mod connection;
 pub(crate) mod protocol;
 pub(crate) mod proxy;
+pub(crate) mod replace_datanode;
