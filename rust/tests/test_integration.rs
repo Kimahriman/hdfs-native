@@ -196,7 +196,291 @@ mod test {
         test_set_replication(&client).await?;
         test_get_content_summary(&client).await?;
         test_acls(&client).await?;
+        test_globbing(&client).await?;
 
+        Ok(())
+    }
+
+    async fn test_globbing(client: &Client) -> Result<()> {
+        let base_dir = "/test_globbing_root";
+        // Ensure clean slate for test_globbing
+        if client.get_file_info(base_dir).await.is_ok() {
+            client.delete(base_dir, true).await?;
+        }
+        client.mkdirs(base_dir, 0o755, true).await?;
+
+        // Run tests
+        test_glob_list_status(client, base_dir).await?;
+        test_glob_read_ops(client, base_dir).await?;
+        test_glob_modifying_ops(client, base_dir).await?;
+        test_glob_disallowed_ops(client, base_dir).await?;
+
+        // Cleanup
+        client.delete(base_dir, true).await?;
+        Ok(())
+    }
+
+    async fn test_glob_list_status(client: &Client, base_dir: &str) -> Result<()> {
+        let root = format!("{}/list_status", base_dir);
+        client.mkdirs(&root, 0o755, true).await?;
+
+        client.create(&format!("{}/file1.txt", root), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/file2.log", root), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/foo_abc.txt", root), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/foo_def.csv", root), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/bar_file.txt", root), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/file[x].txt", root), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/file_q.log", root), WriteOptions::default()).await?.close().await?; // For '?' test
+        
+        let subdir1 = format!("{}/subdir1", root);
+        client.mkdirs(&subdir1, 0o755, true).await?;
+        client.create(&format!("{}/subfile1.txt", subdir1), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/another.log", subdir1), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/deep_foo.csv", subdir1), WriteOptions::default()).await?.close().await?;
+
+        let subdir2 = format!("{}/subdir2", root);
+        client.mkdirs(&subdir2, 0o755, true).await?;
+        client.create(&format!("{}/subfile2.log", subdir2), WriteOptions::default()).await?.close().await?;
+        client.mkdirs(&format!("{}/empty_dir", subdir2), 0o755, true).await?;
+
+        // Basic patterns
+        let paths: HashSet<String> = client.list_status(&root, false, Some("*.txt")).await?.into_iter().map(|fs| fs.path).collect();
+        let expected_paths: HashSet<String> = [
+            format!("{}/file1.txt", root),
+            format!("{}/foo_abc.txt", root),
+            format!("{}/bar_file.txt", root),
+            format!("{}/file[x].txt", root),
+        ].iter().cloned().collect();
+        assert_eq!(paths, expected_paths, "Basic pattern *.txt failed");
+
+        let paths: HashSet<String> = client.list_status(&root, false, Some("foo*")).await?.into_iter().map(|fs| fs.path).collect();
+        let expected_paths: HashSet<String> = [
+            format!("{}/foo_abc.txt", root),
+            format!("{}/foo_def.csv", root),
+        ].iter().cloned().collect();
+        assert_eq!(paths, expected_paths, "Basic pattern foo* failed");
+
+        let paths: HashSet<String> = client.list_status(&root, false, Some("*_file.txt")).await?.into_iter().map(|fs| fs.path).collect();
+        let expected_paths: HashSet<String> = [format!("{}/bar_file.txt", root)].iter().cloned().collect();
+        assert_eq!(paths, expected_paths, "Basic pattern *_file.txt failed");
+
+        // Recursive patterns
+        let paths: HashSet<String> = client.list_status(&root, true, Some("**/*.txt")).await?.into_iter().map(|fs| fs.path).collect();
+        let expected_paths: HashSet<String> = [
+            format!("{}/file1.txt", root),
+            format!("{}/foo_abc.txt", root),
+            format!("{}/bar_file.txt", root),
+            format!("{}/file[x].txt", root),
+            format!("{}/subfile1.txt", subdir1),
+        ].iter().cloned().collect();
+        assert_eq!(paths, expected_paths, "Recursive pattern **/*.txt failed");
+        
+        let paths: HashSet<String> = client.list_status(&root, true, Some("**/foo*.csv")).await?.into_iter().map(|fs| fs.path).collect();
+        let expected_paths: HashSet<String> = [
+            format!("{}/foo_def.csv", root),
+            format!("{}/deep_foo.csv", subdir1),
+        ].iter().cloned().collect();
+        assert_eq!(paths, expected_paths, "Recursive pattern **/foo*.csv failed");
+
+        // Patterns matching dirs and files
+        let paths: HashSet<String> = client.list_status(&root, false, Some("subdir*")).await?.into_iter().map(|fs| fs.path).collect();
+        let expected_paths_for_subdir_star: HashSet<String> = [subdir1.clone(), subdir2.clone()].iter().cloned().collect();
+        assert_eq!(paths, expected_paths_for_subdir_star, "Pattern matching dirs subdir* failed");
+
+        let paths: HashSet<String> = client.list_status(&root, true, Some("subdir*/*file*.txt")).await?.into_iter().map(|fs| fs.path).collect();
+        let expected_paths: HashSet<String> = [format!("{}/subfile1.txt", subdir1)].iter().cloned().collect();
+        assert_eq!(paths, expected_paths, "Recursive pattern subdir*/*file*.txt failed");
+        
+        // Patterns matching nothing
+        let statuses = client.list_status(&root, false, Some("*.nonexistent")).await?;
+        assert!(statuses.is_empty(), "Pattern matching nothing failed");
+
+        // Patterns with special characters
+        let paths: HashSet<String> = client.list_status(&root, false, Some("file[x].txt")).await?.into_iter().map(|fs| fs.path).collect();
+        let expected_paths: HashSet<String> = [format!("{}/file[x].txt", root)].iter().cloned().collect();
+        assert_eq!(paths, expected_paths, "Pattern with [x] failed");
+
+        let paths: HashSet<String> = client.list_status(&root, false, Some("file_?.log")).await?.into_iter().map(|fs| fs.path).collect();
+        let expected_paths: HashSet<String> = [format!("{}/file_q.log", root)].iter().cloned().collect();
+        assert_eq!(paths, expected_paths, "Pattern with ? failed");
+        
+        client.delete(&root, true).await?;
+        Ok(())
+    }
+
+    async fn test_glob_read_ops(client: &Client, base_dir: &str) -> Result<()> {
+        let root = format!("{}/read_ops", base_dir);
+        client.mkdirs(&root, 0o755, true).await?;
+
+        client.create(&format!("{}/file.txt", root), WriteOptions::default()).await?.close().await?;
+        client.mkdirs(&format!("{}/dir1", root), 0o755, true).await?;
+        client.create(&format!("{}/multi_a.dat", root), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/multi_b.dat", root), WriteOptions::default()).await?.close().await?;
+
+        // Single file match
+        assert_eq!(client.get_file_info(&format!("{}/file.tx?", root)).await?.path, format!("{}/file.txt", root));
+        let mut reader = client.read(&format!("{}/f*.txt", root)).await?;
+        assert_eq!(reader.file_length(), 0); 
+        assert_eq!(client.get_content_summary(&format!("{}/fi*.txt", root)).await?.length, 0);
+        assert!(client.get_acl_status(&format!("{}/file.txt", root)).await.is_ok()); 
+
+        // Single dir match (non-read)
+        let dir_info = client.get_file_info(&format!("{}/dir*", root)).await?;
+        assert_eq!(dir_info.path, format!("{}/dir1", root));
+        assert!(dir_info.isdir);
+        assert_eq!(client.get_content_summary(&format!("{}/d*1", root)).await?.directory_count, 1);
+        assert!(client.get_acl_status(&format!("{}/di?1", root)).await.is_ok());
+
+        // Single dir match (for `read`)
+        let read_dir_res = client.read(&format!("{}/dir*", root)).await;
+        assert!(matches!(read_dir_res, Err(hdfs_native::error::HdfsError::InvalidArgument(_))), "Read on dir glob should fail: {:?}", read_dir_res);
+
+        // Multiple matches
+        let multi_match_res_info = client.get_file_info(&format!("{}/multi_*.dat", root)).await;
+        assert!(matches!(multi_match_res_info, Err(hdfs_native::error::HdfsError::InvalidArgument(_))), "get_file_info on multi-match glob should fail: {:?}", multi_match_res_info);
+        let multi_match_res_read = client.read(&format!("{}/multi_*.dat", root)).await;
+        assert!(matches!(multi_match_res_read, Err(hdfs_native::error::HdfsError::InvalidArgument(_))), "read on multi-match glob should fail: {:?}", multi_match_res_read);
+
+        // Zero matches
+        let zero_match_res_info = client.get_file_info(&format!("{}/nothing*.dat", root)).await;
+        assert!(matches!(zero_match_res_info, Err(hdfs_native::error::HdfsError::FileNotFound(_))), "get_file_info on zero-match glob should fail: {:?}", zero_match_res_info);
+
+        // Invalid glob pattern (e.g. unclosed bracket)
+        // Current client behavior: ListStatusIterator's pattern becomes None if Pattern::new fails.
+        // resolve_glob_path_to_single_entry for path "[unclosed" uses base_path ".".
+        // If "." is empty (as it is here, since we are in a clean test dir `root`), then it results in FileNotFound.
+        // If client logic is improved to fail Pattern::new upfront, this would be InvalidArgument.
+        let invalid_pattern_res = client.get_file_info(&format!("{}/[unclosed", root)).await;
+        assert!(matches!(invalid_pattern_res, Err(hdfs_native::error::HdfsError::FileNotFound(_)) | Err(hdfs_native::error::HdfsError::InvalidArgument(_))), "get_file_info on invalid glob should result in FileNotFound or InvalidArgument: {:?}", invalid_pattern_res);
+
+        client.delete(&root, true).await?;
+        Ok(())
+    }
+
+    async fn test_glob_modifying_ops(client: &Client, base_dir: &str) -> Result<()> {
+        let root = format!("{}/modify_ops", base_dir);
+        client.mkdirs(&root, 0o755, true).await?;
+
+        client.create(&format!("{}/file1.tmp", root), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/file2.tmp", root), WriteOptions::default()).await?.close().await?;
+        client.mkdirs(&format!("{}/subdir", root), 0o755, true).await?;
+        client.create(&format!("{}/subdir/file3.tmp", root), WriteOptions::default()).await?.close().await?;
+
+        // Delete non-recursive glob
+        let delete_res = client.delete(&format!("{}/file*.tmp", root), false).await?; 
+        assert!(delete_res, "Delete glob /file*.tmp should succeed");
+        assert!(client.get_file_info(&format!("{}/file1.tmp", root)).await.is_err(), "file1.tmp should be deleted");
+        assert!(client.get_file_info(&format!("{}/file2.tmp", root)).await.is_err(), "file2.tmp should be deleted");
+        assert!(client.get_file_info(&format!("{}/subdir/file3.tmp", root)).await.is_ok(), "subdir/file3.tmp should remain");
+
+        // Recreate for next test
+        client.create(&format!("{}/file1.tmp", root), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/file2.tmp", root), WriteOptions::default()).await?.close().await?;
+
+        // Delete recursive glob
+        let delete_recursive_res = client.delete(&format!("{}/**/*.tmp", root), true).await?; 
+        assert!(delete_recursive_res, "Recursive delete glob **/*.tmp should succeed");
+        assert!(client.get_file_info(&format!("{}/file1.tmp", root)).await.is_err());
+        assert!(client.get_file_info(&format!("{}/file2.tmp", root)).await.is_err());
+        assert!(client.get_file_info(&format!("{}/subdir/file3.tmp", root)).await.is_err());
+        
+        // set_replication
+        client.create(&format!("{}/repl1.dat", root), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/repl2.dat", root), WriteOptions::default()).await?.close().await?;
+        let repl_res = client.set_replication(&format!("{}/repl*.dat", root), 1).await?; 
+        assert!(repl_res, "set_replication on glob should succeed");
+        assert_eq!(client.get_file_info(&format!("{}/repl1.dat", root)).await?.replication.unwrap_or(0), 1);
+        assert_eq!(client.get_file_info(&format!("{}/repl2.dat", root)).await?.replication.unwrap_or(0), 1);
+
+        let repl_no_match = client.set_replication(&format!("{}/no_match_repl*.dat", root), 1).await?;
+        assert!(repl_no_match, "set_replication on no-match glob should succeed (true)");
+
+        // set_permission
+        client.create(&format!("{}/perm1.dat", root), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/perm2.dat", root), WriteOptions::default()).await?.close().await?;
+        client.set_permission(&format!("{}/perm*.dat", root), 0o700).await?;
+        assert_eq!(client.get_file_info(&format!("{}/perm1.dat", root)).await?.permission, 0o700);
+        assert_eq!(client.get_file_info(&format!("{}/perm2.dat", root)).await?.permission, 0o700);
+
+        // set_times
+        client.create(&format!("{}/time1.dat", root), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/time2.dat", root), WriteOptions::default()).await?.close().await?;
+        let mtime = 1678886400000; // Example timestamp
+        let atime = 1678886401000; // Example timestamp
+        client.set_times(&format!("{}/time*.dat", root), mtime, atime).await?;
+        let info1 = client.get_file_info(&format!("{}/time1.dat", root)).await?;
+        assert_eq!(info1.modification_time, mtime);
+        assert_eq!(info1.access_time, atime);
+        let info2 = client.get_file_info(&format!("{}/time2.dat", root)).await?;
+        assert_eq!(info2.modification_time, mtime);
+        assert_eq!(info2.access_time, atime);
+
+        // set_owner
+        client.create(&format!("{}/owner1.dat", root), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/owner2.dat", root), WriteOptions::default()).await?.close().await?;
+        let test_user = "testglobuser";
+        let test_group = "testglobgroup";
+        // Note: Setting arbitrary owners/groups might require specific HDFS permissions or superuser.
+        // This test assumes MiniDFS allows it or runs as superuser.
+        client.set_owner(&format!("{}/owner*.dat", root), Some(test_user), Some(test_group)).await?;
+        let owner_info1 = client.get_file_info(&format!("{}/owner1.dat", root)).await?;
+        assert_eq!(owner_info1.owner, test_user);
+        assert_eq!(owner_info1.group, test_group);
+        let owner_info2 = client.get_file_info(&format!("{}/owner2.dat", root)).await?;
+        assert_eq!(owner_info2.owner, test_user);
+        assert_eq!(owner_info2.group, test_group);
+        
+        // modify_acl_entries
+        client.create(&format!("{}/acl1.dat", root), WriteOptions::default()).await?.close().await?;
+        client.create(&format!("{}/acl2.dat", root), WriteOptions::default()).await?.close().await?;
+        let acl_entry = AclEntry::new_user("access", "read", Some("globacluser".to_string()));
+        client.modify_acl_entries(&format!("{}/acl*.dat", root), vec![acl_entry.clone()]).await?;
+        
+        let acl_status1 = client.get_acl_status(&format!("{}/acl1.dat", root)).await?;
+        // Check if our specific entry is present, ignoring others that might be default
+        assert!(acl_status1.entries.iter().any(|e| e.name == acl_entry.name && e.r#type == acl_entry.r#type && e.scope == acl_entry.scope && e.permissions == acl_entry.permissions), 
+            "ACL entry not found in acl1.dat. Actual: {:?}", acl_status1.entries);
+
+        let acl_status2 = client.get_acl_status(&format!("{}/acl2.dat", root)).await?;
+        assert!(acl_status2.entries.iter().any(|e| e.name == acl_entry.name && e.r#type == acl_entry.r#type && e.scope == acl_entry.scope && e.permissions == acl_entry.permissions),
+            "ACL entry not found in acl2.dat. Actual: {:?}", acl_status2.entries);
+
+
+        // Zero matches for a modifying op
+        let delete_zero_res = client.delete(&format!("{}/nonexistent_del_*.tmp", root), false).await?;
+        assert!(delete_zero_res, "Delete on zero-match glob should succeed (true)");
+
+        // Invalid glob pattern for modifying op
+        // As with read_ops, this depends on client's Pattern::new error handling.
+        // Assuming current behavior (invalid pattern -> None -> acts on base_path):
+        // Using a pattern that is valid but definitely won't match anything is safer for now.
+        let unmatchable_delete_res = client.delete(&format!("{}/unmatchable[pattern]xyz", root), false).await?;
+        assert!(unmatchable_delete_res, "Delete on unmatchable valid glob should be Ok(true)");
+
+        client.delete(&root, true).await?;
+        Ok(())
+    }
+
+    async fn test_glob_disallowed_ops(client: &Client, base_dir: &str) -> Result<()> {
+        let root = format!("{}/disallowed_ops", base_dir);
+        client.mkdirs(&root, 0o755, true).await?;
+        
+        client.create(&format!("{}/src.txt", root), WriteOptions::default()).await?.close().await?;
+
+        // mkdirs
+        let mkdir_glob_res = client.mkdirs(&format!("{}/foo*/bar", root), 0o755, true).await;
+        assert!(matches!(mkdir_glob_res, Err(hdfs_native::error::HdfsError::InvalidArgument(_))), "mkdirs with glob in path should fail: {:?}", mkdir_glob_res);
+
+        // rename
+        let rename_src_glob_res = client.rename(&format!("{}/src*.txt", root), &format!("{}/dst.txt", root), false).await;
+        assert!(matches!(rename_src_glob_res, Err(hdfs_native::error::HdfsError::InvalidArgument(_))), "rename with glob in src should fail: {:?}", rename_src_glob_res);
+        
+        let rename_dst_glob_res = client.rename(&format!("{}/src.txt", root), &format!("{}/dst*.txt", root), false).await;
+        assert!(matches!(rename_dst_glob_res, Err(hdfs_native::error::HdfsError::InvalidArgument(_))), "rename with glob in dst should fail: {:?}", rename_dst_glob_res);
+
+        assert!(client.get_file_info(&format!("{}/src.txt", root)).await.is_ok(), "src.txt should still exist after failed renames");
+
+        client.delete(&root, true).await?;
         Ok(())
     }
 

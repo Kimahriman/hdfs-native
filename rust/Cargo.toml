@@ -23,6 +23,7 @@ ctr = "0.9"
 des = "0.8"
 dns-lookup = "2"
 futures = { workspace = true }
+glob = "0.3.1"
 g2p = "1"
 hex = "0.4"
 hmac = "0.12"

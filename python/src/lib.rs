@@ -431,8 +431,16 @@ impl RawClient {
         })?)
     }
 
-    pub fn list_status(&self, path: &str, recursive: bool) -> PyFileStatusIter {
-        let inner = self.inner.list_status_iter(path, recursive);
+    #[pyo3(signature = (path, recursive = false, pattern = None))]
+    pub fn list_status(
+        &self,
+        path: &str,
+        recursive: bool,
+        pattern: Option<String>,
+    ) -> PyFileStatusIter {
+        let inner = self
+            .inner
+            .list_status_iter(path, recursive, pattern.as_deref());
         PyFileStatusIter {
             inner: Arc::new(inner),
             rt: Arc::clone(&self.rt),

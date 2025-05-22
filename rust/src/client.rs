@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use futures::stream::BoxStream;
+use glob::{MatchOptions, Pattern};
 use futures::{stream, StreamExt};
 use url::Url;
 
@@ -136,6 +137,93 @@ pub struct Client {
 }
 
 impl Client {
+    async fn resolve_glob_path_to_single_entry(
+        &self,
+        path_str: &str,
+        for_read_op: bool,
+    ) -> Result<FileStatus> {
+        // Identify Base Path
+        let base_path_str;
+        let glob_char_index = path_str.find(&['*', '?', '[', '{']);
+
+        if glob_char_index.is_none() {
+            // This function should only be called with paths known to contain glob characters.
+            // If called without, it's an internal logic error or unexpected use.
+            // However, to be robust, we could try to treat it as a literal path,
+            // but the design implies it's for glob resolution.
+            // For now, let's assume pre-flight checks are done by the caller.
+            // The original code already returns an error, which is fine.
+            return Err(HdfsError::InvalidArgument(
+                "resolve_glob_path_to_single_entry called with non-glob path".to_string(),
+            ));
+        }
+        let glob_char_idx = glob_char_index.unwrap();
+
+        if glob_char_idx == 0 {
+            // Glob char is at the beginning of the path
+            // e.g., "*.txt" or "/**/foo.txt"
+            // If path starts with '/', base is "/", otherwise "."
+            base_path_str = if path_str.starts_with('/') { "/" } else { "." };
+        } else {
+            match path_str[..glob_char_idx].rfind('/') {
+                Some(last_slash_idx) => {
+                    // e.g. /foo/bar* -> /foo/
+                    // e.g. /foo/b*r/baz -> /foo/
+                    base_path_str = &path_str[..last_slash_idx + 1];
+                }
+                None => {
+                    // No slash before the first glob character, and glob char is not at index 0
+                    // e.g. "foo*bar/baz.txt". Base path should be "."
+                    base_path_str = ".";
+                }
+            }
+        }
+        
+        let recursive = path_str.contains("**");
+
+        // list_status_iter now correctly handles the pattern internally
+        let iter = self.list_status_iter(base_path_str, recursive, Some(path_str));
+        
+        let statuses_results: Vec<Result<FileStatus>> = iter.into_stream().collect().await;
+
+        let mut resolved_statuses = Vec::<FileStatus>::new();
+        for status_result in statuses_results {
+            match status_result {
+                Ok(status) => resolved_statuses.push(status),
+                Err(e) => return Err(e), // Propagate errors from listing
+            }
+        }
+
+        if resolved_statuses.is_empty() {
+            return Err(HdfsError::FileNotFound(path_str.to_string()));
+        }
+
+        if resolved_statuses.len() > 1 {
+            let mut matched_paths: Vec<String> =
+                resolved_statuses.iter().map(|fs| fs.path.clone()).collect();
+            // Sort for deterministic error messages, if necessary, though not strictly required by spec
+            matched_paths.sort();
+            return Err(HdfsError::InvalidArgument(format!(
+                "Glob pattern \"{}\" matches multiple entries ({}): {:?}",
+                path_str,
+                resolved_statuses.len(),
+                matched_paths
+            )));
+        }
+
+        // Exactly one match
+        let matched_status = resolved_statuses.remove(0);
+
+        if for_read_op && matched_status.isdir {
+            return Err(HdfsError::InvalidArgument(format!(
+                "Path \"{}\" (resolved from glob \"{}\") is a directory, expected a file for read operation",
+                matched_status.path, path_str
+            )));
+        }
+
+        Ok(matched_status)
+    }
+
     /// Creates a new HDFS Client. The URL must include the protocol and host, and optionally a port.
     /// If a port is included, the host is treated as a single NameNode. If no port is included, the
     /// host is treated as a name service that will be resolved using the HDFS config.
@@ -247,6 +335,14 @@ impl Client {
 
     /// Retrieve the file status for the file at `path`.
     pub async fn get_file_info(&self, path: &str) -> Result<FileStatus> {
+        if path.contains(&['*', '?', '[', '{']) {
+            let matched_status = self.resolve_glob_path_to_single_entry(path, false).await?;
+            // The matched_status already is a FileStatus, so we can return it directly.
+            // Or, if we need to re-fetch based on its concrete path (e.g. if FileStatus is minimal)
+            // we'd call the original logic. Assuming FileStatus from list_status is complete enough.
+            return Ok(matched_status);
+        }
+
         let (link, resolved_path) = self.mount_table.resolve(path);
         match link.protocol.get_file_info(&resolved_path).await?.fs {
             Some(status) => Ok(FileStatus::from(status, path)),
@@ -256,8 +352,13 @@ impl Client {
 
     /// Retrives a list of all files in directories located at `path`. Wrapper around `list_status_iter` that
     /// returns Err if any part of the stream fails, or Ok if all file statuses were found successfully.
-    pub async fn list_status(&self, path: &str, recursive: bool) -> Result<Vec<FileStatus>> {
-        let iter = self.list_status_iter(path, recursive);
+    pub async fn list_status(
+        &self,
+        path: &str,
+        recursive: bool,
+        pattern: Option<&str>,
+    ) -> Result<Vec<FileStatus>> {
+        let iter = self.list_status_iter(path, recursive, pattern);
         let statuses = iter
             .into_stream()
             .collect::<Vec<Result<FileStatus>>>()
@@ -272,13 +373,31 @@ impl Client {
     }
 
     /// Retrives an iterator of all files in directories located at `path`.
-    pub fn list_status_iter(&self, path: &str, recursive: bool) -> ListStatusIterator {
-        ListStatusIterator::new(path.to_string(), Arc::clone(&self.mount_table), recursive)
+    pub fn list_status_iter(
+        &self,
+        path: &str,
+        recursive: bool,
+        pattern: Option<&str>,
+    ) -> ListStatusIterator {
+        ListStatusIterator::new(
+            path.to_string(),
+            Arc::clone(&self.mount_table),
+            recursive,
+            pattern,
+        )
     }
 
     /// Opens a file reader for the file at `path`. Path should not include a scheme.
     pub async fn read(&self, path: &str) -> Result<FileReader> {
-        let (link, resolved_path) = self.mount_table.resolve(path);
+        let file_to_read_path = if path.contains(&['*', '?', '[', '{']) {
+            self.resolve_glob_path_to_single_entry(path, true)
+                .await?
+                .path
+        } else {
+            path.to_string()
+        };
+
+        let (link, resolved_path) = self.mount_table.resolve(&file_to_read_path);
         // Get all block locations. Length is actually a signed value, but the proto uses an unsigned value
         let located_info = link
             .protocol
@@ -302,7 +421,9 @@ impl Client {
                 ec_schema,
             ))
         } else {
-            Err(HdfsError::FileNotFound(path.to_string()))
+            // If the original path was a glob, resolve_glob_path_to_single_entry would have found it or errored.
+            // If it wasn't a glob, this is the original behavior.
+            Err(HdfsError::FileNotFound(file_to_read_path))
         }
     }
 
@@ -486,7 +607,15 @@ impl Client {
 
     /// Gets a content summary for a file or directory rooted at `path`.
     pub async fn get_content_summary(&self, path: &str) -> Result<ContentSummary> {
-        let (link, resolved_path) = self.mount_table.resolve(path);
+        let path_to_summarize = if path.contains(&['*', '?', '[', '{']) {
+            self.resolve_glob_path_to_single_entry(path, false)
+                .await?
+                .path
+        } else {
+            path.to_string()
+        };
+
+        let (link, resolved_path) = self.mount_table.resolve(&path_to_summarize);
         let result = link
             .protocol
             .get_content_summary(&resolved_path)
@@ -544,7 +673,15 @@ impl Client {
 
     /// Get the ACL status for the file or directory at `path`.
     pub async fn get_acl_status(&self, path: &str) -> Result<AclStatus> {
-        let (link, resolved_path) = self.mount_table.resolve(path);
+        let path_for_acl = if path.contains(&['*', '?', '[', '{']) {
+            self.resolve_glob_path_to_single_entry(path, false)
+                .await?
+                .path
+        } else {
+            path.to_string()
+        };
+
+        let (link, resolved_path) = self.mount_table.resolve(&path_for_acl);
         Ok(link
             .protocol
             .get_acl_status(&resolved_path)
@@ -632,16 +769,24 @@ impl DirListingIterator {
 pub struct ListStatusIterator {
     mount_table: Arc<MountTable>,
     recursive: bool,
+    pattern: Option<Pattern>,
     iters: Arc<tokio::sync::Mutex<Vec<DirListingIterator>>>,
 }
 
 impl ListStatusIterator {
-    fn new(path: String, mount_table: Arc<MountTable>, recursive: bool) -> Self {
+    fn new(
+        path: String,
+        mount_table: Arc<MountTable>,
+        recursive: bool,
+        pattern_str: Option<&str>,
+    ) -> Self {
         let initial = DirListingIterator::new(path.clone(), &mount_table, false);
+        let pattern = pattern_str.and_then(|p| Pattern::new(p).ok());
 
         ListStatusIterator {
             mount_table,
             recursive,
+            pattern,
             iters: Arc::new(tokio::sync::Mutex::new(vec![initial])),
         }
     }
@@ -652,20 +797,52 @@ impl ListStatusIterator {
         while next_file.is_none() {
             if let Some(iter) = iters.last_mut() {
                 if let Some(file_result) = iter.next().await {
-                    if let Ok(file) = file_result {
-                        // Return the directory as the next result, but start traversing into that directory
-                        // next if we're doing a recursive listing
-                        if file.isdir && self.recursive {
-                            iters.push(DirListingIterator::new(
-                                file.path.clone(),
-                                &self.mount_table,
-                                false,
-                            ))
+                    match file_result {
+                        Ok(file) => {
+                            let item_matches_pattern = self
+                                .pattern
+                                .as_ref()
+                                .map_or(true, |p| p.matches(&file.path));
+
+                            if file.isdir && self.recursive {
+                                let dir_should_be_traversed = self.pattern.as_ref().map_or(
+                                    true, // No pattern, always traverse
+                                    |p| {
+                                        p.matches_with(
+                                            &file.path,
+                                            MatchOptions {
+                                                case_sensitive: true,
+                                                require_literal_separator: true,
+                                                require_literal_leading_dot: true,
+                                            },
+                                        )
+                                    },
+                                );
+
+                                if dir_should_be_traversed {
+                                    iters.push(DirListingIterator::new(
+                                        file.path.clone(),
+                                        &self.mount_table,
+                                        false,
+                                    ));
+                                }
+                            }
+
+                            if item_matches_pattern {
+                                next_file = Some(Ok(file));
+                            } else {
+                                // If item_matches_pattern is false, we don't return this item.
+                                // The loop will continue to find the next suitable item.
+                                // If it was a directory that was pushed for traversal (because dir_should_be_traversed was true)
+                                // but the directory itself didn't match item_matches_pattern, that's fine,
+                                // its children will be processed next.
+                                continue;
+                            }
                         }
-                        next_file = Some(Ok(file));
-                    } else {
-                        // Error, return that as the next element
-                        next_file = Some(file_result)
+                        Err(_) => {
+                            // Error, return that as the next element
+                            next_file = Some(file_result);
+                        }
                     }
                 } else {
                     // We've exhausted this directory
