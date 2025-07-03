@@ -4,20 +4,33 @@ use crate::{error::Result, HdfsError};
 
 struct StringWithOffset(String, usize);
 
-// Expand a glob by unwrapping any groups that a '/' so that all
+// Expand a glob by unwrapping any groups with a '/' so that all
 // patterns can be split on slashes to match in individual parts.
 fn expand_glob(pattern: impl Into<String>) -> Result<Vec<String>> {
-    let mut expanded = Vec::<String>::new();
+    let mut fully_expanded = Vec::<String>::new();
     let mut to_expand = VecDeque::<StringWithOffset>::new();
 
     to_expand.push_back(StringWithOffset(pattern.into(), 0));
-    while let Some(pat) = to_expand.pop_front() {}
+    while let Some(pat) = to_expand.pop_front() {
+        let expanded = expand_left_most(&pat)?;
+        if expanded.is_empty() {
+            fully_expanded.push(pat.0);
+        } else {
+            for val in expanded.into_iter() {
+                to_expand.push_front(val);
+            }
+        }
+    }
 
-    Ok(vec![])
+    Ok(fully_expanded)
 }
 
-fn expand_left_most(string: StringWithOffset) -> Result<Vec<String>> {
-    if let Some(left_most) = left_most_bracket_with_slash(&string) {}
+fn expand_left_most(string: &StringWithOffset) -> Result<Vec<StringWithOffset>> {
+    if let Some(left_most) = left_most_bracket_with_slash(string)? {
+        Ok(vec![])
+    } else {
+        Ok(vec![])
+    }
 }
 
 fn left_most_bracket_with_slash(string: &StringWithOffset) -> Result<Option<usize>> {
@@ -59,7 +72,7 @@ fn left_most_bracket_with_slash(string: &StringWithOffset) -> Result<Option<usiz
 
 #[cfg(test)]
 mod test {
-    use crate::glob::expand_glob;
+    use crate::glob::{expand_glob, left_most_bracket_with_slash, StringWithOffset};
 
     #[test]
     fn test_expand_glob() {
@@ -67,6 +80,36 @@ mod test {
         assert_eq!(
             expand_glob("{a/b,c/d}").unwrap(),
             vec!["a/b".to_string(), "c/d".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_left_most_bracket_with_slash() {
+        assert_eq!(
+            left_most_bracket_with_slash(&StringWithOffset(
+                "/path/{to/nested,{file,other}}".to_string(),
+                0
+            ))
+            .unwrap(),
+            Some(6)
+        );
+
+        assert_eq!(
+            left_most_bracket_with_slash(&StringWithOffset(
+                "/path/{to,{file,other}}".to_string(),
+                0
+            ))
+            .unwrap(),
+            None
+        );
+
+        assert_eq!(
+            left_most_bracket_with_slash(&StringWithOffset(
+                "/path/{to,{file/other}}".to_string(),
+                0
+            ))
+            .unwrap(),
+            Some(6)
         );
     }
 }
