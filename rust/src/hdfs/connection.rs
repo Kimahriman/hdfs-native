@@ -318,7 +318,7 @@ impl RpcListener {
             if let Err(error) = self.read_response().await {
                 match error {
                     HdfsError::IOError(e) if e.kind() == ErrorKind::UnexpectedEof => break,
-                    _ => panic!("{:?}", error),
+                    _ => panic!("{error:?}"),
                 }
             }
         }

@@ -13,6 +13,6 @@ pub fn assert_bufs_equal(buf1: &impl Buf, buf2: &impl Buf, message: Option<Strin
         .zip(buf2.chunk())
         .enumerate()
         .for_each(move |(i, (b1, b2))| {
-            assert_eq!(b1, b2, "data is different as position {} {}", i, message)
+            assert_eq!(b1, b2, "data is different as position {i} {message}")
         });
 }

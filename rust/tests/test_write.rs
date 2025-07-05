@@ -95,7 +95,7 @@ mod test {
             assert_bufs_equal(
                 &buf,
                 &read_data,
-                Some(format!("for size {}", size_to_check)),
+                Some(format!("for size {size_to_check}")),
             );
         }
 

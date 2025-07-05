@@ -43,7 +43,7 @@ impl TryFrom<&str> for Qop {
             "auth" => Ok(Self::Auth),
             "auth-int" => Ok(Self::AuthInt),
             "auth-conf" => Ok(Self::AuthConf),
-            v => Err(HdfsError::SASLError(format!("Unknown qop value: {}", v))),
+            v => Err(HdfsError::SASLError(format!("Unknown qop value: {v}"))),
         }
     }
 }
@@ -67,7 +67,7 @@ impl Display for Qop {
             Qop::AuthConf => "auth-conf",
         };
 
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
@@ -338,7 +338,7 @@ impl DigestSaslSession {
         } else {
             ""
         };
-        format!("{}:{}{}", authenticate, digest_uri, tail)
+        format!("{authenticate}:{digest_uri}{tail}")
     }
 
     fn integrity_keys(&self, ctx: &DigestContext) -> KeyPair {
@@ -426,7 +426,7 @@ impl SaslSession for DigestSaslSession {
                     response
                 );
                 if let Some(c) = cipher {
-                    message.push_str(&format!(r#",cipher="{}""#, c));
+                    message.push_str(&format!(r#",cipher="{c}""#));
                 }
 
                 self.state = DigestState::Stepped(ctx);

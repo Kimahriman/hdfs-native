@@ -83,7 +83,7 @@ impl MiniDfs {
         let ready = output.next().unwrap().unwrap();
         if ready != "Ready!" {
             println!("Failed to start minidfs");
-            println!("{}", ready);
+            println!("{ready}");
             for line in output.by_ref() {
                 println!("{}", line.unwrap());
             }
