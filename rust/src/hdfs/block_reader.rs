@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
-    io,
-    sync::{atomic::Ordering, Arc},
+    sync::Arc,
 };
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -61,7 +60,8 @@ async fn connect_and_send(
     len: u64,
 ) -> Result<(DatanodeConnection, BlockOpResponseProto)> {
     #[cfg(feature = "integration-test")]
-    if crate::test::DATANODE_CONNECT_FAULT_INJECTOR.swap(false, Ordering::SeqCst) {
+    if crate::test::DATANODE_CONNECT_FAULT_INJECTOR.swap(false, std::sync::atomic::Ordering::SeqCst)
+    {
         return Err(HdfsError::DataTransferError(
             "DataNode connect fault injection".to_string(),
         ));
@@ -189,9 +189,11 @@ impl ReplicatedBlockStream {
 
     async fn next_packet_from_receiver(&mut self) -> Option<Result<(PacketHeaderProto, Bytes)>> {
         #[cfg(feature = "integration-test")]
-        if crate::test::DATANODE_READ_FAULT_INJECTOR.swap(false, Ordering::SeqCst) {
-            return Some(Err(HdfsError::IOError(io::Error::from(
-                io::ErrorKind::UnexpectedEof,
+        if crate::test::DATANODE_READ_FAULT_INJECTOR
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Some(Err(HdfsError::IOError(std::io::Error::from(
+                std::io::ErrorKind::UnexpectedEof,
             ))));
         }
 
