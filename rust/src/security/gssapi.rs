@@ -434,7 +434,7 @@ impl fmt::Debug for GssapiState {
 
 impl GssapiSession {
     pub(crate) fn new(service: &str, hostname: &str) -> crate::Result<Self> {
-        let targ_name = format!("{}@{}", service, hostname);
+        let targ_name = format!("{service}@{hostname}");
 
         let target = GssName::with_target(&targ_name)?;
         let state = GssapiState::Pending(GssClientCtx::new(target));

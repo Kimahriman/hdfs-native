@@ -38,7 +38,7 @@ mod test {
                 "-copyFromLocal",
                 "-f",
                 file.path().to_str().unwrap(),
-                &format!("{}{}", url, path),
+                &format!("{url}{path}"),
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -55,7 +55,7 @@ mod test {
         let num_ints = size / 4;
 
         for i in 0..num_ints as u32 {
-            assert_eq!(data.get_u32(), i, "Different values at integer {}", i);
+            assert_eq!(data.get_u32(), i, "Different values at integer {i}");
         }
     }
 
@@ -68,12 +68,7 @@ mod test {
         let mut data = reader.read_range(offset, len).await?;
 
         for i in first_int..(first_int + num_ints) {
-            assert_eq!(
-                data.get_u32(),
-                i as u32,
-                "Different values at integer {}",
-                i
-            );
+            assert_eq!(data.get_u32(), i as u32, "Different values at integer {i}");
         }
 
         Ok(())
@@ -102,7 +97,7 @@ mod test {
 
         // Test each of Hadoop's built-in RS policies
         for (data, parity) in [(3usize, 2usize), (6, 3), (10, 4)] {
-            let file = format!("/ec-{}-{}/testfile", data, parity);
+            let file = format!("/ec-{data}-{parity}/testfile");
 
             for file_size in sizes_to_test(data) {
                 create_file(&dfs.url, &file, file_size)?;
@@ -174,7 +169,7 @@ mod test {
 
         // Test each of Hadoop's built-in RS policies
         for (data, parity) in [(3usize, 2usize)] {
-            let file = format!("/ec-{}-{}/testfile", data, parity);
+            let file = format!("/ec-{data}-{parity}/testfile");
 
             for file_size in sizes_to_test(data) {
                 let num_ints = file_size / 4;

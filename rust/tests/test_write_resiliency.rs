@@ -92,7 +92,7 @@ mod test {
         .iter()
         .enumerate()
         {
-            let file = format!("/testfile{}", i);
+            let file = format!("/testfile{i}");
             let bytes_to_write = 2usize * 1024 * 1024;
 
             let mut data = BytesMut::with_capacity(bytes_to_write);

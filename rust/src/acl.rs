@@ -42,7 +42,7 @@ impl From<&str> for AclEntryType {
             "group" => AclEntryType::Group,
             "mask" => AclEntryType::Mask,
             "other" => AclEntryType::Other,
-            _ => panic!("Unknown ACL entry type {}", value),
+            _ => panic!("Unknown ACL entry type {value}"),
         }
     }
 }
@@ -97,7 +97,7 @@ impl From<&str> for AclEntryScope {
         match value.to_ascii_lowercase().as_ref() {
             "access" => AclEntryScope::Access,
             "default" => AclEntryScope::Default,
-            _ => panic!("Unknown ACL entry scope {}", value),
+            _ => panic!("Unknown ACL entry scope {value}"),
         }
     }
 }
@@ -174,7 +174,7 @@ impl From<&str> for FsAction {
             "r-x" => FsAction::ReadExecute,
             "rw-" => FsAction::ReadWrite,
             "rwx" => FsAction::PermAll,
-            _ => panic!("Unknown file system permission {}", value),
+            _ => panic!("Unknown file system permission {value}"),
         }
     }
 }

@@ -92,11 +92,7 @@ mod test {
             let mut reader = client.read("/newfile").await?;
             let read_data = reader.read(reader.file_length()).await?;
 
-            assert_bufs_equal(
-                &buf,
-                &read_data,
-                Some(format!("for size {}", size_to_check)),
-            );
+            assert_bufs_equal(&buf, &read_data, Some(format!("for size {size_to_check}")));
         }
 
         assert!(client.delete("/newfile", false).await.is_ok_and(|r| r));

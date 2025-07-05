@@ -747,7 +747,7 @@ impl SaslDatanodeConnection {
                     let writer = SaslDatanodeWriter::cipher(stream_writer, encryptor);
                     Ok((reader, writer))
                 }
-                c => Err(HdfsError::SASLError(format!("Unsupported cipher {:?}", c))),
+                c => Err(HdfsError::SASLError(format!("Unsupported cipher {c:?}"))),
             }
         } else if let Some(session) = session {
             let reader_session = Arc::new(Mutex::new(session));
@@ -768,7 +768,7 @@ impl SaslDatanodeConnection {
             128 => Box::new(Aes128Ctr::new(key.into(), iv.into())),
             192 => Box::new(Aes192Ctr::new(key.into(), iv.into())),
             256 => Box::new(Aes256Ctr::new(key.into(), iv.into())),
-            x => panic!("Unsupported AES bit length {}", x),
+            x => panic!("Unsupported AES bit length {x}"),
         }
     }
 }

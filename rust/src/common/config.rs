@@ -79,14 +79,13 @@ impl Configuration {
     pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Result<Vec<String>> {
         let urls: Vec<String> = self
             .map
-            .get(&format!("{}.{}", HA_NAMENODES_PREFIX, nameservice))
+            .get(&format!("{HA_NAMENODES_PREFIX}.{nameservice}"))
             .into_iter()
             .flat_map(|namenodes| {
                 namenodes.split(',').flat_map(|namenode_id| {
                     self.map
                         .get(&format!(
-                            "{}.{}.{}",
-                            HA_NAMENODE_RPC_ADDRESS_PREFIX, nameservice, namenode_id
+                            "{HA_NAMENODE_RPC_ADDRESS_PREFIX}.{nameservice}.{namenode_id}"
                         ))
                         .map(|s| s.to_string())
                 })
@@ -94,11 +93,11 @@ impl Configuration {
             .collect();
 
         let mut urls = if self.get_boolean(
-            &format!("{}.{}", DFS_CLIENT_FAILOVER_RESOLVE_NEEDED, nameservice),
+            &format!("{DFS_CLIENT_FAILOVER_RESOLVE_NEEDED}.{nameservice}"),
             false,
         ) {
             let use_fqdn = self.get_boolean(
-                &format!("{}.{}", DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN, nameservice),
+                &format!("{DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN}.{nameservice}"),
                 true,
             );
 
@@ -127,7 +126,7 @@ impl Configuration {
         };
 
         if self.get_boolean(
-            &format!("{}.{}", DFS_CLIENT_FAILOVER_RANDOM_ORDER, nameservice),
+            &format!("{DFS_CLIENT_FAILOVER_RANDOM_ORDER}.{nameservice}"),
             false,
         ) {
             urls.shuffle(&mut rng());
@@ -140,10 +139,10 @@ impl Configuration {
             .iter()
             .flat_map(|(key, value)| {
                 if let Some(path) =
-                    key.strip_prefix(&format!("{}.{}.link.", VIEWFS_MOUNTTABLE_PREFIX, cluster))
+                    key.strip_prefix(&format!("{VIEWFS_MOUNTTABLE_PREFIX}.{cluster}.link."))
                 {
                     Some((Some(path.to_string()), value.to_string()))
-                } else if key == &format!("{}.{}.linkFallback", VIEWFS_MOUNTTABLE_PREFIX, cluster) {
+                } else if key == &format!("{VIEWFS_MOUNTTABLE_PREFIX}.{cluster}.linkFallback") {
                     Some((None, value.to_string()))
                 } else {
                     None
@@ -259,17 +258,14 @@ mod test {
                 .iter()
                 .map(|(cluster, viewfs_path, hdfs_path)| {
                     (
-                        format!(
-                            "{}.{}.link.{}",
-                            VIEWFS_MOUNTTABLE_PREFIX, cluster, viewfs_path
-                        ),
-                        format!("hdfs://127.0.0.1:9000{}", hdfs_path),
+                        format!("{VIEWFS_MOUNTTABLE_PREFIX}.{cluster}.link.{viewfs_path}"),
+                        format!("hdfs://127.0.0.1:9000{hdfs_path}"),
                     )
                 })
                 .chain(fallbacks.iter().map(|(cluster, hdfs_path)| {
                     (
-                        format!("{}.{}.linkFallback", VIEWFS_MOUNTTABLE_PREFIX, cluster),
-                        format!("hdfs://127.0.0.1:9000{}", hdfs_path),
+                        format!("{VIEWFS_MOUNTTABLE_PREFIX}.{cluster}.linkFallback"),
+                        format!("hdfs://127.0.0.1:9000{hdfs_path}"),
                     )
                 }))
                 .collect(),
@@ -332,8 +328,8 @@ mod test {
 
         let urls = config.get_urls_for_nameservice("test").unwrap();
         let fqdn = lookup_addr(&IpAddr::from([127, 0, 0, 1])).unwrap();
-        assert_eq!(urls.len(), 1, "{:?}", urls);
-        assert_eq!(urls[0], format!("{}:9000", fqdn));
+        assert_eq!(urls.len(), 1, "{urls:?}");
+        assert_eq!(urls[0], format!("{fqdn}:9000"));
 
         config.map.insert(
             format!("{}.{}", DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN, "test"),
@@ -341,7 +337,7 @@ mod test {
         );
 
         let urls = config.get_urls_for_nameservice("test").unwrap();
-        assert_eq!(urls.len(), 1, "{:?}", urls);
+        assert_eq!(urls.len(), 1, "{urls:?}");
         assert_eq!(urls[0], "127.0.0.1:9000");
     }
 

@@ -220,9 +220,7 @@ impl Token {
         for _ in 0..token_count {
             let alias_length = parse_vlong(reader);
             let alias = String::from_utf8(reader.copy_to_bytes(alias_length as usize).to_vec())
-                .map_err(|_| {
-                    io::Error::new(io::ErrorKind::Other, "Failed to parse token".to_string())
-                })?;
+                .map_err(|_| io::Error::other("Failed to parse token".to_string()))?;
 
             let identifier_length = parse_vlong(reader);
             let identifier = reader.copy_to_bytes(identifier_length as usize).to_vec();
@@ -318,12 +316,8 @@ fn parse_vint(reader: &mut impl Buf) -> i32 {
 }
 
 fn parse_string(reader: &mut impl Buf, length: i32) -> io::Result<String> {
-    String::from_utf8(reader.copy_to_bytes(length as usize).to_vec()).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            "Failed to parse string from writable".to_string(),
-        )
-    })
+    String::from_utf8(reader.copy_to_bytes(length as usize).to_vec())
+        .map_err(|_| io::Error::other("Failed to parse string from writable".to_string()))
 }
 
 /// Parse a string prefixed with the length as an int

@@ -73,8 +73,7 @@ impl EcSchema {
                 }
                 codec => {
                     return Err(HdfsError::UnsupportedErasureCodingPolicy(format!(
-                        "codec: {}",
-                        codec
+                        "codec: {codec}"
                     )))
                 }
             }
