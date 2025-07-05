@@ -688,7 +688,7 @@ impl DatanodeConnectionCache {
     }
 
     pub(crate) fn get(&self, datanode_id: &hdfs::DatanodeIdProto) -> Option<DatanodeConnection> {
-        // Keep things simply and just expire cache entries when checking the cache. We could
+        // Keep things simple and just expire cache entries when checking the cache. We could
         // move this to its own task but that will add a little more complexity.
         self.remove_expired();
 

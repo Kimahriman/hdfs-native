@@ -145,6 +145,12 @@ impl MiniDfs {
     }
 }
 
+impl Default for MiniDfs {
+    fn default() -> Self {
+        Self::with_features(&HashSet::new())
+    }
+}
+
 impl Drop for MiniDfs {
     fn drop(&mut self) {
         println!("Dropping and killing minidfs");
