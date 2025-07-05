@@ -68,11 +68,7 @@ mod test {
         let mut data = reader.read_range(offset, len).await?;
 
         for i in first_int..(first_int + num_ints) {
-            assert_eq!(
-                data.get_u32(),
-                i as u32,
-                "Different values at integer {i}"
-            );
+            assert_eq!(data.get_u32(), i as u32, "Different values at integer {i}");
         }
 
         Ok(())

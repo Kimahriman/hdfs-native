@@ -258,9 +258,7 @@ mod test {
                 .iter()
                 .map(|(cluster, viewfs_path, hdfs_path)| {
                     (
-                        format!(
-                            "{VIEWFS_MOUNTTABLE_PREFIX}.{cluster}.link.{viewfs_path}"
-                        ),
+                        format!("{VIEWFS_MOUNTTABLE_PREFIX}.{cluster}.link.{viewfs_path}"),
                         format!("hdfs://127.0.0.1:9000{hdfs_path}"),
                     )
                 })
