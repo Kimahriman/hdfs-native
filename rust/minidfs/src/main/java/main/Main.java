@@ -208,7 +208,7 @@ public class Main {
             conf.set(CONFIG_VIEWFS_PREFIX + ".minidfs-viewfs.linkFallback", "hdfs://ns1/nested");
         } else if (flags.contains("ha")) {
             nnTopology = MiniDFSNNTopology.simpleHATopology(3);
-            conf.set(HdfsClientConfigKeys.Failover.PROXY_PROVIDER_KEY_PREFIX + ".minidfs-ns", "org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider");
+            conf.set(HdfsClientConfigKeys.Failover.PROXY_PROVIDER_KEY_PREFIX + ".minidfs-ns", "org.apache.hadoop.hdfs.server.namenode.ha.ObserverReadProxyProvider");
             conf.set(DFSConfigKeys.DFS_NAMENODE_STATE_CONTEXT_ENABLED_KEY, "true");
             conf.set(DFSConfigKeys.DFS_HA_TAILEDITS_INPROGRESS_KEY, "true");
             conf.set(DFSConfigKeys.DFS_HA_TAILEDITS_PERIOD_KEY, "0ms");
