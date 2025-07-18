@@ -12,6 +12,7 @@ license = "Apache-2.0"
 
 [dependencies]
 aes = "0.8"
+async-trait = "0.1"
 base64 = "0.22"
 bitflags = "2"
 bytes = { workspace = true }

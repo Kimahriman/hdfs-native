@@ -9,12 +9,11 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::acl::AclEntry;
+use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::{
     self, DataEncryptionKeyProto, FsServerDefaultsProto, GetDataEncryptionKeyResponseProto,
 };
 use crate::Result;
-
-use super::proxy::NameServiceProxy;
 
 const LEASE_RENEWAL_INTERVAL_SECS: u64 = 30;
 
@@ -59,7 +58,11 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call(method_name, message.encode_length_delimited_to_vec(), write)
+            .call(
+                method_name,
+                &message.encode_length_delimited_to_vec(),
+                write,
+            )
             .await?;
 
         let decoded = T::decode_length_delimited(response)?;
