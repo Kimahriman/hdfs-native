@@ -396,7 +396,7 @@ impl NamenodeProtocol {
             acl_spec: acl_spec.into_iter().collect(),
         };
 
-        self.call("modifyAclEntries", message, false).await
+        self.call("modifyAclEntries", message, true).await
     }
 
     pub(crate) async fn remove_acl_entries(
@@ -409,7 +409,7 @@ impl NamenodeProtocol {
             acl_spec: acl_spec.into_iter().collect(),
         };
 
-        self.call("removeAclEntries", message, false).await
+        self.call("removeAclEntries", message, true).await
     }
 
     pub(crate) async fn remove_default_acl(
@@ -419,14 +419,14 @@ impl NamenodeProtocol {
         let message = hdfs::RemoveDefaultAclRequestProto {
             src: path.to_string(),
         };
-        self.call("removeDefaultAcl", message, false).await
+        self.call("removeDefaultAcl", message, true).await
     }
 
     pub(crate) async fn remove_acl(&self, path: &str) -> Result<hdfs::RemoveAclResponseProto> {
         let message = hdfs::RemoveAclRequestProto {
             src: path.to_string(),
         };
-        self.call("removeAcl", message, false).await
+        self.call("removeAcl", message, true).await
     }
 
     pub(crate) async fn set_acl(
@@ -438,7 +438,7 @@ impl NamenodeProtocol {
             src: path.to_string(),
             acl_spec: acl_spec.into_iter().collect(),
         };
-        self.call("setAcl", message, false).await
+        self.call("setAcl", message, true).await
     }
 
     pub(crate) async fn get_acl_status(

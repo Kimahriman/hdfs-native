@@ -64,7 +64,7 @@ impl AlignmentContext {
         router_federated_state: Option<Vec<u8>>,
     ) -> Result<()> {
         if let Some(new_state_id) = state_id {
-            self.state_id = new_state_id
+            self.state_id = i64::max(new_state_id, self.state_id)
         }
 
         if let Some(new_router_state) = router_federated_state {

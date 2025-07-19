@@ -227,13 +227,11 @@ impl NameServiceProxy {
             .call(method_name, message)
             .await;
 
-        match result {
-            Ok(bytes) => Ok(bytes),
-            Err(_) => {
-                *self.current_observer.lock().await = None;
-                todo!()
-            }
+        if result.is_err() {
+            *self.current_observer.lock().await = None;
         }
+
+        result
     }
 
     async fn call_inner(

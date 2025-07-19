@@ -155,18 +155,10 @@ public class Main {
 
             if (flags.contains("token")) {
                 Credentials creds = new Credentials();
-                if (flags.contains("ha")) {
-                    System.err.println("Getting token from namenode! " + dfs.getNameNode(2).getTokenServiceName());
-                    Token<DelegationTokenIdentifier> token = dfs.getNameNodeRpc(2).getDelegationToken(null);
-                    token.setService(new Text("ha-hdfs:minidfs-ns"));
-                    creds.addToken(new Text("ha-hdfs:minidfs-ns"), token);
-                } else {
-                    System.err.println("Getting token from namenode! " + dfs.getNameNode().getTokenServiceName());
-                    Token<DelegationTokenIdentifier> token = dfs.getNameNodeRpc().getDelegationToken(null);
-                    token.setService(new Text(dfs.getNameNode().getTokenServiceName()));
-                    creds.addToken(new Text(dfs.getNameNode().getTokenServiceName()), token);
-                }
-                
+                Token<DelegationTokenIdentifier> token = dfs.getFileSystem().getDelegationToken(null);
+                token.setService(new Text(dfs.getNameNode().getTokenServiceName()));
+                creds.addToken(new Text(dfs.getNameNode().getTokenServiceName()), token);
+
                 DataOutputStream os = new DataOutputStream(new FileOutputStream("target/test/delegation_token"));
                 creds.writeTokenStorageToStream(os, SerializedFormat.WRITABLE);
                 os.close();

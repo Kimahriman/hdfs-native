@@ -135,11 +135,10 @@ impl Configuration {
         Ok(urls)
     }
 
-    pub(crate) fn get_proxy_for_nameservice(&self, nameservice: &str) -> Option<String> {
+    pub(crate) fn get_proxy_for_nameservice(&self, nameservice: &str) -> Option<&str> {
         self.get(&format!(
             "{DFS_CLIENT_FAILOVER_PROXY_PROVIDER}.{nameservice}"
         ))
-        .map(str::to_string)
     }
 
     pub(crate) fn get_mount_table(&self, cluster: &str) -> Vec<(Option<String>, String)> {
