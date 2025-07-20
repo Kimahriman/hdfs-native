@@ -1,5 +1,5 @@
 # Native Rust HDFS client
-This is an experimental HDFS client written natively in Rust. Several basic features are working, however it is not nearly as robust and the real HDFS client.
+This is an HDFS client written natively in Rust. Most major features are working, but it does not support every single client config.
 
 ## Supported HDFS features
 Here is a list of currently supported and unsupported but possible future features.
