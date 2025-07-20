@@ -149,15 +149,6 @@ impl NameServiceProxy {
                 self.call_inner("msync", &msync_msg.encode_length_delimited_to_vec(), true)
                     .await
                     .map(|_| ())
-                    .or_else(|err| match err {
-                        HdfsError::RPCError(class, _)
-                            if class == "java.lang.UnsupportedOperationException"
-                                || class == "org.apache.hadoop.ipc.RpcNoSuchMethodException" =>
-                        {
-                            Ok(())
-                        }
-                        _ => Err(err),
-                    })
                     .inspect(|_| *msynced = true)?;
             }
         }
