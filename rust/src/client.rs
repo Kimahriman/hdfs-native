@@ -129,7 +129,7 @@ impl MountTable {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Client {
     mount_table: Arc<MountTable>,
     config: Arc<Configuration>,
@@ -161,7 +161,7 @@ impl Client {
                 "No {} setting found",
                 config::DEFAULT_FS
             )))?;
-        Ok(Url::parse(&url)?)
+        Ok(Url::parse(url)?)
     }
 
     fn with_config(url: &Url, config: Configuration) -> Result<Self> {

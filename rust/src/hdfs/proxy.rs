@@ -227,6 +227,13 @@ impl NameServiceProxy {
             .call(method_name, message)
             .await;
 
+        #[cfg(feature = "integration-test")]
+        if result.is_ok() {
+            if let Some(v) = crate::test::PROXY_CALLS.lock().unwrap().as_mut() {
+                v.push((method_name, true));
+            }
+        }
+
         if result.is_err() {
             *self.current_observer.lock().await = None;
         }
@@ -266,6 +273,12 @@ impl NameServiceProxy {
                     if write {
                         self.current_active.store(proxy_index, Ordering::SeqCst);
                     }
+
+                    #[cfg(feature = "integration-test")]
+                    if let Some(v) = crate::test::PROXY_CALLS.lock().unwrap().as_mut() {
+                        v.push((method_name, false));
+                    }
+
                     return Ok(bytes);
                 }
                 // RPCError indicates the call was successfully attempted but had an error, so should be returned immediately
