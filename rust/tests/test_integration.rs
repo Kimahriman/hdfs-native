@@ -9,6 +9,7 @@ mod test {
         acl::AclEntry,
         client::FileStatus,
         minidfs::{DfsFeatures, MiniDfs},
+        test::PROXY_CALLS,
         Client, Result, WriteOptions,
     };
     use serial_test::serial;
@@ -196,6 +197,10 @@ mod test {
         test_set_replication(&client).await?;
         test_get_content_summary(&client).await?;
         test_acls(&client).await?;
+
+        if features.contains(&DfsFeatures::HA) {
+            test_observer_read(&client).await?;
+        }
 
         Ok(())
     }
@@ -550,6 +555,23 @@ mod test {
         client.remove_default_acl("/testdir").await?;
 
         client.delete("/testdir", true).await?;
+
+        Ok(())
+    }
+
+    async fn test_observer_read(client: &Client) -> Result<()> {
+        *PROXY_CALLS.lock().unwrap() = Some(Vec::new());
+
+        client.mkdirs("/test", 0o755, true).await?;
+        client.get_file_info("/test").await?;
+
+        let calls = PROXY_CALLS.lock().unwrap().take().unwrap();
+
+        assert!(calls
+            .into_iter()
+            .any(|(name, observer)| name == "getFileInfo" && observer));
+
+        client.delete("/test", true).await?;
 
         Ok(())
     }

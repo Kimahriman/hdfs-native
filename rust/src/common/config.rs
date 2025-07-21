@@ -23,6 +23,7 @@ const HA_NAMENODE_RPC_ADDRESS_PREFIX: &str = "dfs.namenode.rpc-address";
 const DFS_CLIENT_FAILOVER_RESOLVE_NEEDED: &str = "dfs.client.failover.resolve-needed";
 const DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN: &str = "dfs.client.failover.resolver.useFQDN";
 const DFS_CLIENT_FAILOVER_RANDOM_ORDER: &str = "dfs.client.failover.random.order";
+const DFS_CLIENT_FAILOVER_PROXY_PROVIDER: &str = "dfs.client.failover.proxy.provider";
 
 // Viewfs settings
 const VIEWFS_MOUNTTABLE_PREFIX: &str = "fs.viewfs.mounttable";
@@ -66,8 +67,8 @@ impl Configuration {
     }
 
     /// Get a value from the config, returning None if the key wasn't defined.
-    pub fn get(&self, key: &str) -> Option<String> {
-        self.map.get(key).cloned()
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.map.get(key).map(|s| s.as_ref())
     }
 
     fn get_boolean(&self, key: &str, default: bool) -> bool {
@@ -134,6 +135,12 @@ impl Configuration {
         Ok(urls)
     }
 
+    pub(crate) fn get_proxy_for_nameservice(&self, nameservice: &str) -> Option<&str> {
+        self.get(&format!(
+            "{DFS_CLIENT_FAILOVER_PROXY_PROVIDER}.{nameservice}"
+        ))
+    }
+
     pub(crate) fn get_mount_table(&self, cluster: &str) -> Vec<(Option<String>, String)> {
         self.map
             .iter()
@@ -172,7 +179,7 @@ impl Configuration {
 
         let policy_str = self
             .get(DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_POLICY_KEY)
-            .unwrap_or_else(|| "DEFAULT".to_string())
+            .unwrap_or("DEFAULT")
             .to_uppercase();
 
         let policy = match policy_str.as_str() {

@@ -9,12 +9,11 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::acl::AclEntry;
+use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::{
     self, DataEncryptionKeyProto, FsServerDefaultsProto, GetDataEncryptionKeyResponseProto,
 };
 use crate::Result;
-
-use super::proxy::NameServiceProxy;
 
 const LEASE_RENEWAL_INTERVAL_SECS: u64 = 30;
 
@@ -59,7 +58,11 @@ impl NamenodeProtocol {
 
         let response = self
             .proxy
-            .call(method_name, message.encode_length_delimited_to_vec(), write)
+            .call(
+                method_name,
+                &message.encode_length_delimited_to_vec(),
+                write,
+            )
             .await?;
 
         let decoded = T::decode_length_delimited(response)?;
@@ -393,7 +396,7 @@ impl NamenodeProtocol {
             acl_spec: acl_spec.into_iter().collect(),
         };
 
-        self.call("modifyAclEntries", message, false).await
+        self.call("modifyAclEntries", message, true).await
     }
 
     pub(crate) async fn remove_acl_entries(
@@ -406,7 +409,7 @@ impl NamenodeProtocol {
             acl_spec: acl_spec.into_iter().collect(),
         };
 
-        self.call("removeAclEntries", message, false).await
+        self.call("removeAclEntries", message, true).await
     }
 
     pub(crate) async fn remove_default_acl(
@@ -416,14 +419,14 @@ impl NamenodeProtocol {
         let message = hdfs::RemoveDefaultAclRequestProto {
             src: path.to_string(),
         };
-        self.call("removeDefaultAcl", message, false).await
+        self.call("removeDefaultAcl", message, true).await
     }
 
     pub(crate) async fn remove_acl(&self, path: &str) -> Result<hdfs::RemoveAclResponseProto> {
         let message = hdfs::RemoveAclRequestProto {
             src: path.to_string(),
         };
-        self.call("removeAcl", message, false).await
+        self.call("removeAcl", message, true).await
     }
 
     pub(crate) async fn set_acl(
@@ -435,7 +438,7 @@ impl NamenodeProtocol {
             src: path.to_string(),
             acl_spec: acl_spec.into_iter().collect(),
         };
-        self.call("setAcl", message, false).await
+        self.call("setAcl", message, true).await
     }
 
     pub(crate) async fn get_acl_status(

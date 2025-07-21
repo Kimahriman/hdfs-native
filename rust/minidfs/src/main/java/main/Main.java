@@ -156,20 +156,18 @@ public class Main {
             if (flags.contains("token")) {
                 Credentials creds = new Credentials();
                 if (flags.contains("ha")) {
-                    System.err.println("Getting token from namenode! " + dfs.getNameNode(2).getTokenServiceName());
                     Token<DelegationTokenIdentifier> token = dfs.getNameNodeRpc(2).getDelegationToken(null);
                     token.setService(new Text("ha-hdfs:minidfs-ns"));
                     creds.addToken(new Text("ha-hdfs:minidfs-ns"), token);
                 } else {
-                    System.err.println("Getting token from namenode! " + dfs.getNameNode().getTokenServiceName());
                     Token<DelegationTokenIdentifier> token = dfs.getNameNodeRpc().getDelegationToken(null);
                     token.setService(new Text(dfs.getNameNode().getTokenServiceName()));
                     creds.addToken(new Text(dfs.getNameNode().getTokenServiceName()), token);
                 }
                 
-                DataOutputStream os = new DataOutputStream(new FileOutputStream("target/test/delegation_token"));
-                creds.writeTokenStorageToStream(os, SerializedFormat.WRITABLE);
-                os.close();
+                try (DataOutputStream os = new DataOutputStream(new FileOutputStream("target/test/delegation_token"))) {
+                    creds.writeTokenStorageToStream(os, SerializedFormat.WRITABLE);
+                }
             }
         }
 
@@ -208,7 +206,7 @@ public class Main {
             conf.set(CONFIG_VIEWFS_PREFIX + ".minidfs-viewfs.linkFallback", "hdfs://ns1/nested");
         } else if (flags.contains("ha")) {
             nnTopology = MiniDFSNNTopology.simpleHATopology(3);
-            conf.set(HdfsClientConfigKeys.Failover.PROXY_PROVIDER_KEY_PREFIX + ".minidfs-ns", "org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider");
+            conf.set(HdfsClientConfigKeys.Failover.PROXY_PROVIDER_KEY_PREFIX + ".minidfs-ns", "org.apache.hadoop.hdfs.server.namenode.ha.ObserverReadProxyProvider");
             conf.set(DFSConfigKeys.DFS_NAMENODE_STATE_CONTEXT_ENABLED_KEY, "true");
             conf.set(DFSConfigKeys.DFS_HA_TAILEDITS_INPROGRESS_KEY, "true");
             conf.set(DFSConfigKeys.DFS_HA_TAILEDITS_PERIOD_KEY, "0ms");

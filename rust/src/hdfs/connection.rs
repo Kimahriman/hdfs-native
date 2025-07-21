@@ -64,7 +64,7 @@ impl AlignmentContext {
         router_federated_state: Option<Vec<u8>>,
     ) -> Result<()> {
         if let Some(new_state_id) = state_id {
-            self.state_id = new_state_id
+            self.state_id = i64::max(new_state_id, self.state_id)
         }
 
         if let Some(new_router_state) = router_federated_state {
@@ -115,7 +115,7 @@ pub(crate) struct RpcConnection {
     client_id: Vec<u8>,
     user_info: UserInfo,
     next_call_id: AtomicI32,
-    alignment_context: Arc<Mutex<AlignmentContext>>,
+    alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
     call_map: Arc<Mutex<HashMap<i32, CallResult>>>,
     sender: mpsc::Sender<Vec<u8>>,
     listener: Option<JoinHandle<()>>,
@@ -124,7 +124,7 @@ pub(crate) struct RpcConnection {
 impl RpcConnection {
     pub(crate) async fn connect(
         url: &str,
-        alignment_context: Arc<Mutex<AlignmentContext>>,
+        alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
         nameservice: Option<&str>,
     ) -> Result<Self> {
         let client_id = Uuid::new_v4().to_bytes_le().to_vec();
@@ -206,7 +206,13 @@ impl RpcConnection {
         call_id: i32,
         retry_count: i32,
     ) -> common::RpcRequestHeaderProto {
-        let context = self.alignment_context.lock().unwrap();
+        let (state_id, router_federated_state) =
+            if let Some(context) = self.alignment_context.as_ref() {
+                let context = context.lock().unwrap();
+                (Some(context.state_id), context.encode_router_state())
+            } else {
+                (None, None)
+            };
 
         common::RpcRequestHeaderProto {
             rpc_kind: Some(common::RpcKindProto::RpcProtocolBuffer as i32),
@@ -215,8 +221,8 @@ impl RpcConnection {
             call_id,
             client_id: self.client_id.clone(),
             retry_count: Some(retry_count),
-            state_id: Some(context.state_id),
-            router_federated_state: context.encode_router_state(),
+            state_id,
+            router_federated_state,
             ..Default::default()
         }
     }
@@ -296,14 +302,14 @@ struct RpcListener {
     call_map: Arc<Mutex<HashMap<i32, CallResult>>>,
     reader: SaslReader,
     alive: bool,
-    alignment_context: Arc<Mutex<AlignmentContext>>,
+    alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
 }
 
 impl RpcListener {
     fn new(
         call_map: Arc<Mutex<HashMap<i32, CallResult>>>,
         reader: SaslReader,
-        alignment_context: Arc<Mutex<AlignmentContext>>,
+        alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
     ) -> Self {
         RpcListener {
             call_map,
@@ -348,9 +354,15 @@ impl RpcListener {
             match rpc_response.status() {
                 RpcStatusProto::Success => {
                     self.alignment_context
-                        .lock()
-                        .unwrap()
-                        .update(rpc_response.state_id, rpc_response.router_federated_state)?;
+                        .as_ref()
+                        .map(|alignment_context| {
+                            alignment_context
+                                .lock()
+                                .unwrap()
+                                .update(rpc_response.state_id, rpc_response.router_federated_state)
+                        })
+                        .transpose()?;
+
                     let _ = call.send(Ok(bytes));
                 }
                 RpcStatusProto::Error => {
