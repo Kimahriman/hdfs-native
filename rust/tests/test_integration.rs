@@ -571,6 +571,8 @@ mod test {
             .into_iter()
             .any(|(name, observer)| name == "getFileInfo" && observer));
 
+        client.delete("/test", true).await?;
+
         Ok(())
     }
 }
