@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 class HdfsFileSystem(AbstractFileSystem):
     root_marker = "/"
+    protocol = "hdfs"
 
     def __init__(
         self,
