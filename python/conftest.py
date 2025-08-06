@@ -1,13 +1,9 @@
 import os
 import subprocess
-import urllib
-import urllib.parse
 
-import fsspec
 import pytest
 
 from hdfs_native import Client
-from hdfs_native.fsspec import HdfsFileSystem
 
 
 @pytest.fixture(scope="module")
@@ -53,9 +49,3 @@ def client(minidfs: str):
         statuses = list(client.list_status("/"))
         for status in statuses:
             client.delete(status.path, True)
-
-
-@pytest.fixture(scope="module")
-def fs(minidfs: str) -> HdfsFileSystem:
-    url = urllib.parse.urlparse(minidfs)
-    return fsspec.filesystem(url.scheme, host=url.hostname, port=url.port)
