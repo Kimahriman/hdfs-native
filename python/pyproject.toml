@@ -44,7 +44,7 @@ hdfsn = "hdfs_native.cli:main"
 
 [project.entry-points."fsspec.specs"]
 hdfs = "hdfs_native.fsspec.HdfsFileSystem"
-viewfs = "hdfs_native.fsspec.HdfsFileSystem"
+viewfs = "hdfs_native.fsspec.ViewfsFileSystem"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

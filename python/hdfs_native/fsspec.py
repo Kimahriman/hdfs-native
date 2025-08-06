@@ -15,8 +15,10 @@ from . import Client, WriteOptions
 if TYPE_CHECKING:
     from . import FileStatus
 
+__all__ = ["HdfsFileSystem", "ViewfsFileSystem"]
 
-class HdfsFileSystem(AbstractFileSystem):
+
+class BaseFileSystem(AbstractFileSystem):
     root_marker = "/"
 
     def __init__(
@@ -192,3 +194,11 @@ class HdfsFileSystem(AbstractFileSystem):
             return self.client.append(path)
         else:
             raise ValueError(f"Mode {mode} is not supported")
+
+
+class HdfsFileSystem(BaseFileSystem):
+    protocol = "hdfs"
+
+
+class ViewfsFileSystem(BaseFileSystem):
+    protocol = "viewfs"

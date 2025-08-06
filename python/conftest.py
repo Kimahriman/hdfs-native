@@ -53,9 +53,3 @@ def client(minidfs: str):
         statuses = list(client.list_status("/"))
         for status in statuses:
             client.delete(status.path, True)
-
-
-@pytest.fixture(scope="module")
-def fs(minidfs: str) -> HdfsFileSystem:
-    url = urllib.parse.urlparse(minidfs)
-    return fsspec.filesystem(url.scheme, host=url.hostname, port=url.port)
