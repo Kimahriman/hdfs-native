@@ -4,26 +4,26 @@ from abc import ABC, abstractmethod
 import fsspec
 import pytest
 
-from hdfs_native.fsspec import HdfsFileSystem
+from hdfs_native.fsspec import BaseFileSystem
 
 
 def test_config(minidfs: str):
     url = urllib.parse.urlparse(minidfs)
-    fs: HdfsFileSystem = fsspec.filesystem(url.scheme, **{"fs.defaultFS": minidfs})
+    fs: BaseFileSystem = fsspec.filesystem(url.scheme, **{"fs.defaultFS": minidfs})
     assert len(fs.ls("/")) == 0
 
 
 class TestFsspecBase(ABC):
 
     @abstractmethod
-    def file_system(self, url: str) -> HdfsFileSystem:
+    def file_system(self, url: str) -> BaseFileSystem:
         pass
 
     @pytest.fixture(scope="class")
-    def fs(self, minidfs: str) -> HdfsFileSystem:
+    def fs(self, minidfs: str) -> BaseFileSystem:
         return self.file_system(minidfs)
 
-    def test_dirs(self, fs: HdfsFileSystem):
+    def test_dirs(self, fs: BaseFileSystem):
         fs.mkdir("/testdir")
         assert fs.info("/testdir")["type"] == "directory"
 
@@ -45,7 +45,7 @@ class TestFsspecBase(ABC):
 
         assert not fs.exists("/testdir")
 
-    def test_io(self, fs: HdfsFileSystem):
+    def test_io(self, fs: BaseFileSystem):
         with fs.open("/test", mode="wb") as file:
             file.write(b"hello there")
 
@@ -69,7 +69,7 @@ class TestFsspecBase(ABC):
         fs.rm("/test")
         fs.rm("/test3")
 
-    def test_listing(self, fs: HdfsFileSystem):
+    def test_listing(self, fs: BaseFileSystem):
         fs.mkdir("/testdir")
 
         fs.touch("/testdir/test1")
@@ -87,7 +87,7 @@ class TestFsspecBase(ABC):
 
         fs.rm("/testdir", True)
 
-    def test_du(self, fs: HdfsFileSystem):
+    def test_du(self, fs: BaseFileSystem):
         with fs.open("/test", mode="wb") as file:
             file.write(b"hello there")
 
@@ -101,9 +101,8 @@ class TestFsspecBase(ABC):
         assert fs.du("/", total=False) == {"/test": 11, "/test2": 11}
 
 
-class TestHdfsFileSystem(TestFsspecBase):
+class TestBaseFileSystem(TestFsspecBase):
     def file_system(self, minidfs: str):
-        print("Creating HDFS fs")
         url = urllib.parse.urlparse(minidfs)
 
         return fsspec.filesystem("hdfs", host=url.hostname, port=url.port)
@@ -111,7 +110,6 @@ class TestHdfsFileSystem(TestFsspecBase):
 
 class TestViewfsFileSystem(TestFsspecBase):
     def file_system(self, minidfs: str):
-        print("Creating Viewfs fs")
         return fsspec.filesystem(
             "viewfs",
             host="test",
@@ -124,7 +122,7 @@ def test_parsing(minidfs: str):
         f.write(b"hey there")
 
     url = urllib.parse.urlparse(minidfs)
-    fs: HdfsFileSystem
+    fs: BaseFileSystem
     urlpath: str
     fs, urlpath = fsspec.url_to_fs(f"{minidfs}/path")
     assert fs.host == url.hostname
