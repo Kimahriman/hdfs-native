@@ -1,13 +1,9 @@
 import os
 import subprocess
-import urllib
-import urllib.parse
 
-import fsspec
 import pytest
 
 from hdfs_native import Client
-from hdfs_native.fsspec import HdfsFileSystem
 
 
 @pytest.fixture(scope="module")
