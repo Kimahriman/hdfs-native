@@ -14,7 +14,6 @@ def test_config(minidfs: str):
 
 
 class TestFsspecBase(ABC):
-
     @abstractmethod
     def file_system(self, url: str) -> BaseFileSystem:
         pass
