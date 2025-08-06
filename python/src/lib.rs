@@ -15,6 +15,7 @@ use hdfs_native::acl::{AclEntry, AclStatus};
 use hdfs_native::client::ContentSummary;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use tokio::runtime::Runtime;
+use tokio::sync::oneshot;
 
 mod error;
 
@@ -580,6 +581,193 @@ impl RawClient {
     }
 }
 
+#[pyclass(name = "AsyncRawClient", subclass)]
+struct AsyncRawClient {
+    inner: Client,
+    rt: Arc<Runtime>,
+}
+
+impl AsyncRawClient {
+    async fn call_inner<T>(&self, f: AsyncFn(Client, oneshot::Sender<T>) -> T) -> T {
+        let (tx, rx) = oneshot::channel();
+        let inner = self.inner.clone();
+
+        self.rt.spawn(f(inner));
+
+        Ok(rx.await.unwrap()?)
+    }
+}
+
+#[pymethods]
+impl AsyncRawClient {
+    #[new]
+    #[pyo3(signature = (url, config))]
+    pub fn new(url: Option<&str>, config: Option<HashMap<String, String>>) -> PyResult<Self> {
+        // Initialize logging, ignore errors if this is called multiple times
+        let _ = env_logger::try_init();
+
+        let config = config.unwrap_or_default();
+
+        let inner = if let Some(url) = url {
+            Client::new_with_config(url, config).map_err(PythonHdfsError::from)?
+        } else {
+            Client::default_with_config(config).map_err(PythonHdfsError::from)?
+        };
+
+        Ok(Self {
+            inner,
+            rt: Arc::new(Runtime::new().map_err(|err| PyRuntimeError::new_err(err.to_string()))?),
+        })
+    }
+
+    pub async fn get_file_info(&self, path: String) -> PyHdfsResult<PyFileStatus> {
+        let (tx, rx) = oneshot::channel();
+        let inner = self.inner.clone();
+
+        self.rt.spawn(async move {
+            let result = inner.get_file_info(&path).await.map(PyFileStatus::from);
+
+            let _ = tx.send(result);
+        });
+
+        Ok(rx.await.unwrap()?)
+    }
+
+    // pub fn list_status(&self, path: &str, recursive: bool) -> PyFileStatusIter {
+    //     let inner = self.inner.list_status_iter(path, recursive);
+    //     PyFileStatusIter {
+    //         inner: Arc::new(inner),
+    //         rt: Arc::clone(&self.rt),
+    //     }
+    // }
+
+    // pub fn read(&self, path: &str, py: Python) -> PyHdfsResult<RawFileReader> {
+    //     let file_reader = py.allow_threads(|| self.rt.block_on(self.inner.read(path)))?;
+
+    //     Ok(RawFileReader {
+    //         inner: file_reader,
+    //         rt: Arc::clone(&self.rt),
+    //     })
+    // }
+
+    // pub fn create(
+    //     &self,
+    //     src: &str,
+    //     write_options: PyWriteOptions,
+    //     py: Python,
+    // ) -> PyHdfsResult<RawFileWriter> {
+    //     let file_writer = py.allow_threads(|| {
+    //         self.rt
+    //             .block_on(self.inner.create(src, WriteOptions::from(write_options)))
+    //     })?;
+
+    //     Ok(RawFileWriter {
+    //         inner: file_writer,
+    //         rt: Arc::clone(&self.rt),
+    //     })
+    // }
+
+    // pub fn append(&self, src: &str, py: Python) -> PyHdfsResult<RawFileWriter> {
+    //     let file_writer = py.allow_threads(|| self.rt.block_on(self.inner.append(src)))?;
+
+    //     Ok(RawFileWriter {
+    //         inner: file_writer,
+    //         rt: Arc::clone(&self.rt),
+    //     })
+    // }
+
+    pub async fn mkdirs(
+        &self,
+        path: String,
+        permission: u32,
+        create_parent: bool,
+    ) -> PyHdfsResult<()> {
+        Ok(self.inner.mkdirs(&path, permission, create_parent).await?)
+    }
+
+    pub async fn rename(&self, src: String, dst: String, overwrite: bool) -> PyHdfsResult<()> {
+        Ok(self.inner.rename(&src, &dst, overwrite).await?)
+    }
+
+    pub async fn delete(&self, path: String, recursive: bool) -> PyHdfsResult<bool> {
+        Ok(self.inner.delete(&path, recursive).await?)
+    }
+
+    pub async fn set_times(&self, path: String, mtime: u64, atime: u64) -> PyHdfsResult<()> {
+        Ok(self.inner.set_times(&path, mtime, atime).await?)
+    }
+
+    #[pyo3(signature = (path, owner=None, group=None))]
+    pub async fn set_owner(
+        &self,
+        path: String,
+        owner: Option<String>,
+        group: Option<String>,
+    ) -> PyHdfsResult<()> {
+        Ok(self
+            .inner
+            .set_owner(
+                &path,
+                owner.as_ref().map(String::as_ref),
+                group.as_ref().map(String::as_ref),
+            )
+            .await?)
+    }
+
+    pub async fn set_permission(&self, path: String, permission: u32) -> PyHdfsResult<()> {
+        Ok(self.inner.set_permission(&path, permission).await?)
+    }
+
+    pub async fn set_replication(&self, path: String, replication: u32) -> PyHdfsResult<bool> {
+        Ok(self.inner.set_replication(&path, replication).await?)
+    }
+
+    pub async fn get_content_summary(&self, path: String) -> PyHdfsResult<PyContentSummary> {
+        Ok(self.inner.get_content_summary(&path).await?.into())
+    }
+
+    pub async fn modify_acl_entries(
+        &self,
+        path: String,
+        acl_spec: Vec<PyAclEntry>,
+    ) -> PyHdfsResult<()> {
+        Ok(self
+            .inner
+            .modify_acl_entries(&path, acl_spec.into_iter().collect())
+            .await?)
+    }
+
+    pub async fn remove_acl_entries(
+        &self,
+        path: String,
+        acl_spec: Vec<PyAclEntry>,
+    ) -> PyHdfsResult<()> {
+        Ok(self
+            .inner
+            .remove_acl_entries(&path, acl_spec.into_iter().collect())
+            .await?)
+    }
+
+    pub async fn remove_default_acl(&self, path: String) -> PyHdfsResult<()> {
+        Ok(self.inner.remove_default_acl(&path).await?)
+    }
+
+    pub async fn remove_acl(&self, path: String) -> PyHdfsResult<()> {
+        Ok(self.inner.remove_acl(&path).await?)
+    }
+
+    pub async fn set_acl(&self, path: String, acl_spec: Vec<PyAclEntry>) -> PyHdfsResult<()> {
+        Ok(self
+            .inner
+            .set_acl(&path, acl_spec.into_iter().collect())
+            .await?)
+    }
+
+    pub async fn get_acl_status(&self, path: String) -> PyHdfsResult<PyAclStatus> {
+        Ok(self.inner.get_acl_status(&path).await?.into())
+    }
+}
+
 /// A Python module implemented in Rust.
 #[pymodule]
 fn _internal(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -589,5 +777,7 @@ fn _internal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWriteOptions>()?;
     m.add_class::<PyAclEntry>()?;
     m.add_class::<PyAclStatus>()?;
+
+    m.add_class::<AsyncRawClient>()?;
     Ok(())
 }

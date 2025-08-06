@@ -55,6 +55,13 @@ def client(minidfs: str):
             client.delete(status.path, True)
 
 
+@pytest.fixture
+def async_client(minidfs: str):
+    client = AsyncClient(minidfs)
+
+    yield client
+
+
 @pytest.fixture(scope="module")
 def fs(minidfs: str) -> HdfsFileSystem:
     url = urllib.parse.urlparse(minidfs)
