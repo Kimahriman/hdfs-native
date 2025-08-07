@@ -234,7 +234,7 @@ impl PyFileReadStream {
         slf
     }
 
-    fn __next__(slf: PyRefMut<'_, Self>) -> PyHdfsResult<Option<Cow<[u8]>>> {
+    fn __next__(slf: PyRefMut<'_, Self>) -> PyHdfsResult<Option<Cow<'_, [u8]>>> {
         let inner = Arc::clone(&slf.inner);
         let rt = Arc::clone(&slf.rt);
         if let Some(result) = slf
@@ -268,7 +268,7 @@ impl RawFileReader {
         self.inner.tell()
     }
 
-    pub fn read(&mut self, len: i64, py: Python) -> PyHdfsResult<Cow<[u8]>> {
+    pub fn read(&mut self, len: i64, py: Python) -> PyHdfsResult<Cow<'_, [u8]>> {
         let read_len = if len < 0 {
             self.inner.remaining()
         } else {
@@ -280,7 +280,7 @@ impl RawFileReader {
         ))
     }
 
-    pub fn read_range(&self, offset: usize, len: usize, py: Python) -> PyHdfsResult<Cow<[u8]>> {
+    pub fn read_range(&self, offset: usize, len: usize, py: Python) -> PyHdfsResult<Cow<'_, [u8]>> {
         Ok(Cow::from(
             py.allow_threads(|| self.rt.block_on(self.inner.read_range(offset, len)))?
                 .to_vec(),

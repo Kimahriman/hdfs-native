@@ -1,4 +1,4 @@
-#[allow(clippy::all)]
+#[allow(clippy::all, dead_code)]
 pub mod common {
     #[cfg(feature = "generate-protobuf")]
     include!(concat!(env!("OUT_DIR"), "/hadoop.common.rs"));
@@ -6,7 +6,7 @@ pub mod common {
     include!(concat!("hadoop.common.rs"));
 }
 
-#[allow(clippy::all)]
+#[allow(clippy::all, dead_code)]
 pub mod hdfs {
     #[cfg(feature = "generate-protobuf")]
     include!(concat!(env!("OUT_DIR"), "/hadoop.hdfs.rs"));
