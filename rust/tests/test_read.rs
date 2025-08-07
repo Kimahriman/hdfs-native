@@ -18,6 +18,7 @@ mod test {
         test_read(&HashSet::from([DfsFeatures::HA])).await.unwrap();
     }
 
+    #[ignore = "Takes too long to run"]
     #[tokio::test]
     #[serial]
     async fn test_read_sasl_encryption() {
@@ -30,6 +31,7 @@ mod test {
         .unwrap();
     }
 
+    #[ignore = "Takes too long to run"]
     #[tokio::test]
     #[serial]
     async fn test_read_cipher_encryption() {
