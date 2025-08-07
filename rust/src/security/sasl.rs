@@ -12,6 +12,7 @@ use tokio::{
 };
 
 use super::user::BlockTokenIdentifier;
+use crate::common::config::Configuration;
 use crate::proto::hdfs::{CipherOptionProto, CipherSuiteProto, DataEncryptionKeyProto};
 use crate::proto::{
     common::{
@@ -625,10 +626,14 @@ impl SaslDatanodeConnection {
         datanode_id: &DatanodeIdProto,
         token: &TokenProto,
         encryption_key: Option<&DataEncryptionKeyProto>,
+        config: &Configuration,
     ) -> Result<(SaslDatanodeReader, SaslDatanodeWriter)> {
         let mut session = if let Some(key) = encryption_key {
             DigestSaslSession::from_encryption_key("hdfs".to_string(), "0".to_string(), key)
-        } else if token.identifier.is_empty() || datanode_id.xfer_port <= 1024 {
+        } else if !config.security_enabled()
+            || token.identifier.is_empty()
+            || datanode_id.xfer_port <= 1024
+        {
             return self.split(None, None);
         } else {
             DigestSaslSession::from_token(

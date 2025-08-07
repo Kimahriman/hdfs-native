@@ -308,6 +308,7 @@ pub(crate) struct ReplicatedBlockWriter {
     current_packet: WritePacket,
     pipeline: Option<Pipeline>,
     status: hdfs::HdfsFileStatusProto,
+    config: Arc<Configuration>,
     replace_datanode: ReplaceDatanodeOnFailure,
 }
 
@@ -321,7 +322,7 @@ impl ReplicatedBlockWriter {
         status: &hdfs::HdfsFileStatusProto,
     ) -> Result<Self> {
         let pipeline =
-            Self::setup_pipeline(&protocol, &block, &server_defaults, None, None).await?;
+            Self::setup_pipeline(&protocol, &block, &server_defaults, None, None, &config).await?;
 
         let bytes_in_last_chunk = block.b.num_bytes() % server_defaults.bytes_per_checksum as u64;
         let current_packet = if bytes_in_last_chunk > 0 {
@@ -353,6 +354,7 @@ impl ReplicatedBlockWriter {
             pipeline: Some(pipeline),
             status: status.clone(),
             replace_datanode: config.get_replace_datanode_on_failure_policy(),
+            config,
         };
 
         Ok(this)
@@ -449,6 +451,7 @@ impl ReplicatedBlockWriter {
             &self.server_defaults,
             Some(updated_block.block.b.generation_stamp),
             Some(bytes_acked),
+            &self.config,
         )
         .await?;
 
@@ -480,12 +483,14 @@ impl ReplicatedBlockWriter {
         server_defaults: &hdfs::FsServerDefaultsProto,
         new_gs: Option<u64>,
         bytes_acked: Option<u64>,
+        config: &Configuration,
     ) -> Result<Pipeline> {
         let datanode = &block.locs[0].id;
         let mut connection = DatanodeConnection::connect(
             datanode,
             &block.block_token,
             protocol.get_cached_data_encryption_key().await?,
+            config,
         )
         .await?;
 
@@ -635,6 +640,7 @@ impl ReplicatedBlockWriter {
             &src_node.id,
             block_token,
             self.protocol.get_cached_data_encryption_key().await?,
+            &self.config,
         )
         .await?;
 

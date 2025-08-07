@@ -20,6 +20,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
+use crate::common::config::Configuration;
 use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
 use crate::proto::common::TokenProto;
 use crate::proto::hdfs::{DataEncryptionKeyProto, DatanodeIdProto};
@@ -544,13 +545,14 @@ impl DatanodeConnection {
         datanode_id: &DatanodeIdProto,
         token: &TokenProto,
         encryption_key: Option<DataEncryptionKeyProto>,
+        config: &Configuration,
     ) -> Result<Self> {
         let url = format!("{}:{}", datanode_id.ip_addr, datanode_id.xfer_port);
         let stream = connect(&url).await?;
 
         let sasl_connection = SaslDatanodeConnection::create(stream);
         let (reader, writer) = sasl_connection
-            .negotiate(datanode_id, token, encryption_key.as_ref())
+            .negotiate(datanode_id, token, encryption_key.as_ref(), config)
             .await?;
 
         let conn = DatanodeConnection {

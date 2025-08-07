@@ -300,6 +300,7 @@ impl Client {
                 Arc::clone(&link.protocol),
                 locations,
                 ec_schema,
+                Arc::clone(&self.config),
             ))
         } else {
             Err(HdfsError::FileNotFound(path.to_string()))

@@ -15,6 +15,7 @@ use tokio::{
 };
 
 use crate::{
+    common::config::Configuration,
     ec::EcSchema,
     hdfs::connection::{DatanodeConnection, Op, DATANODE_CACHE},
     proto::{
@@ -38,13 +39,14 @@ pub(crate) fn get_block_stream(
     offset: usize,
     len: usize,
     ec_schema: Option<EcSchema>,
+    config: Arc<Configuration>,
 ) -> BoxStream<'static, Result<Bytes>> {
     if let Some(ec_schema) = ec_schema {
-        StripedBlockStream::new(protocol, block, offset, len, ec_schema)
+        StripedBlockStream::new(protocol, block, offset, len, ec_schema, config)
             .into_stream()
             .boxed()
     } else {
-        ReplicatedBlockStream::new(protocol, block, offset, len)
+        ReplicatedBlockStream::new(protocol, block, offset, len, config)
             .into_stream()
             .boxed()
     }
@@ -58,6 +60,7 @@ async fn connect_and_send(
     token: common::TokenProto,
     offset: u64,
     len: u64,
+    config: &Configuration,
 ) -> Result<(DatanodeConnection, BlockOpResponseProto)> {
     #[cfg(feature = "integration-test")]
     if crate::test::DATANODE_CONNECT_FAULT_INJECTOR.swap(false, std::sync::atomic::Ordering::SeqCst)
@@ -96,6 +99,7 @@ async fn connect_and_send(
         datanode_id,
         &token,
         protocol.get_cached_data_encryption_key().await?,
+        config,
     )
     .await?;
 
@@ -118,6 +122,7 @@ struct ReplicatedBlockStream {
     block: hdfs::LocatedBlockProto,
     offset: usize,
     len: usize,
+    config: Arc<Configuration>,
 
     listener: Option<JoinHandle<Result<DatanodeConnection>>>,
     sender: Sender<Result<(PacketHeaderProto, Bytes)>>,
@@ -131,6 +136,7 @@ impl ReplicatedBlockStream {
         block: hdfs::LocatedBlockProto,
         offset: usize,
         len: usize,
+        config: Arc<Configuration>,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(READ_PACKET_BUFFER_LEN);
 
@@ -139,6 +145,7 @@ impl ReplicatedBlockStream {
             block,
             offset,
             len,
+            config,
             listener: None,
             sender,
             receiver,
@@ -168,6 +175,7 @@ impl ReplicatedBlockStream {
                 self.block.block_token.clone(),
                 self.offset as u64,
                 self.len as u64,
+                &self.config,
             )
             .await
             {
@@ -392,6 +400,7 @@ struct StripedBlockStream {
     block_map: HashMap<usize, (hdfs::DatanodeInfoProto, common::TokenProto)>,
     remaining: usize,
     bytes_to_skip: usize,
+    config: Arc<Configuration>,
     ec_schema: EcSchema,
     // Position of the start of the current cell in a single block
     current_block_start: usize,
@@ -407,6 +416,7 @@ impl StripedBlockStream {
         offset: usize,
         len: usize,
         ec_schema: EcSchema,
+        config: Arc<Configuration>,
     ) -> Self {
         assert_eq!(block.block_indices().len(), block.locs.len());
 
@@ -445,6 +455,7 @@ impl StripedBlockStream {
             remaining: len,
             bytes_to_skip,
             ec_schema,
+            config,
             current_block_start,
             block_end,
             cell_readers: vec![],
@@ -577,6 +588,7 @@ impl StripedBlockStream {
                 block,
                 self.current_block_start,
                 len,
+                Arc::clone(&self.config),
             );
 
             self.cell_readers.push(Some(CellReader::new(
