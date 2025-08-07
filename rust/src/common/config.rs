@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::io;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 
@@ -10,6 +9,7 @@ use log::debug;
 use rand::rng;
 use rand::seq::SliceRandom;
 
+use crate::HdfsError;
 use crate::Result;
 
 const HADOOP_CONF_DIR: &str = "HADOOP_CONF_DIR";
@@ -43,7 +43,7 @@ pub struct Configuration {
 }
 
 impl Configuration {
-    pub fn new() -> io::Result<Self> {
+    pub fn new() -> Result<Self> {
         let mut map: HashMap<String, String> = HashMap::new();
 
         if let Some(conf_dir) = Self::get_conf_dir() {
@@ -62,7 +62,7 @@ impl Configuration {
         Ok(Configuration { map })
     }
 
-    pub fn new_with_config(conf_map: HashMap<String, String>) -> io::Result<Self> {
+    pub fn new_with_config(conf_map: HashMap<String, String>) -> Result<Self> {
         let mut conf = Self::new()?;
         conf.map.extend(conf_map);
         Ok(conf)
@@ -199,9 +199,14 @@ impl Configuration {
         ReplaceDatanodeOnFailure::new(policy, best_effort)
     }
 
-    fn read_from_file(path: &Path) -> io::Result<Vec<(String, String)>> {
-        let content = fs::read_to_string(path)?;
-        let tree = roxmltree::Document::parse(&content).unwrap();
+    fn read_from_file(path: &Path) -> Result<Vec<(String, String)>> {
+        let content = fs::read_to_string(path).map_err(HdfsError::IOError)?;
+        let opts = roxmltree::ParsingOptions {
+            allow_dtd: true,
+            ..Default::default()
+        };
+        let tree = roxmltree::Document::parse_with_options(&content, opts)
+            .map_err(HdfsError::XmlParseError)?;
 
         let pairs = tree
             .root()

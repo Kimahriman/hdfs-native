@@ -47,6 +47,8 @@ pub enum HdfsError {
     GSSAPIError(crate::security::gssapi::GssMajorCodes, u32, String),
     #[error("No valid SASL mechanism found")]
     NoSASLMechanism,
+    #[error("XML parse error: {0}")]
+    XmlParseError(roxmltree::Error),
 }
 
 pub type Result<T> = std::result::Result<T, HdfsError>;
