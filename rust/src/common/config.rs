@@ -81,7 +81,7 @@ impl Configuration {
 
     pub(crate) fn security_enabled(&self) -> bool {
         self.get(HADOOP_SECURITY_AUTHENTICATION)
-            .is_some_and(|c| c == "kerberos")
+            .is_some_and(|c| c != "simple")
     }
 
     pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Result<Vec<String>> {
