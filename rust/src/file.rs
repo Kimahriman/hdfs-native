@@ -5,6 +5,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use futures::stream::BoxStream;
 use futures::{stream, Stream, StreamExt};
 use log::warn;
+use tokio::runtime::Handle;
 
 use crate::common::config::Configuration;
 use crate::ec::{resolve_ec_policy, EcSchema};
@@ -23,6 +24,7 @@ pub struct FileReader {
     ec_schema: Option<EcSchema>,
     position: usize,
     config: Arc<Configuration>,
+    handle: Handle,
 }
 
 impl FileReader {
@@ -31,6 +33,7 @@ impl FileReader {
         located_blocks: hdfs::LocatedBlocksProto,
         ec_schema: Option<EcSchema>,
         config: Arc<Configuration>,
+        handle: Handle,
     ) -> Self {
         Self {
             protocol,
@@ -38,6 +41,7 @@ impl FileReader {
             ec_schema,
             position: 0,
             config,
+            handle,
         }
     }
 
@@ -150,6 +154,7 @@ impl FileReader {
                         block_end - block_start,
                         self.ec_schema.clone(),
                         Arc::clone(&self.config),
+                        self.handle.clone(),
                     ))
                 } else {
                     // No data is needed from this block
@@ -167,6 +172,7 @@ pub struct FileWriter {
     protocol: Arc<NamenodeProtocol>,
     status: hdfs::HdfsFileStatusProto,
     config: Arc<Configuration>,
+    handle: Handle,
     block_writer: Option<BlockWriter>,
     last_block: Option<hdfs::LocatedBlockProto>,
     closed: bool,
@@ -179,6 +185,7 @@ impl FileWriter {
         src: String,
         status: hdfs::HdfsFileStatusProto,
         config: Arc<Configuration>,
+        handle: Handle,
         // Some for append, None for create
         last_block: Option<hdfs::LocatedBlockProto>,
     ) -> Self {
@@ -188,6 +195,7 @@ impl FileWriter {
             src,
             status,
             config,
+            handle,
             block_writer: None,
             last_block,
             closed: false,
@@ -229,6 +237,7 @@ impl FileWriter {
             new_block,
             self.protocol.get_cached_server_defaults().await?,
             Arc::clone(&self.config),
+            self.handle.clone(),
             self.status
                 .ec_policy
                 .as_ref()

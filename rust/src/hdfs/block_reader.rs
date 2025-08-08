@@ -10,6 +10,7 @@ use futures::{
 };
 use log::{debug, warn};
 use tokio::{
+    runtime::Handle,
     sync::mpsc::{self, Receiver, Sender},
     task::JoinHandle,
 };
@@ -40,13 +41,14 @@ pub(crate) fn get_block_stream(
     len: usize,
     ec_schema: Option<EcSchema>,
     config: Arc<Configuration>,
+    handle: Handle,
 ) -> BoxStream<'static, Result<Bytes>> {
     if let Some(ec_schema) = ec_schema {
-        StripedBlockStream::new(protocol, block, offset, len, ec_schema, config)
+        StripedBlockStream::new(protocol, block, offset, len, ec_schema, config, handle)
             .into_stream()
             .boxed()
     } else {
-        ReplicatedBlockStream::new(protocol, block, offset, len, config)
+        ReplicatedBlockStream::new(protocol, block, offset, len, config, handle)
             .into_stream()
             .boxed()
     }
@@ -61,6 +63,7 @@ async fn connect_and_send(
     offset: u64,
     len: u64,
     config: &Configuration,
+    handle: &Handle,
 ) -> Result<(DatanodeConnection, BlockOpResponseProto)> {
     #[cfg(feature = "integration-test")]
     if crate::test::DATANODE_CONNECT_FAULT_INJECTOR.swap(false, std::sync::atomic::Ordering::SeqCst)
@@ -100,6 +103,7 @@ async fn connect_and_send(
         &token,
         protocol.get_cached_data_encryption_key().await?,
         config,
+        handle,
     )
     .await?;
 
@@ -123,6 +127,7 @@ struct ReplicatedBlockStream {
     offset: usize,
     len: usize,
     config: Arc<Configuration>,
+    handle: Handle,
 
     listener: Option<JoinHandle<Result<DatanodeConnection>>>,
     sender: Sender<Result<(PacketHeaderProto, Bytes)>>,
@@ -137,6 +142,7 @@ impl ReplicatedBlockStream {
         offset: usize,
         len: usize,
         config: Arc<Configuration>,
+        handle: Handle,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(READ_PACKET_BUFFER_LEN);
 
@@ -146,6 +152,7 @@ impl ReplicatedBlockStream {
             offset,
             len,
             config,
+            handle,
             listener: None,
             sender,
             receiver,
@@ -176,6 +183,7 @@ impl ReplicatedBlockStream {
                 self.offset as u64,
                 self.len as u64,
                 &self.config,
+                &self.handle,
             )
             .await
             {
@@ -224,6 +232,7 @@ impl ReplicatedBlockStream {
                     connection,
                     checksum_info,
                     self.sender.clone(),
+                    &self.handle,
                 ));
                 false
             } else {
@@ -281,8 +290,9 @@ impl ReplicatedBlockStream {
         mut connection: DatanodeConnection,
         checksum_info: Option<ReadOpChecksumInfoProto>,
         sender: Sender<Result<(PacketHeaderProto, Bytes)>>,
+        handle: &Handle,
     ) -> JoinHandle<Result<DatanodeConnection>> {
-        tokio::spawn(async move {
+        handle.spawn(async move {
             loop {
                 let next_packet = Self::get_next_packet(&mut connection, checksum_info).await;
                 if next_packet.as_ref().is_ok_and(|(_, data)| data.is_empty()) {
@@ -401,6 +411,7 @@ struct StripedBlockStream {
     remaining: usize,
     bytes_to_skip: usize,
     config: Arc<Configuration>,
+    handle: Handle,
     ec_schema: EcSchema,
     // Position of the start of the current cell in a single block
     current_block_start: usize,
@@ -417,6 +428,7 @@ impl StripedBlockStream {
         len: usize,
         ec_schema: EcSchema,
         config: Arc<Configuration>,
+        handle: Handle,
     ) -> Self {
         assert_eq!(block.block_indices().len(), block.locs.len());
 
@@ -456,6 +468,7 @@ impl StripedBlockStream {
             bytes_to_skip,
             ec_schema,
             config,
+            handle,
             current_block_start,
             block_end,
             cell_readers: vec![],
@@ -589,6 +602,7 @@ impl StripedBlockStream {
                 self.current_block_start,
                 len,
                 Arc::clone(&self.config),
+                self.handle.clone(),
             );
 
             self.cell_readers.push(Some(CellReader::new(
