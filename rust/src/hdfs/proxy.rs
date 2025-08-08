@@ -6,6 +6,7 @@ use std::sync::{
 use bytes::Bytes;
 use log::{debug, warn};
 use prost::Message;
+use tokio::runtime::Handle;
 use url::Url;
 
 use crate::{
@@ -27,6 +28,8 @@ struct ProxyConnection {
     inner: Arc<tokio::sync::Mutex<Option<RpcConnection>>>,
     alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
     nameservice: Option<String>,
+    config: Arc<Configuration>,
+    handle: Handle,
 }
 
 impl ProxyConnection {
@@ -34,12 +37,16 @@ impl ProxyConnection {
         url: String,
         alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
         nameservice: Option<String>,
+        config: Arc<Configuration>,
+        handle: Handle,
     ) -> Self {
         ProxyConnection {
             url,
             inner: Arc::new(tokio::sync::Mutex::new(None)),
             alignment_context,
             nameservice,
+            config,
+            handle,
         }
     }
 
@@ -54,6 +61,8 @@ impl ProxyConnection {
                             &self.url,
                             self.alignment_context.clone(),
                             self.nameservice.as_deref(),
+                            &self.config,
+                            &self.handle,
                         )
                         .await?,
                     );
@@ -82,7 +91,11 @@ pub(crate) struct NameServiceProxy {
 impl NameServiceProxy {
     /// Creates a new proxy for a name service. If the URL contains a port,
     /// it is assumed to be for a single NameNode.
-    pub(crate) fn new(nameservice: &Url, config: &Configuration) -> Result<Self> {
+    pub(crate) fn new(
+        nameservice: &Url,
+        config: Arc<Configuration>,
+        handle: Handle,
+    ) -> Result<Self> {
         let host = nameservice.host_str().ok_or(HdfsError::InvalidArgument(
             "No host for name service".to_string(),
         ))?;
@@ -110,14 +123,26 @@ impl NameServiceProxy {
 
         let proxy_connections = if let Some(port) = nameservice.port() {
             let url = format!("{}:{}", nameservice.host_str().unwrap(), port);
-            vec![ProxyConnection::new(url, alignment_context, None)]
+            vec![ProxyConnection::new(
+                url,
+                alignment_context,
+                None,
+                Arc::clone(&config),
+                handle,
+            )]
         } else {
             // TODO: Add check for no configured namenodes
             config
                 .get_urls_for_nameservice(host)?
                 .into_iter()
                 .map(|url| {
-                    ProxyConnection::new(url, alignment_context.clone(), Some(host.to_string()))
+                    ProxyConnection::new(
+                        url,
+                        alignment_context.clone(),
+                        Some(host.to_string()),
+                        Arc::clone(&config),
+                        handle.clone(),
+                    )
                 })
                 .collect()
         };

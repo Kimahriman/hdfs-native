@@ -12,20 +12,20 @@ use log::{debug, warn};
 use once_cell::sync::Lazy;
 use prost::Message;
 use socket2::SockRef;
+use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
-use tokio::{
-    io::AsyncWriteExt,
-    net::TcpStream,
-    task::{self, JoinHandle},
-};
+use tokio::{io::AsyncWriteExt, net::TcpStream, task::JoinHandle};
 use uuid::Uuid;
 
+use crate::common::config::Configuration;
 use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
 use crate::proto::common::TokenProto;
 use crate::proto::hdfs::{DataEncryptionKeyProto, DatanodeIdProto};
 use crate::proto::{common, hdfs};
-use crate::security::sasl::{SaslDatanodeConnection, SaslDatanodeReader, SaslDatanodeWriter};
-use crate::security::sasl::{SaslReader, SaslRpcClient, SaslWriter};
+use crate::security::sasl::{
+    negotiate_sasl_session, SaslDatanodeConnection, SaslDatanodeReader, SaslDatanodeWriter,
+};
+use crate::security::sasl::{SaslReader, SaslWriter};
 use crate::security::user::UserInfo;
 use crate::{HdfsError, Result};
 
@@ -41,8 +41,11 @@ pub(crate) static DATANODE_CACHE: Lazy<DatanodeConnectionCache> =
     Lazy::new(DatanodeConnectionCache::new);
 
 // Connect to a remote host and return a TcpStream with standard options we want
-async fn connect(addr: &str) -> Result<TcpStream> {
-    let stream = TcpStream::connect(addr).await?;
+async fn connect(addr: &str, handle: &Handle) -> Result<TcpStream> {
+    let addr = addr.to_string();
+    // Spawn a task to create the TcpStream so it captures the tokio runtime in case we
+    // are not called from one
+    let stream = handle.spawn(TcpStream::connect(addr)).await.unwrap()?;
     stream.set_nodelay(true)?;
 
     let sf = SockRef::from(&stream);
@@ -126,27 +129,30 @@ impl RpcConnection {
         url: &str,
         alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
         nameservice: Option<&str>,
+        config: &Configuration,
+        handle: &Handle,
     ) -> Result<Self> {
         let client_id = Uuid::new_v4().to_bytes_le().to_vec();
         let next_call_id = AtomicI32::new(0);
         let call_map = Arc::new(Mutex::new(HashMap::new()));
 
-        let mut stream = connect(url).await?;
+        let mut stream = connect(url, handle).await?;
         stream.write_all("hrpc".as_bytes()).await?;
         // Current version
         stream.write_all(&[9u8]).await?;
         // Service class
         stream.write_all(&[0u8]).await?;
         // Auth protocol
-        stream.write_all(&(-33i8).to_be_bytes()).await?;
-
-        let mut client = SaslRpcClient::create(stream);
+        if config.security_enabled() {
+            stream.write_all(&(-33i8).to_be_bytes()).await?;
+        } else {
+            stream.write_all(&(0i8).to_be_bytes()).await?;
+        }
 
         let service = nameservice
             .map(|ns| format!("ha-hdfs:{ns}"))
             .unwrap_or(url.to_string());
-        let user_info = client.negotiate(service.as_str()).await?;
-        let (reader, writer) = client.split();
+        let (user_info, reader, writer) = negotiate_sasl_session(stream, &service, config).await?;
         let (sender, receiver) = mpsc::channel::<Vec<u8>>(1000);
 
         let mut conn = RpcConnection {
@@ -159,7 +165,7 @@ impl RpcConnection {
             sender,
         };
 
-        conn.start_sender(receiver, writer);
+        conn.start_sender(receiver, writer, handle);
 
         let context_header = conn
             .get_connection_header(-3, -1)
@@ -169,14 +175,19 @@ impl RpcConnection {
             .encode_length_delimited_to_vec();
         conn.write_messages(&[&context_header, &context_msg])
             .await?;
-        let listener = conn.start_listener(reader)?;
+        let listener = conn.start_listener(reader, handle)?;
         conn.listener = Some(listener);
 
         Ok(conn)
     }
 
-    fn start_sender(&mut self, mut rx: mpsc::Receiver<Vec<u8>>, mut writer: SaslWriter) {
-        task::spawn(async move {
+    fn start_sender(
+        &mut self,
+        mut rx: mpsc::Receiver<Vec<u8>>,
+        mut writer: SaslWriter,
+        handle: &Handle,
+    ) {
+        handle.spawn(async move {
             while let Some(msg) = rx.recv().await {
                 match writer.write_all(&msg).await {
                     Ok(_) => (),
@@ -186,10 +197,10 @@ impl RpcConnection {
         });
     }
 
-    fn start_listener(&mut self, reader: SaslReader) -> Result<JoinHandle<()>> {
+    fn start_listener(&mut self, reader: SaslReader, handle: &Handle) -> Result<JoinHandle<()>> {
         let call_map = Arc::clone(&self.call_map);
         let alignment_context = self.alignment_context.clone();
-        let listener = task::spawn(async move {
+        let listener = handle.spawn(async move {
             RpcListener::new(call_map, reader, alignment_context)
                 .start()
                 .await;
@@ -544,13 +555,15 @@ impl DatanodeConnection {
         datanode_id: &DatanodeIdProto,
         token: &TokenProto,
         encryption_key: Option<DataEncryptionKeyProto>,
+        config: &Configuration,
+        handle: &Handle,
     ) -> Result<Self> {
         let url = format!("{}:{}", datanode_id.ip_addr, datanode_id.xfer_port);
-        let stream = connect(&url).await?;
+        let stream = connect(&url, handle).await?;
 
         let sasl_connection = SaslDatanodeConnection::create(stream);
         let (reader, writer) = sasl_connection
-            .negotiate(datanode_id, token, encryption_key.as_ref())
+            .negotiate(datanode_id, token, encryption_key.as_ref(), config)
             .await?;
 
         let conn = DatanodeConnection {

@@ -1,8 +1,9 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use futures::stream::BoxStream;
 use futures::{stream, StreamExt};
+use tokio::runtime::{Handle, Runtime};
 use url::Url;
 
 use crate::acl::{AclEntry, AclStatus};
@@ -129,10 +130,31 @@ impl MountTable {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+struct RuntimeHolder {
+    rt: Arc<OnceLock<Runtime>>,
+}
+
+impl RuntimeHolder {
+    fn get_handle(&self) -> Handle {
+        match Handle::try_current() {
+            Ok(handle) => handle,
+            Err(_) => self
+                .rt
+                .get_or_init(|| Runtime::new().expect("Failed to create tokio runtime"))
+                .handle()
+                .clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Client {
     mount_table: Arc<MountTable>,
     config: Arc<Configuration>,
+    // Store the runtime used for spawning all internal tasks. If we are not created
+    // inside a tokio runtime, we will create our own to use.
+    rt_holder: RuntimeHolder,
 }
 
 impl Client {
@@ -177,17 +199,29 @@ impl Client {
             url.clone()
         };
 
+        let config = Arc::new(config);
+
+        let rt_holder = RuntimeHolder::default();
+
         let mount_table = match url.scheme() {
             "hdfs" => {
-                let proxy = NameServiceProxy::new(&resolved_url, &config)?;
-                let protocol = Arc::new(NamenodeProtocol::new(proxy));
+                let proxy = NameServiceProxy::new(
+                    &resolved_url,
+                    Arc::clone(&config),
+                    rt_holder.get_handle(),
+                )?;
+                let protocol = Arc::new(NamenodeProtocol::new(proxy, rt_holder.get_handle()));
 
                 MountTable {
                     mounts: Vec::new(),
                     fallback: MountLink::new("/", "/", protocol),
                 }
             }
-            "viewfs" => Self::build_mount_table(resolved_url.host_str().unwrap(), &config)?,
+            "viewfs" => Self::build_mount_table(
+                resolved_url.host_str().unwrap(),
+                Arc::clone(&config),
+                rt_holder.get_handle(),
+            )?,
             _ => {
                 return Err(HdfsError::InvalidArgument(
                     "Only `hdfs` and `viewfs` schemes are supported".to_string(),
@@ -197,11 +231,16 @@ impl Client {
 
         Ok(Self {
             mount_table: Arc::new(mount_table),
-            config: Arc::new(config),
+            config,
+            rt_holder,
         })
     }
 
-    fn build_mount_table(host: &str, config: &Configuration) -> Result<MountTable> {
+    fn build_mount_table(
+        host: &str,
+        config: Arc<Configuration>,
+        handle: Handle,
+    ) -> Result<MountTable> {
         let mut mounts: Vec<MountLink> = Vec::new();
         let mut fallback: Option<MountLink> = None;
 
@@ -217,8 +256,8 @@ impl Client {
                     "Only hdfs mounts are supported for viewfs".to_string(),
                 ));
             }
-            let proxy = NameServiceProxy::new(&url, config)?;
-            let protocol = Arc::new(NamenodeProtocol::new(proxy));
+            let proxy = NameServiceProxy::new(&url, Arc::clone(&config), handle.clone())?;
+            let protocol = Arc::new(NamenodeProtocol::new(proxy, handle.clone()));
 
             if let Some(prefix) = viewfs_path {
                 mounts.push(MountLink::new(prefix, url.path(), protocol));
@@ -300,6 +339,8 @@ impl Client {
                 Arc::clone(&link.protocol),
                 locations,
                 ec_schema,
+                Arc::clone(&self.config),
+                self.rt_holder.get_handle(),
             ))
         } else {
             Err(HdfsError::FileNotFound(path.to_string()))
@@ -341,6 +382,7 @@ impl Client {
                     resolved_path,
                     status,
                     Arc::clone(&self.config),
+                    self.rt_holder.get_handle(),
                     None,
                 ))
             }
@@ -382,6 +424,7 @@ impl Client {
                     resolved_path,
                     status,
                     Arc::clone(&self.config),
+                    self.rt_holder.get_handle(),
                     append_response.block,
                 ))
             }
@@ -752,8 +795,9 @@ impl From<ContentSummaryProto> for ContentSummary {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use std::sync::{Arc, LazyLock};
 
+    use tokio::runtime::Runtime;
     use url::Url;
 
     use crate::{
@@ -764,11 +808,16 @@ mod test {
 
     use super::{MountLink, MountTable};
 
+    static RT: LazyLock<Runtime> = LazyLock::new(|| Runtime::new().unwrap());
+
     fn create_protocol(url: &str) -> Arc<NamenodeProtocol> {
-        let proxy =
-            NameServiceProxy::new(&Url::parse(url).unwrap(), &Configuration::new().unwrap())
-                .unwrap();
-        Arc::new(NamenodeProtocol::new(proxy))
+        let proxy = NameServiceProxy::new(
+            &Url::parse(url).unwrap(),
+            Arc::new(Configuration::new().unwrap()),
+            RT.handle().clone(),
+        )
+        .unwrap();
+        Arc::new(NamenodeProtocol::new(proxy, RT.handle().clone()))
     }
 
     #[test]

@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime};
 use chrono::Utc;
 use log::{debug, warn};
 use prost::Message;
+use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -27,6 +28,7 @@ struct LeasedFile {
 pub(crate) struct NamenodeProtocol {
     proxy: NameServiceProxy,
     client_name: String,
+    handle: Handle,
     // Stores files currently opened for writing for lease renewal purposes
     open_files: Arc<Mutex<HashSet<LeasedFile>>>,
     lease_renewer: Mutex<Option<JoinHandle<()>>>,
@@ -36,11 +38,12 @@ pub(crate) struct NamenodeProtocol {
 }
 
 impl NamenodeProtocol {
-    pub(crate) fn new(proxy: NameServiceProxy) -> Self {
+    pub(crate) fn new(proxy: NameServiceProxy, handle: Handle) -> Self {
         let client_name = format!("hdfs_native_client-{}", Uuid::new_v4().as_hyphenated());
         NamenodeProtocol {
             proxy,
             client_name,
+            handle,
             open_files: Arc::new(Mutex::new(HashSet::new())),
             lease_renewer: Mutex::new(None),
             server_defaults: tokio::sync::Mutex::new(None),
@@ -516,7 +519,7 @@ impl LeaseTracker for Arc<NamenodeProtocol> {
 }
 
 fn start_lease_renewal(protocol: Arc<NamenodeProtocol>) -> JoinHandle<()> {
-    tokio::spawn(async move {
+    protocol.handle.clone().spawn(async move {
         // Track renewal times for each protocol
         let mut last_renewal: Option<SystemTime> = None;
 

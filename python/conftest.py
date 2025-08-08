@@ -1,13 +1,9 @@
 import os
 import subprocess
-import urllib
-import urllib.parse
 
-import fsspec
 import pytest
 
-from hdfs_native import Client
-from hdfs_native.fsspec import HdfsFileSystem
+from hdfs_native import AsyncClient, Client
 
 
 @pytest.fixture(scope="module")
@@ -60,9 +56,3 @@ def async_client(minidfs: str):
     client = AsyncClient(minidfs)
 
     yield client
-
-
-@pytest.fixture(scope="module")
-def fs(minidfs: str) -> HdfsFileSystem:
-    url = urllib.parse.urlparse(minidfs)
-    return fsspec.filesystem(url.scheme, host=url.hostname, port=url.port)
