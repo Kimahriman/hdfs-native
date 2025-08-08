@@ -177,9 +177,11 @@ impl Client {
             url.clone()
         };
 
+        let config = Arc::new(config);
+
         let mount_table = match url.scheme() {
             "hdfs" => {
-                let proxy = NameServiceProxy::new(&resolved_url, &config)?;
+                let proxy = NameServiceProxy::new(&resolved_url, Arc::clone(&config))?;
                 let protocol = Arc::new(NamenodeProtocol::new(proxy));
 
                 MountTable {
@@ -187,7 +189,9 @@ impl Client {
                     fallback: MountLink::new("/", "/", protocol),
                 }
             }
-            "viewfs" => Self::build_mount_table(resolved_url.host_str().unwrap(), &config)?,
+            "viewfs" => {
+                Self::build_mount_table(resolved_url.host_str().unwrap(), Arc::clone(&config))?
+            }
             _ => {
                 return Err(HdfsError::InvalidArgument(
                     "Only `hdfs` and `viewfs` schemes are supported".to_string(),
@@ -197,11 +201,11 @@ impl Client {
 
         Ok(Self {
             mount_table: Arc::new(mount_table),
-            config: Arc::new(config),
+            config,
         })
     }
 
-    fn build_mount_table(host: &str, config: &Configuration) -> Result<MountTable> {
+    fn build_mount_table(host: &str, config: Arc<Configuration>) -> Result<MountTable> {
         let mut mounts: Vec<MountLink> = Vec::new();
         let mut fallback: Option<MountLink> = None;
 
@@ -217,7 +221,7 @@ impl Client {
                     "Only hdfs mounts are supported for viewfs".to_string(),
                 ));
             }
-            let proxy = NameServiceProxy::new(&url, config)?;
+            let proxy = NameServiceProxy::new(&url, Arc::clone(&config))?;
             let protocol = Arc::new(NamenodeProtocol::new(proxy));
 
             if let Some(prefix) = viewfs_path {
@@ -766,9 +770,11 @@ mod test {
     use super::{MountLink, MountTable};
 
     fn create_protocol(url: &str) -> Arc<NamenodeProtocol> {
-        let proxy =
-            NameServiceProxy::new(&Url::parse(url).unwrap(), &Configuration::new().unwrap())
-                .unwrap();
+        let proxy = NameServiceProxy::new(
+            &Url::parse(url).unwrap(),
+            Arc::new(Configuration::new().unwrap()),
+        )
+        .unwrap();
         Arc::new(NamenodeProtocol::new(proxy))
     }
 
