@@ -1,5 +1,6 @@
 import urllib.parse
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 import fsspec
 import pytest
@@ -64,6 +65,12 @@ class TestFsspecBase(ABC):
         fs.mv("/test2", "/test3")
         assert fs.read_text("/test3") == "hello again"
         assert not fs.exists("/test2")
+
+        millis = fs.info("/test3")["modification_time"]
+        expected_dt = datetime.fromtimestamp(millis / 1000)
+        modified_dt = fs.modified("/test3")
+        assert isinstance(modified_dt, datetime)
+        assert modified_dt == expected_dt
 
         fs.rm("/test")
         fs.rm("/test3")

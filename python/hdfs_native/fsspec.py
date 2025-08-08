@@ -165,7 +165,7 @@ class BaseFileSystem(AbstractFileSystem):
 
     def modified(self, path: str):
         file_info = self.client.get_file_info(self._strip_protocol(path))
-        return datetime.fromtimestamp(file_info.modification_time)
+        return datetime.fromtimestamp(file_info.modification_time / 1000)
 
     def _open(
         self,
