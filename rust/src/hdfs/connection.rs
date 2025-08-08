@@ -20,12 +20,15 @@ use tokio::{
 };
 use uuid::Uuid;
 
+use crate::common::config::Configuration;
 use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
 use crate::proto::common::TokenProto;
 use crate::proto::hdfs::{DataEncryptionKeyProto, DatanodeIdProto};
 use crate::proto::{common, hdfs};
-use crate::security::sasl::{SaslDatanodeConnection, SaslDatanodeReader, SaslDatanodeWriter};
-use crate::security::sasl::{SaslReader, SaslRpcClient, SaslWriter};
+use crate::security::sasl::{
+    negotiate_sasl_session, SaslDatanodeConnection, SaslDatanodeReader, SaslDatanodeWriter,
+};
+use crate::security::sasl::{SaslReader, SaslWriter};
 use crate::security::user::UserInfo;
 use crate::{HdfsError, Result};
 
@@ -126,6 +129,7 @@ impl RpcConnection {
         url: &str,
         alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
         nameservice: Option<&str>,
+        config: &Configuration,
     ) -> Result<Self> {
         let client_id = Uuid::new_v4().to_bytes_le().to_vec();
         let next_call_id = AtomicI32::new(0);
@@ -138,15 +142,16 @@ impl RpcConnection {
         // Service class
         stream.write_all(&[0u8]).await?;
         // Auth protocol
-        stream.write_all(&(-33i8).to_be_bytes()).await?;
-
-        let mut client = SaslRpcClient::create(stream);
+        if config.security_enabled() {
+            stream.write_all(&(-33i8).to_be_bytes()).await?;
+        } else {
+            stream.write_all(&(0i8).to_be_bytes()).await?;
+        }
 
         let service = nameservice
             .map(|ns| format!("ha-hdfs:{ns}"))
             .unwrap_or(url.to_string());
-        let user_info = client.negotiate(service.as_str()).await?;
-        let (reader, writer) = client.split();
+        let (user_info, reader, writer) = negotiate_sasl_session(stream, &service, config).await?;
         let (sender, receiver) = mpsc::channel::<Vec<u8>>(1000);
 
         let mut conn = RpcConnection {
@@ -544,13 +549,14 @@ impl DatanodeConnection {
         datanode_id: &DatanodeIdProto,
         token: &TokenProto,
         encryption_key: Option<DataEncryptionKeyProto>,
+        config: &Configuration,
     ) -> Result<Self> {
         let url = format!("{}:{}", datanode_id.ip_addr, datanode_id.xfer_port);
         let stream = connect(&url).await?;
 
         let sasl_connection = SaslDatanodeConnection::create(stream);
         let (reader, writer) = sasl_connection
-            .negotiate(datanode_id, token, encryption_key.as_ref())
+            .negotiate(datanode_id, token, encryption_key.as_ref(), config)
             .await?;
 
         let conn = DatanodeConnection {

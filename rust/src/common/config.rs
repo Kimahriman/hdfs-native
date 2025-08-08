@@ -25,6 +25,8 @@ const DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN: &str = "dfs.client.failover.resolve
 const DFS_CLIENT_FAILOVER_RANDOM_ORDER: &str = "dfs.client.failover.random.order";
 const DFS_CLIENT_FAILOVER_PROXY_PROVIDER: &str = "dfs.client.failover.proxy.provider";
 
+const HADOOP_SECURITY_AUTHENTICATION: &str = "hadoop.security.authentication";
+
 // Viewfs settings
 const VIEWFS_MOUNTTABLE_PREFIX: &str = "fs.viewfs.mounttable";
 
@@ -75,6 +77,11 @@ impl Configuration {
         self.get(key)
             .map(|v| v.to_lowercase() == "true")
             .unwrap_or(default)
+    }
+
+    pub(crate) fn security_enabled(&self) -> bool {
+        self.get(HADOOP_SECURITY_AUTHENTICATION)
+            .is_some_and(|c| c != "simple")
     }
 
     pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Result<Vec<String>> {

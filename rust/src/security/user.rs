@@ -377,7 +377,7 @@ impl User {
         }
     }
 
-    pub(crate) fn get_simpler_user() -> UserInfo {
+    pub(crate) fn get_simple_user() -> UserInfo {
         let effective_user = env::var(HADOOP_USER_NAME).ok().unwrap_or_else(username);
         UserInfo {
             real_user: None,

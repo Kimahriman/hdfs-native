@@ -22,6 +22,7 @@ pub struct FileReader {
     located_blocks: hdfs::LocatedBlocksProto,
     ec_schema: Option<EcSchema>,
     position: usize,
+    config: Arc<Configuration>,
 }
 
 impl FileReader {
@@ -29,12 +30,14 @@ impl FileReader {
         protocol: Arc<NamenodeProtocol>,
         located_blocks: hdfs::LocatedBlocksProto,
         ec_schema: Option<EcSchema>,
+        config: Arc<Configuration>,
     ) -> Self {
         Self {
             protocol,
             located_blocks,
             ec_schema,
             position: 0,
+            config,
         }
     }
 
@@ -146,6 +149,7 @@ impl FileReader {
                         block_start,
                         block_end - block_start,
                         self.ec_schema.clone(),
+                        Arc::clone(&self.config),
                     ))
                 } else {
                     // No data is needed from this block
