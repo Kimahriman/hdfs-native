@@ -142,7 +142,11 @@ impl RpcConnection {
         // Service class
         stream.write_all(&[0u8]).await?;
         // Auth protocol
-        stream.write_all(&(-33i8).to_be_bytes()).await?;
+        if config.security_enabled() {
+            stream.write_all(&(-33i8).to_be_bytes()).await?;
+        } else {
+            stream.write_all(&(0i8).to_be_bytes()).await?;
+        }
 
         let service = nameservice
             .map(|ns| format!("ha-hdfs:{ns}"))
