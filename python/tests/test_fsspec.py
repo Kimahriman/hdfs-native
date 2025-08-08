@@ -4,6 +4,7 @@ from datetime import datetime
 
 import fsspec
 import pytest
+
 from hdfs_native.fsspec import BaseFileSystem
 
 
