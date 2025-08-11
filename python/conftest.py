@@ -3,7 +3,7 @@ import subprocess
 
 import pytest
 
-from hdfs_native import Client
+from hdfs_native import AsyncClient, Client
 
 
 @pytest.fixture(scope="module")
@@ -49,3 +49,10 @@ def client(minidfs: str):
         statuses = list(client.list_status("/"))
         for status in statuses:
             client.delete(status.path, True)
+
+
+@pytest.fixture
+def async_client(minidfs: str):
+    client = AsyncClient(minidfs)
+
+    yield client
