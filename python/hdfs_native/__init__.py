@@ -1,5 +1,6 @@
 import io
 import os
+from collections.abc import AsyncIterable, AsyncIterator
 from typing import TYPE_CHECKING, Dict, Iterator, List, Optional
 
 # For some reason mypy doesn't think this exists
@@ -17,6 +18,8 @@ from ._internal import (
 
 if TYPE_CHECKING:
     from ._internal import (
+        AsyncRawFileReader,
+        AsyncRawFileWriter,
         RawFileReader,
         RawFileWriter,
     )
@@ -260,6 +263,94 @@ class Client:
         return self.inner.get_acl_status(path)
 
 
+class AsyncFileReader:
+    def __init__(self, inner: "AsyncRawFileReader"):
+        self.inner = inner
+
+    def __len__(self) -> int:
+        return self.inner.file_length()
+
+    def __aiter__(self) -> Iterator[bytes]:
+        return self.read_range_stream(0, len(self))
+
+    async def __aenter__(self):
+        # Don't need to do anything special here
+        return self
+
+    async def __aexit__(self, *_args):
+        # Future updates could close the file manually here if that would help clean things up
+        pass
+
+    @property
+    def size(self):
+        return len(self)
+
+    def seek(self, offset: int, whence=os.SEEK_SET):
+        """Seek to `offset` relative to `whence`"""
+        if whence == os.SEEK_SET:
+            self.inner.seek(offset)
+        elif whence == os.SEEK_CUR:
+            self.inner.seek(self.tell() + offset)
+        elif whence == os.SEEK_END:
+            self.inner.seek(self.inner.file_length() + offset)
+        else:
+            raise ValueError(f"Unsupported whence {whence}")
+
+    def seekable(self):
+        return True
+
+    def tell(self) -> int:
+        return self.inner.tell()
+
+    def readable(self) -> bool:
+        return True
+
+    async def read(self, size: int = -1) -> bytes:
+        """Read up to `size` bytes from the file, or all content if -1"""
+        return await self.inner.read(size)
+
+    async def readall(self) -> bytes:
+        return await self.read()
+
+    async def read_range(self, offset: int, len: int) -> bytes:
+        """Read `len` bytes from the file starting at `offset`. Doesn't affect the position in the file"""
+        return await self.inner.read_range(offset, len)
+
+    def read_range_stream(self, offset: int, len: int) -> AsyncIterator[bytes]:
+        """
+        Read `len` bytes from the file starting at `offset` as an iterator of bytes. Doesn't affect
+        the position in the file.
+
+        This is the most efficient way to iteratively read a file.
+        """
+        return self.inner.read_range_stream(offset, len)
+
+    async def close(self) -> None:
+        pass
+
+
+class AsyncFileWriter:
+    def __init__(self, inner: "AsyncRawFileWriter"):
+        self.inner = inner
+
+    def writable(self) -> bool:
+        return True
+
+    async def write(self, buf: Buffer) -> int:
+        """Writes `buf` to the file. Always writes all bytes"""
+        return await self.inner.write(buf)
+
+    async def close(self) -> None:
+        """Closes the file and saves the final metadata to the NameNode"""
+        await self.inner.close()
+
+    async def __aenter__(self) -> "AsyncFileWriter":
+        return self
+
+    async def __aexit__(self, *_args):
+        await self.close()
+
+
 class AsyncClient:
     def __init__(
         self,
@@ -272,28 +363,32 @@ class AsyncClient:
         """Gets the file status for the file at `path`"""
         return await self.inner.get_file_info(path)
 
-    # async def list_status(self, path: str, recursive: bool = False) -> Iterator[FileStatus]:
-    #     """Gets the status of files rooted at `path`. If `recursive` is true, lists all files recursively."""
-    #     return self.inner.list_status(path, recursive)
+    def list_status(
+        self,
+        path: str,
+        recursive: bool = False,
+    ) -> AsyncIterator[FileStatus]:
+        """Gets the status of files rooted at `path`. If `recursive` is true, lists all files recursively."""
+        return self.inner.list_status(path, recursive)
 
-    # def read(self, path: str) -> FileReader:
-    #     """Opens a file for reading at `path`"""
-    #     return FileReader(self.inner.read(path))
+    async def read(self, path: str) -> AsyncFileReader:
+        """Opens a file for reading at `path`"""
+        return AsyncFileReader(await self.inner.read(path))
 
-    # def create(
-    #     self,
-    #     path: str,
-    #     write_options: Optional[WriteOptions] = None,
-    # ) -> FileWriter:
-    #     """Creates a new file and opens it for writing at `path`"""
-    #     if not write_options:
-    #         write_options = WriteOptions()
+    async def create(
+        self,
+        path: str,
+        write_options: Optional[WriteOptions] = None,
+    ) -> AsyncFileWriter:
+        """Creates a new file and opens it for writing at `path`"""
+        if not write_options:
+            write_options = WriteOptions()
 
-    #     return FileWriter(self.inner.create(path, write_options))
+        return AsyncFileWriter(await self.inner.create(path, write_options))
 
-    # def append(self, path: str) -> FileWriter:
-    #     """Opens an existing file to append to at `path`"""
-    #     return FileWriter(self.inner.append(path))
+    async def append(self, path: str) -> AsyncFileWriter:
+        """Opens an existing file to append to at `path`"""
+        return AsyncFileWriter(await self.inner.append(path))
 
     async def mkdirs(
         self,

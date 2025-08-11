@@ -13,9 +13,9 @@ use futures::stream::BoxStream;
 use futures::StreamExt;
 use hdfs_native::acl::{AclEntry, AclStatus};
 use hdfs_native::client::ContentSummary;
+use pyo3::exceptions::PyStopAsyncIteration;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use tokio::runtime::Runtime;
-use tokio::sync::oneshot;
 
 mod error;
 
@@ -581,21 +581,120 @@ impl RawClient {
     }
 }
 
+#[pyclass(name = "FileStatusIter")]
+struct PyAsyncFileStatusIter {
+    inner: Arc<tokio::sync::Mutex<ListStatusIterator>>,
+}
+
+#[pymethods]
+impl PyAsyncFileStatusIter {
+    pub fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    pub fn __anext__<'py>(slf: PyRefMut<'_, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = slf.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            inner
+                .lock()
+                .await
+                .next()
+                .await
+                .transpose()
+                .map_err(PythonHdfsError::from)?
+                .map(PyFileStatus::from)
+                .ok_or(PyStopAsyncIteration::new_err(()))
+        })
+    }
+}
+
+#[pyclass(name = "AsyncFileReadStream")]
+struct PyAsyncFileReadStream {
+    inner: Arc<tokio::sync::Mutex<BoxStream<'static, hdfs_native::Result<Bytes>>>>,
+}
+
+#[pymethods]
+impl PyAsyncFileReadStream {
+    pub fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(slf: PyRefMut<'_, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = slf.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            inner
+                .lock()
+                .await
+                .next()
+                .await
+                .transpose()
+                .map_err(PythonHdfsError::from)?
+                .map(|b| Cow::from(b.to_vec()))
+                .ok_or(PyStopAsyncIteration::new_err(()))
+        })
+    }
+}
+
+#[pyclass]
+struct AsyncRawFileReader {
+    inner: FileReader,
+}
+
+#[pymethods]
+impl AsyncRawFileReader {
+    pub fn file_length(&self) -> usize {
+        self.inner.file_length()
+    }
+
+    pub fn seek(&mut self, pos: usize) {
+        self.inner.seek(pos);
+    }
+
+    pub fn tell(&self) -> usize {
+        self.inner.tell()
+    }
+
+    pub async fn read(&mut self, len: i64) -> PyHdfsResult<Cow<'static, [u8]>> {
+        let read_len = if len < 0 {
+            self.inner.remaining()
+        } else {
+            len as usize
+        };
+        Ok(Cow::from(self.inner.read(read_len).await?.to_vec()))
+    }
+
+    pub async fn read_range(&self, offset: usize, len: usize) -> PyHdfsResult<Cow<'static, [u8]>> {
+        let bytes = self.inner.read_range(offset, len).await?.to_vec();
+        Ok(Cow::from(bytes))
+    }
+
+    pub fn read_range_stream(&self, offset: usize, len: usize) -> PyAsyncFileReadStream {
+        let stream = Arc::new(tokio::sync::Mutex::new(
+            self.inner.read_range_stream(offset, len).boxed(),
+        ));
+        PyAsyncFileReadStream { inner: stream }
+    }
+}
+
+#[pyclass]
+struct AsyncRawFileWriter {
+    inner: FileWriter,
+}
+
+#[pymethods]
+impl AsyncRawFileWriter {
+    pub async fn write(&mut self, buf: Vec<u8>) -> PyHdfsResult<usize> {
+        Ok(self.inner.write(Bytes::from(buf)).await?)
+    }
+
+    pub async fn close(&mut self) -> PyHdfsResult<()> {
+        Ok(self.inner.close().await?)
+    }
+}
+
 #[pyclass(name = "AsyncRawClient", subclass)]
 struct AsyncRawClient {
     inner: Client,
-    rt: Arc<Runtime>,
-}
-
-impl AsyncRawClient {
-    async fn call_inner<T>(&self, f: AsyncFn(Client, oneshot::Sender<T>) -> T) -> T {
-        let (tx, rx) = oneshot::channel();
-        let inner = self.inner.clone();
-
-        self.rt.spawn(f(inner));
-
-        Ok(rx.await.unwrap()?)
-    }
 }
 
 #[pymethods]
@@ -614,67 +713,48 @@ impl AsyncRawClient {
             Client::default_with_config(config).map_err(PythonHdfsError::from)?
         };
 
-        Ok(Self {
-            inner,
-            rt: Arc::new(Runtime::new().map_err(|err| PyRuntimeError::new_err(err.to_string()))?),
-        })
+        Ok(Self { inner })
     }
 
     pub async fn get_file_info(&self, path: String) -> PyHdfsResult<PyFileStatus> {
-        let (tx, rx) = oneshot::channel();
-        let inner = self.inner.clone();
-
-        self.rt.spawn(async move {
-            let result = inner.get_file_info(&path).await.map(PyFileStatus::from);
-
-            let _ = tx.send(result);
-        });
-
-        Ok(rx.await.unwrap()?)
+        Ok(self
+            .inner
+            .get_file_info(&path)
+            .await
+            .map(PyFileStatus::from)?)
     }
 
-    // pub fn list_status(&self, path: &str, recursive: bool) -> PyFileStatusIter {
-    //     let inner = self.inner.list_status_iter(path, recursive);
-    //     PyFileStatusIter {
-    //         inner: Arc::new(inner),
-    //         rt: Arc::clone(&self.rt),
-    //     }
-    // }
+    pub fn list_status(&self, path: &str, recursive: bool) -> PyAsyncFileStatusIter {
+        let inner = self.inner.list_status_iter(path, recursive);
+        PyAsyncFileStatusIter {
+            inner: Arc::new(tokio::sync::Mutex::new(inner)),
+        }
+    }
 
-    // pub fn read(&self, path: &str, py: Python) -> PyHdfsResult<RawFileReader> {
-    //     let file_reader = py.allow_threads(|| self.rt.block_on(self.inner.read(path)))?;
+    pub async fn read(&self, path: String) -> PyHdfsResult<AsyncRawFileReader> {
+        let file_reader = self.inner.read(&path).await?;
 
-    //     Ok(RawFileReader {
-    //         inner: file_reader,
-    //         rt: Arc::clone(&self.rt),
-    //     })
-    // }
+        Ok(AsyncRawFileReader { inner: file_reader })
+    }
 
-    // pub fn create(
-    //     &self,
-    //     src: &str,
-    //     write_options: PyWriteOptions,
-    //     py: Python,
-    // ) -> PyHdfsResult<RawFileWriter> {
-    //     let file_writer = py.allow_threads(|| {
-    //         self.rt
-    //             .block_on(self.inner.create(src, WriteOptions::from(write_options)))
-    //     })?;
+    pub async fn create(
+        &self,
+        src: String,
+        write_options: PyWriteOptions,
+    ) -> PyHdfsResult<AsyncRawFileWriter> {
+        let file_writer = self
+            .inner
+            .create(&src, WriteOptions::from(write_options))
+            .await?;
 
-    //     Ok(RawFileWriter {
-    //         inner: file_writer,
-    //         rt: Arc::clone(&self.rt),
-    //     })
-    // }
+        Ok(AsyncRawFileWriter { inner: file_writer })
+    }
 
-    // pub fn append(&self, src: &str, py: Python) -> PyHdfsResult<RawFileWriter> {
-    //     let file_writer = py.allow_threads(|| self.rt.block_on(self.inner.append(src)))?;
+    pub async fn append(&self, src: String) -> PyHdfsResult<AsyncRawFileWriter> {
+        let file_writer = self.inner.append(&src).await?;
 
-    //     Ok(RawFileWriter {
-    //         inner: file_writer,
-    //         rt: Arc::clone(&self.rt),
-    //     })
-    // }
+        Ok(AsyncRawFileWriter { inner: file_writer })
+    }
 
     pub async fn mkdirs(
         &self,

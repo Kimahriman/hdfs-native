@@ -1,9 +1,11 @@
 import io
 
-from hdfs_native import AclEntry, Client, WriteOptions
+import pytest
+
+from hdfs_native import AclEntry, AsyncClient, Client, WriteOptions
 
 
-def test_integration(client: Client):
+def test_sync(client: Client):
     client.create("/testfile").close()
     file_info = client.get_file_info("/testfile")
 
@@ -155,3 +157,112 @@ def test_acls(client: Client):
     client.remove_default_acl("/testdir")
     acl_status = client.get_acl_status("/testdir")
     assert len(acl_status.entries) == 0
+
+
+@pytest.mark.asyncio
+async def test_async(async_client: AsyncClient):
+    await (await async_client.create("/testfile")).close()
+    file_info = await async_client.get_file_info("/testfile")
+
+    assert file_info.path == "/testfile"
+
+    file_list = [status async for status in async_client.list_status("/", False)]
+    assert len(file_list) == 1
+    assert file_list[0].path == "/testfile"
+
+    await async_client.rename("/testfile", "/testfile2", False)
+
+    file_list = [status async for status in async_client.list_status("/", False)]
+    assert len(file_list) == 1
+    assert file_list[0].path == "/testfile2"
+
+    await async_client.delete("/testfile2", False)
+
+    file_list = [status async for status in async_client.list_status("/", False)]
+    assert len(file_list) == 0
+
+    async with await async_client.create("/testfile") as file:
+        data = io.BytesIO()
+
+        for i in range(0, 32 * 1024 * 1024):
+            data.write(i.to_bytes(4, "big"))
+
+        await file.write(data.getbuffer())
+
+    async with await async_client.read("/testfile") as file:
+        data = io.BytesIO(await file.read())
+
+    for i in range(0, 32 * 1024 * 1024):
+        assert data.read(4) == i.to_bytes(4, "big")
+
+    async with await async_client.append("/testfile") as file:
+        data = io.BytesIO()
+
+        for i in range(32 * 1024 * 1024, 33 * 1024 * 1024):
+            data.write(i.to_bytes(4, "big"))
+
+        await file.write(data.getbuffer())
+
+    async with await async_client.read("/testfile") as file:
+        data = io.BytesIO(await file.read())
+
+        for i in range(0, 33 * 1024 * 1024):
+            assert data.read(4) == i.to_bytes(4, "big")
+
+        data = io.BytesIO()
+        async for chunk in file:
+            data.write(chunk)
+
+        data.seek(0)
+
+        for i in range(0, 33 * 1024 * 1024):
+            assert data.read(4) == i.to_bytes(4, "big")
+
+    async with await async_client.read("/testfile") as file:
+        # Skip first two ints
+        file.seek(8)
+        expected = 2
+        assert await file.read(4) == expected.to_bytes(4, "big")
+        assert file.tell() == 12
+
+    mtime = 1717641455
+    atime = 1717641456
+    await async_client.set_times("/testfile", mtime, atime)
+    file_info = await async_client.get_file_info("/testfile")
+    assert file_info.modification_time == mtime
+    assert file_info.access_time == atime
+
+    await async_client.set_owner("/testfile", "testuser", "testgroup")
+    file_info = await async_client.get_file_info("/testfile")
+    assert file_info.owner == "testuser"
+    assert file_info.group == "testgroup"
+
+    await async_client.set_owner("/testfile", owner="testuser2")
+    file_info = await async_client.get_file_info("/testfile")
+    assert file_info.owner == "testuser2"
+    assert file_info.group == "testgroup"
+
+    await async_client.set_owner("/testfile", group="testgroup2")
+    file_info = await async_client.get_file_info("/testfile")
+    assert file_info.owner == "testuser2"
+    assert file_info.group == "testgroup2"
+
+    assert file_info.permission == 0o644
+    await async_client.set_permission("/testfile", 0o600)
+    file_info = await async_client.get_file_info("/testfile")
+    assert file_info.permission == 0o600
+
+    await async_client.set_replication("/testfile", 1)
+    file_info = await async_client.get_file_info("/testfile")
+    assert file_info.replication == 1
+
+    await async_client.set_replication("/testfile", 2)
+    file_info = await async_client.get_file_info("/testfile")
+    assert file_info.replication == 2
+
+    content_summary = await async_client.get_content_summary("/")
+    assert content_summary.file_count == 1
+    assert content_summary.directory_count == 1
+    assert content_summary.length == 33 * 1024 * 1024 * 4
+
+    await async_client.delete("/testfile", False)

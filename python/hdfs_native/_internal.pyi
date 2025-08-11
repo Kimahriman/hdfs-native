@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterable, AsyncIterator
 from typing import Dict, Iterator, List, Literal, Optional
 
 # For some reason mypy doesn't think this exists
@@ -124,6 +125,35 @@ class RawClient:
     def set_acl(self, path: str, entries: List[AclEntry]) -> None: ...
     def get_acl_status(self, path: str) -> AclStatus: ...
 
+class AsyncRawFileReader:
+    def file_length(self) -> int:
+        """Returns the size of the file"""
+
+    def seek(self, pos: int) -> None:
+        """Sets the cursor to the given position"""
+
+    def tell(self) -> int:
+        """Returns the current cursor position in the file"""
+
+    async def read(self, len: int) -> bytes:
+        """Reads `len` bytes from the file, advancing the position in the file"""
+
+    async def read_range(self, offset: int, len: int) -> bytes:
+        """Read `len` bytes from the file starting at `offset`. Doesn't affect the position in the file"""
+
+    def read_range_stream(self, offset: int, len: int) -> AsyncIterator[bytes]:
+        """
+        Read `len` bytes from the file starting at `offset` as an iterator of bytes. Doesn't affect
+        the position in the file.
+        """
+
+class AsyncRawFileWriter:
+    async def write(self, buf: Buffer) -> int:
+        """Writes `buf` to the file"""
+
+    async def close(self) -> None:
+        """Closes the file and saves the final metadata to the NameNode"""
+
 class AsyncRawClient:
     def __init__(
         self,
@@ -131,10 +161,14 @@ class AsyncRawClient:
         config: Optional[Dict[str, str]],
     ) -> None: ...
     async def get_file_info(self, path: str) -> FileStatus: ...
-    # def list_status(self, path: str, recursive: bool) -> Iterator[FileStatus]: ...
-    # def read(self, path: str) -> RawFileReader: ...
-    # def create(self, path: str, write_options: WriteOptions) -> RawFileWriter: ...
-    # def append(self, path: str) -> RawFileWriter: ...
+    def list_status(self, path: str, recursive: bool) -> AsyncIterator[FileStatus]: ...
+    async def read(self, path: str) -> AsyncRawFileReader: ...
+    async def create(
+        self,
+        path: str,
+        write_options: WriteOptions,
+    ) -> AsyncRawFileWriter: ...
+    async def append(self, path: str) -> AsyncRawFileWriter: ...
     async def mkdirs(self, path: str, permission: int, create_parent: bool) -> None: ...
     async def rename(self, src: str, dst: str, overwrite: bool) -> None: ...
     async def delete(self, path: str, recursive: bool) -> bool: ...
