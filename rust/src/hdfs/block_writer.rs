@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::future::join_all;
 use log::{debug, warn};
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{runtime::Handle, sync::mpsc, task::JoinHandle};
 
 use crate::{
     common::config::Configuration,
@@ -33,11 +33,13 @@ pub(crate) enum BlockWriter {
 }
 
 impl BlockWriter {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn new(
         protocol: Arc<NamenodeProtocol>,
         block: hdfs::LocatedBlockProto,
         server_defaults: hdfs::FsServerDefaultsProto,
         config: Arc<Configuration>,
+        handle: Handle,
         ec_schema: Option<&EcSchema>,
         src: &str,
         status: &hdfs::HdfsFileStatusProto,
@@ -49,12 +51,21 @@ impl BlockWriter {
                 ec_schema,
                 server_defaults,
                 config,
+                handle,
                 status,
             ))
         } else {
             Self::Replicated(
-                ReplicatedBlockWriter::new(src, protocol, block, server_defaults, config, status)
-                    .await?,
+                ReplicatedBlockWriter::new(
+                    src,
+                    protocol,
+                    block,
+                    server_defaults,
+                    config,
+                    handle,
+                    status,
+                )
+                .await?,
             )
         };
         Ok(block_writer)
@@ -99,7 +110,7 @@ struct Pipeline {
 }
 
 impl Pipeline {
-    fn new(connection: DatanodeConnection) -> Self {
+    fn new(connection: DatanodeConnection, handle: &Handle) -> Self {
         let (reader, writer) = connection.split();
 
         // Channel for tracking packets that need to be acked
@@ -108,10 +119,10 @@ impl Pipeline {
         let (packet_sender, packet_receiver) =
             mpsc::channel::<WritePacket>(WRITE_PACKET_BUFFER_LEN);
 
-        let ack_listener_handle = Self::listen_for_acks(reader, ack_queue_receiever);
+        let ack_listener_handle = Self::listen_for_acks(reader, ack_queue_receiever, handle);
         let packet_sender_handle =
-            Self::start_packet_sender(writer, packet_receiver, ack_queue_sender);
-        let heartbeat_handle = Self::start_heartbeat_sender(packet_sender.clone());
+            Self::start_packet_sender(writer, packet_receiver, ack_queue_sender, handle);
+        let heartbeat_handle = Self::start_heartbeat_sender(packet_sender.clone(), handle);
 
         Self {
             packet_sender,
@@ -161,8 +172,9 @@ impl Pipeline {
         mut writer: DatanodeWriter,
         mut packet_receiver: mpsc::Receiver<WritePacket>,
         ack_queue: mpsc::Sender<WritePacket>,
+        handle: &Handle,
     ) -> JoinHandle<Vec<WritePacket>> {
-        tokio::spawn(async move {
+        handle.spawn(async move {
             while let Some(mut packet) = packet_receiver.recv().await {
                 // Simulate node we are writing to failing
                 #[cfg(feature = "integration-test")]
@@ -206,8 +218,11 @@ impl Pipeline {
         })
     }
 
-    fn start_heartbeat_sender(packet_sender: mpsc::Sender<WritePacket>) -> JoinHandle<()> {
-        tokio::spawn(async move {
+    fn start_heartbeat_sender(
+        packet_sender: mpsc::Sender<WritePacket>,
+        handle: &Handle,
+    ) -> JoinHandle<()> {
+        handle.spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(HEARTBEAT_INTERVAL_SECONDS)).await;
                 let heartbeat_packet = WritePacket::empty(0, HEART_BEAT_SEQNO, 0, 0);
@@ -222,8 +237,9 @@ impl Pipeline {
     fn listen_for_acks(
         mut reader: DatanodeReader,
         mut ack_queue: mpsc::Receiver<WritePacket>,
+        handle: &Handle,
     ) -> JoinHandle<Result<WriteStatus>> {
-        tokio::spawn(async move {
+        handle.spawn(async move {
             loop {
                 let next_ack = match reader.read_ack().await {
                     Ok(next_ack) => next_ack,
@@ -310,6 +326,7 @@ pub(crate) struct ReplicatedBlockWriter {
     status: hdfs::HdfsFileStatusProto,
     config: Arc<Configuration>,
     replace_datanode: ReplaceDatanodeOnFailure,
+    handle: Handle,
 }
 
 impl ReplicatedBlockWriter {
@@ -319,10 +336,19 @@ impl ReplicatedBlockWriter {
         block: hdfs::LocatedBlockProto,
         server_defaults: hdfs::FsServerDefaultsProto,
         config: Arc<Configuration>,
+        handle: Handle,
         status: &hdfs::HdfsFileStatusProto,
     ) -> Result<Self> {
-        let pipeline =
-            Self::setup_pipeline(&protocol, &block, &server_defaults, None, None, &config).await?;
+        let pipeline = Self::setup_pipeline(
+            &protocol,
+            &block,
+            &server_defaults,
+            None,
+            None,
+            &config,
+            &handle,
+        )
+        .await?;
 
         let bytes_in_last_chunk = block.b.num_bytes() % server_defaults.bytes_per_checksum as u64;
         let current_packet = if bytes_in_last_chunk > 0 {
@@ -355,6 +381,7 @@ impl ReplicatedBlockWriter {
             status: status.clone(),
             replace_datanode: config.get_replace_datanode_on_failure_policy(),
             config,
+            handle,
         };
 
         Ok(this)
@@ -452,6 +479,7 @@ impl ReplicatedBlockWriter {
             Some(updated_block.block.b.generation_stamp),
             Some(bytes_acked),
             &self.config,
+            &self.handle,
         )
         .await?;
 
@@ -484,6 +512,7 @@ impl ReplicatedBlockWriter {
         new_gs: Option<u64>,
         bytes_acked: Option<u64>,
         config: &Configuration,
+        handle: &Handle,
     ) -> Result<Pipeline> {
         let datanode = &block.locs[0].id;
         let mut connection = DatanodeConnection::connect(
@@ -491,6 +520,7 @@ impl ReplicatedBlockWriter {
             &block.block_token,
             protocol.get_cached_data_encryption_key().await?,
             config,
+            handle,
         )
         .await?;
 
@@ -528,7 +558,7 @@ impl ReplicatedBlockWriter {
         let response = connection.send(Op::WriteBlock, &message).await?;
         debug!("Block write response: {:?}", response);
 
-        Ok(Pipeline::new(connection))
+        Ok(Pipeline::new(connection, handle))
     }
 
     // Create the next packet and return the current packet
@@ -641,6 +671,7 @@ impl ReplicatedBlockWriter {
             block_token,
             self.protocol.get_cached_data_encryption_key().await?,
             &self.config,
+            &self.handle,
         )
         .await?;
 
@@ -814,6 +845,7 @@ pub(crate) struct StripedBlockWriter {
     block: hdfs::LocatedBlockProto,
     server_defaults: hdfs::FsServerDefaultsProto,
     config: Arc<Configuration>,
+    handle: Handle,
     block_writers: Vec<Option<ReplicatedBlockWriter>>,
     cell_buffer: CellBuffer,
     bytes_written: usize,
@@ -828,6 +860,7 @@ impl StripedBlockWriter {
         ec_schema: &EcSchema,
         server_defaults: hdfs::FsServerDefaultsProto,
         config: Arc<Configuration>,
+        handle: Handle,
         status: &hdfs::HdfsFileStatusProto,
     ) -> Self {
         let block_writers = (0..block.block_indices().len()).map(|_| None).collect();
@@ -837,6 +870,7 @@ impl StripedBlockWriter {
             block,
             server_defaults,
             config,
+            handle,
             block_writers,
             cell_buffer: CellBuffer::new(ec_schema),
             bytes_written: 0,
@@ -878,6 +912,7 @@ impl StripedBlockWriter {
                         cloned,
                         self.server_defaults.clone(),
                         Arc::clone(&self.config),
+                        self.handle.clone(),
                         &self.status,
                     )
                     .await?,
