@@ -55,6 +55,7 @@ pub(crate) fn get_block_stream(
 }
 
 /// Connects to a DataNode to do a read, attempting to used cached connections.
+#[allow(clippy::too_many_arguments)]
 async fn connect_and_send(
     protocol: &Arc<NamenodeProtocol>,
     datanode_id: &hdfs::DatanodeIdProto,

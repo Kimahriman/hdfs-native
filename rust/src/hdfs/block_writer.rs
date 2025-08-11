@@ -33,6 +33,7 @@ pub(crate) enum BlockWriter {
 }
 
 impl BlockWriter {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn new(
         protocol: Arc<NamenodeProtocol>,
         block: hdfs::LocatedBlockProto,
