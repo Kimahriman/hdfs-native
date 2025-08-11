@@ -1,6 +1,6 @@
 import io
 import os
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Dict, Iterator, List, Optional
 
 # For some reason mypy doesn't think this exists
@@ -273,7 +273,7 @@ class AsyncFileReader:
     def __len__(self) -> int:
         return self.inner.file_length()
 
-    def __aiter__(self) -> Iterator[bytes]:
+    def __aiter__(self) -> AsyncIterator[bytes]:
         return self.read_range_stream(0, len(self))
 
     async def __aenter__(self):

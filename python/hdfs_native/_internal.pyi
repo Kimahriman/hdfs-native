@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterator
 from typing import Dict, Iterator, List, Literal, Optional
 
 # For some reason mypy doesn't think this exists
