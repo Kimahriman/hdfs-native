@@ -48,7 +48,7 @@ pub enum HdfsError {
     #[error("No valid SASL mechanism found")]
     NoSASLMechanism,
     #[error("XML parse error: {0}")]
-    XmlParseError(roxmltree::Error),
+    XmlParseError(#[from] roxmltree::Error),
 }
 
 pub type Result<T> = std::result::Result<T, HdfsError>;

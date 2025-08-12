@@ -200,13 +200,12 @@ impl Configuration {
     }
 
     fn read_from_file(path: &Path) -> Result<Vec<(String, String)>> {
-        let content = fs::read_to_string(path).map_err(HdfsError::IOError)?;
+        let content = fs::read_to_string(path)?;
         let opts = roxmltree::ParsingOptions {
             allow_dtd: true,
             ..Default::default()
         };
-        let tree = roxmltree::Document::parse_with_options(&content, opts)
-            .map_err(HdfsError::XmlParseError)?;
+        let tree = roxmltree::Document::parse_with_options(&content, opts)?;
 
         let pairs = tree
             .root()
