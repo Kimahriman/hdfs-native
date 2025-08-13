@@ -51,12 +51,16 @@ impl NamenodeProtocol {
         }
     }
 
-    async fn call<T: Message + Default>(
+    async fn call<Req, Res>(
         &self,
         method_name: &'static str,
-        message: impl Message,
+        message: Req,
         write: bool,
-    ) -> Result<T> {
+    ) -> Result<Res>
+    where
+        Req: Message + Default + std::fmt::Debug,
+        Res: Message + Default + std::fmt::Debug,
+    {
         debug!("{} request: {:?}", method_name, &message);
 
         let response = self
@@ -68,7 +72,7 @@ impl NamenodeProtocol {
             )
             .await?;
 
-        let decoded = T::decode_length_delimited(response)?;
+        let decoded = Res::decode_length_delimited(response)?;
         debug!("{} response: {:?}", method_name, &decoded);
 
         Ok(decoded)
