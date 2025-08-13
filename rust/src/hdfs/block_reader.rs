@@ -193,7 +193,7 @@ impl ReplicatedBlockStream {
                         warn!(
                             "Read operation did not succeed for DataNode {:?}: {}",
                             datanode,
-                            response.message().to_string()
+                            response.message()
                         );
                     } else {
                         return Ok((connection, response.read_op_checksum_info));
