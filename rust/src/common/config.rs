@@ -9,7 +9,6 @@ use log::debug;
 use rand::rng;
 use rand::seq::SliceRandom;
 
-use crate::HdfsError;
 use crate::Result;
 
 const HADOOP_CONF_DIR: &str = "HADOOP_CONF_DIR";
