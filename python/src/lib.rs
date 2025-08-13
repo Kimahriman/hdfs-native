@@ -12,7 +12,7 @@ use bytes::Bytes;
 use futures::stream::BoxStream;
 use futures::StreamExt;
 use hdfs_native::acl::{AclEntry, AclStatus};
-use hdfs_native::client::ContentSummary;
+use hdfs_native::client::{ClientBuilder, ContentSummary};
 use pyo3::exceptions::PyStopAsyncIteration;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use tokio::runtime::Runtime;
@@ -409,11 +409,13 @@ impl RawClient {
 
         let config = config.unwrap_or_default();
 
-        let inner = if let Some(url) = url {
-            Client::new_with_config(url, config).map_err(PythonHdfsError::from)?
-        } else {
-            Client::default_with_config(config).map_err(PythonHdfsError::from)?
-        };
+        let mut builder = ClientBuilder::new().with_config(config);
+
+        if let Some(url) = url {
+            builder = builder.with_url(url);
+        }
+
+        let inner = builder.build().map_err(PythonHdfsError::from)?;
 
         Ok(RawClient {
             inner,
@@ -707,11 +709,13 @@ impl AsyncRawClient {
 
         let config = config.unwrap_or_default();
 
-        let inner = if let Some(url) = url {
-            Client::new_with_config(url, config).map_err(PythonHdfsError::from)?
-        } else {
-            Client::default_with_config(config).map_err(PythonHdfsError::from)?
-        };
+        let mut builder = ClientBuilder::new().with_config(config);
+
+        if let Some(url) = url {
+            builder = builder.with_url(url);
+        }
+
+        let inner = builder.build().map_err(PythonHdfsError::from)?;
 
         Ok(Self { inner })
     }

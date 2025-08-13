@@ -130,24 +130,122 @@ impl MountTable {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-struct RuntimeHolder {
-    rt: Arc<OnceLock<Runtime>>,
+/// Builds a new [Client] instance. By default, configs will be loaded from the default config directories with the following precedence:
+/// - If the `HADOOP_CONF_DIR` environment variable is defined, configs will be loaded from `${HADOOP_CONF_DIR}/{core,hdfs}-site.xml`
+/// - If the `HADOOP_HOME` environment variable is defined, configs will be loaded from `${HADOOP_HOME}/etc/hadoop/{core,hdfs}-site.xml`
+/// - Otherwise no default configs are defined
+///
+/// If no URL is defined, the `fs.defaultFS` config must be defined and is used as the URL.
+///
+/// # Examples
+///
+/// Create a new client using the fs.defaultFS config
+/// ```rust
+/// # use hdfs_native::ClientBuilder;
+/// let client = ClientBuilder::new()
+///     .with_config(vec![("fs.defaultFS", "hdfs://127.0.0.1:9000")])
+///     .build()
+///     .unwrap();
+/// ```
+///
+/// Create a new client connecting to a specific URL:
+/// ```rust
+/// # use hdfs_native::ClientBuilder;
+/// let client = ClientBuilder::new()
+///     .with_url("hdfs://127.0.0.1:9000")
+///     .build()
+///     .unwrap();
+/// ```
+///
+/// Create a new client using a dedicated tokio runtime for spawned tasks and IO operations
+/// ```rust
+/// # use hdfs_native::ClientBuilder;
+/// let client = ClientBuilder::new()
+///     .with_url("hdfs://127.0.0.1:9000")
+///     .with_io_runtime(tokio::runtime::Runtime::new().unwrap())
+///     .build()
+///     .unwrap();
+/// ```
+#[derive(Default)]
+pub struct ClientBuilder {
+    url: Option<String>,
+    config: HashMap<String, String>,
+    runtime: Option<Runtime>,
+}
+
+impl ClientBuilder {
+    /// Create a new [ClientBuilder]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the URL to connect to. Can be the address of a single NameNode, or a logical NameService
+    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+        self.url = Some(url.into());
+        self
+    }
+
+    /// Set configs to use for the client. The provided configs will override any found in the default config files loaded
+    pub fn with_config(
+        mut self,
+        config: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        self.config = config
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        self
+    }
+
+    /// Use a dedicated tokio runtime for spawned tasks and IO operations
+    pub fn with_io_runtime(mut self, runtime: Runtime) -> Self {
+        self.runtime = Some(runtime);
+        self
+    }
+
+    /// Create the [Client] instance from the provided settings
+    pub fn build(self) -> Result<Client> {
+        let config = Configuration::new_with_config(self.config)?;
+        let url = if let Some(url) = self.url {
+            Url::parse(&url)?
+        } else {
+            Client::default_fs(&config)?
+        };
+
+        Client::build(&url, config, self.runtime)
+    }
+}
+
+#[derive(Clone, Debug)]
+enum RuntimeHolder {
+    Custom(Arc<Runtime>),
+    Default(Arc<OnceLock<Runtime>>),
 }
 
 impl RuntimeHolder {
+    fn new(rt: Option<Runtime>) -> Self {
+        if let Some(rt) = rt {
+            Self::Custom(Arc::new(rt))
+        } else {
+            Self::Default(Arc::new(OnceLock::new()))
+        }
+    }
+
     fn get_handle(&self) -> Handle {
-        match Handle::try_current() {
-            Ok(handle) => handle,
-            Err(_) => self
-                .rt
-                .get_or_init(|| Runtime::new().expect("Failed to create tokio runtime"))
-                .handle()
-                .clone(),
+        match self {
+            Self::Custom(rt) => rt.handle().clone(),
+            Self::Default(rt) => match Handle::try_current() {
+                Ok(handle) => handle,
+                Err(_) => rt
+                    .get_or_init(|| Runtime::new().expect("Failed to create tokio runtime"))
+                    .handle()
+                    .clone(),
+            },
         }
     }
 }
 
+/// A client to a speicific NameNode, NameService, or Viewfs mount table
 #[derive(Clone, Debug)]
 pub struct Client {
     mount_table: Arc<MountTable>,
@@ -161,19 +259,22 @@ impl Client {
     /// Creates a new HDFS Client. The URL must include the protocol and host, and optionally a port.
     /// If a port is included, the host is treated as a single NameNode. If no port is included, the
     /// host is treated as a name service that will be resolved using the HDFS config.
+    #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
     pub fn new(url: &str) -> Result<Self> {
         let parsed_url = Url::parse(url)?;
-        Self::with_config(&parsed_url, Configuration::new()?)
+        Self::build(&parsed_url, Configuration::new()?, None)
     }
 
+    #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
     pub fn new_with_config(url: &str, config: HashMap<String, String>) -> Result<Self> {
         let parsed_url = Url::parse(url)?;
-        Self::with_config(&parsed_url, Configuration::new_with_config(config)?)
+        Self::build(&parsed_url, Configuration::new_with_config(config)?, None)
     }
 
+    #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
     pub fn default_with_config(config: HashMap<String, String>) -> Result<Self> {
         let config = Configuration::new_with_config(config)?;
-        Self::with_config(&Self::default_fs(&config)?, config)
+        Self::build(&Self::default_fs(&config)?, config, None)
     }
 
     fn default_fs(config: &Configuration) -> Result<Url> {
@@ -186,7 +287,7 @@ impl Client {
         Ok(Url::parse(url)?)
     }
 
-    fn with_config(url: &Url, config: Configuration) -> Result<Self> {
+    fn build(url: &Url, config: Configuration, rt: Option<Runtime>) -> Result<Self> {
         let resolved_url = if !url.has_host() {
             let default_url = Self::default_fs(&config)?;
             if url.scheme() != default_url.scheme() || !default_url.has_host() {
@@ -201,7 +302,7 @@ impl Client {
 
         let config = Arc::new(config);
 
-        let rt_holder = RuntimeHolder::default();
+        let rt_holder = RuntimeHolder::new(rt);
 
         let mount_table = match url.scheme() {
             "hdfs" => {
@@ -602,7 +703,9 @@ impl Default for Client {
     /// Creates a new HDFS Client based on the fs.defaultFS setting. Panics if the config files fail to load,
     /// no defaultFS is defined, or the defaultFS is invalid.
     fn default() -> Self {
-        Self::default_with_config(Default::default()).expect("Failed to create default client")
+        ClientBuilder::new()
+            .build()
+            .expect("Failed to create default client")
     }
 }
 
@@ -802,9 +905,9 @@ mod test {
     use url::Url;
 
     use crate::{
+        client::ClientBuilder,
         common::config::Configuration,
         hdfs::{protocol::NamenodeProtocol, proxy::NameServiceProxy},
-        Client,
     };
 
     use super::{MountLink, MountTable};
@@ -823,43 +926,33 @@ mod test {
 
     #[test]
     fn test_default_fs() {
-        assert!(Client::default_with_config(
-            vec![("fs.defaultFS".to_string(), "hdfs://test:9000".to_string())]
-                .into_iter()
-                .collect(),
-        )
-        .is_ok());
+        assert!(ClientBuilder::new()
+            .with_config(vec![("fs.defaultFS", "hdfs://test:9000")])
+            .build()
+            .is_ok());
 
-        assert!(Client::default_with_config(
-            vec![("fs.defaultFS".to_string(), "hdfs://".to_string())]
-                .into_iter()
-                .collect(),
-        )
-        .is_err());
+        assert!(ClientBuilder::new()
+            .with_config(vec![("fs.defaultFS", "hdfs://")])
+            .build()
+            .is_err());
 
-        assert!(Client::new_with_config(
-            "hdfs://",
-            vec![("fs.defaultFS".to_string(), "hdfs://test:9000".to_string())]
-                .into_iter()
-                .collect(),
-        )
-        .is_ok());
+        assert!(ClientBuilder::new()
+            .with_url("hdfs://")
+            .with_config(vec![("fs.defaultFS", "hdfs://test:9000")])
+            .build()
+            .is_ok());
 
-        assert!(Client::new_with_config(
-            "hdfs://",
-            vec![("fs.defaultFS".to_string(), "hdfs://".to_string())]
-                .into_iter()
-                .collect(),
-        )
-        .is_err());
+        assert!(ClientBuilder::new()
+            .with_url("hdfs://")
+            .with_config(vec![("fs.defaultFS", "hdfs://")])
+            .build()
+            .is_err());
 
-        assert!(Client::new_with_config(
-            "hdfs://",
-            vec![("fs.defaultFS".to_string(), "viewfs://test".to_string())]
-                .into_iter()
-                .collect(),
-        )
-        .is_err());
+        assert!(ClientBuilder::new()
+            .with_url("hdfs://")
+            .with_config(vec![("fs.defaultFS", "viewfs://test")])
+            .build()
+            .is_err());
     }
 
     #[test]

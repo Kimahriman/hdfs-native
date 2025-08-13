@@ -7,7 +7,7 @@ mod test {
     use bytes::{BufMut, BytesMut};
     use hdfs_native::{
         acl::AclEntry,
-        client::FileStatus,
+        client::{ClientBuilder, FileStatus},
         minidfs::{DfsFeatures, MiniDfs},
         test::PROXY_CALLS,
         Client, Result, WriteOptions,
@@ -182,7 +182,7 @@ mod test {
         let _ = env_logger::builder().is_test(true).try_init();
 
         let _dfs = MiniDfs::with_features(features);
-        let client = Client::default();
+        let client = ClientBuilder::new().build().unwrap();
 
         let mut file = client.create("/testfile", WriteOptions::default()).await?;
         for i in 0..TEST_FILE_INTS as i32 {

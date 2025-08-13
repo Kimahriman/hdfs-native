@@ -5,7 +5,7 @@ mod common;
 mod test {
     use hdfs_native::{
         minidfs::{DfsFeatures, MiniDfs},
-        Client, Result, WriteOptions,
+        Client, ClientBuilder, Result, WriteOptions,
     };
     use serial_test::serial;
     use std::collections::HashSet;
@@ -31,8 +31,8 @@ mod test {
         // fallback resolves to hdfs://ns1/nested
         let _dfs = MiniDfs::with_features(&features);
         let viewfs = Client::default();
-        let hdfs1 = Client::new("hdfs://ns0").unwrap();
-        let hdfs2 = Client::new("hdfs://ns1").unwrap();
+        let hdfs1 = ClientBuilder::new().with_url("hdfs://ns0").build().unwrap();
+        let hdfs2 = ClientBuilder::new().with_url("hdfs://ns1").build().unwrap();
 
         touch(&viewfs, "/mount1/file1").await;
         touch(&viewfs, "/root/file2").await;
