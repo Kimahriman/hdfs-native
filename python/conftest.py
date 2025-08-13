@@ -1,7 +1,10 @@
+import asyncio
 import os
 import subprocess
 
 import pytest
+import pytest_asyncio
+from pytest_benchmark.fixture import BenchmarkFixture
 
 from hdfs_native import AsyncClient, Client
 
@@ -56,3 +59,20 @@ def async_client(minidfs: str):
     client = AsyncClient(minidfs)
 
     yield client
+
+
+@pytest_asyncio.fixture
+async def aio_benchmark(benchmark: BenchmarkFixture):
+    async def run_async_coroutine(func, *args, **kwargs):
+        return await func(*args, **kwargs)
+
+    def _wrapper(func, *args, **kwargs):
+        assert asyncio.iscoroutinefunction(func)
+
+        @benchmark
+        def _():
+            return asyncio.get_event_loop().run_until_complete(
+                run_async_coroutine(func, *args, **kwargs)
+            )
+
+    return _wrapper

@@ -1,9 +1,10 @@
+import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
 from pytest_benchmark.fixture import BenchmarkFixture
 
-from hdfs_native import Client
+from hdfs_native import AsyncClient, Client
 
 
 @pytest.mark.benchmark
@@ -13,7 +14,7 @@ def test_benchmark_threading(client: Client, benchmark: BenchmarkFixture):
             client.create(path).close()
             return client.delete(path)
 
-        with ThreadPoolExecutor(100) as executor:
+        with ThreadPoolExecutor(10) as executor:
             futures = []
             for i in range(1000):
                 futures.append(executor.submit(func, f"/bench{i}"))
@@ -25,12 +26,17 @@ def test_benchmark_threading(client: Client, benchmark: BenchmarkFixture):
 
 
 @pytest.mark.benchmark
-def test_benchmark_listing(client: Client, benchmark: BenchmarkFixture):
-    for i in range(1000):
-        client.create(f"/bench{i}").close()
+def test_benchmark_threading_async(
+    async_client: AsyncClient,
+    aio_benchmark,
+):
+    async def do_work():
+        async def func(path: str):
+            await (await async_client.create(path)).close()
+            return await async_client.delete(path)
 
-    def do_work():
-        for _ in client.list_status("/"):
-            pass
+        async with asyncio.TaskGroup() as tg:
+            for i in range(1000):
+                tg.create_task(func(f"/bench{i}"))
 
-    benchmark(do_work)
+    aio_benchmark(do_work)
