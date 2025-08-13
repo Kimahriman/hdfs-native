@@ -218,7 +218,8 @@ impl Client {
                 }
             }
             "viewfs" => Self::build_mount_table(
-                resolved_url.host_str().unwrap(),
+                // Host is guaranteed to be present.
+                resolved_url.host_str().expect("URL must have a host"),
                 Arc::clone(&config),
                 rt_holder.get_handle(),
             )?,
