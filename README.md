@@ -63,7 +63,7 @@ The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xm
 - `dfs.client.failover.resolve-needed.*` - DNS based NameNode discovery
 - `dfs.client.failover.resolver.useFQDN.*` - DNS based NameNode discovery
 - `dfs.client.failover.random.order.*` - Randomize order of NameNodes to try
-- `dfs.client.failover.proxy.provider` - Supports the behavior of the following proxy providers. Any other values will default back to the `ConfiguredFailoverProxyProvider` behavior:
+- `dfs.client.failover.proxy.provider.*` - Supports the behavior of the following proxy providers. Any other values will default back to the `ConfiguredFailoverProxyProvider` behavior:
     - `org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider`
     - `org.apache.hadoop.hdfs.server.namenode.ha.ObserverReadProxyProvider`
     - `org.apache.hadoop.hdfs.server.namenode.ha.RouterObserverReadConfiguredFailoverProxyProvider`
