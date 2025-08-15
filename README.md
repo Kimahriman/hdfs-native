@@ -6,7 +6,7 @@
 
 # Native Rust HDFS client
 
-This is an HDFS client written natively in Rust. Most major features are working, but it does not support every single client config.
+`hdfs-native` is an HDFS client written natively in Rust. It supports nearly all major features of an HDFS client, and several key client configuration options listed below.
 
 ## Supported HDFS features
 Here is a list of currently supported and unsupported but possible future features.
