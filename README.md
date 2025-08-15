@@ -1,6 +1,8 @@
-[![Build](https://img.shields.io/github/actions/workflow/status/Kimahriman/hdfs-native/rust-test.yml?branch=master)]
+[![Build](https://img.shields.io/github/actions/workflow/status/Kimahriman/hdfs-native/rust-test.yml?branch=master)](https://github.com/Kimahriman/hdfs-native/actions/workflows/rust-test.yml?query=branch%3Amaster)
 [![Crates.io](https://img.shields.io/crates/v/hdfs-native.svg)](https://crates.io/crates/hdfs-native)
-[![PyPI](https://img.shields.io/pypi/v/delta-spark.svg)](https://pypi.org/project/delta-spark/)
+[![PyPI](https://img.shields.io/pypi/v/delta-spark.svg)](https://pypi.org/project/hdfs-native)
+[![Rust Docs](https://img.shields.io/docsrs/hdfs-native)](https://docs.rs/hdfs-native/latest/hdfs_native)
+[![Python Docs]](https://docs.rs/hdfs-native/latest/hdfs_native)
 
 # Native Rust HDFS client
 
