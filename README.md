@@ -1,4 +1,7 @@
 # Native Rust HDFS client
+[![Build](https://img.shields.io/github/actions/workflow/status/Kimahriman/hdfs-native/build.yml?branch=master)]
+[![PyPI](https://img.shields.io/pypi/v/delta-spark.svg)](https://pypi.org/project/delta-spark/)
+
 This is an HDFS client written natively in Rust. Most major features are working, but it does not support every single client config.
 
 ## Supported HDFS features
