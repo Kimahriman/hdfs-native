@@ -130,6 +130,34 @@ impl MountTable {
     }
 }
 
+/// Holds either a [Runtime] or a [Handle] to an existing runtime for IO tasks
+#[derive(Debug)]
+pub enum IORuntime {
+    Runtime(Runtime),
+    Handle(Handle),
+}
+
+impl From<Runtime> for IORuntime {
+    fn from(value: Runtime) -> Self {
+        Self::Runtime(value)
+    }
+}
+
+impl From<Handle> for IORuntime {
+    fn from(value: Handle) -> Self {
+        Self::Handle(value)
+    }
+}
+
+impl IORuntime {
+    fn handle(&self) -> Handle {
+        match self {
+            Self::Runtime(runtime) => runtime.handle().clone(),
+            Self::Handle(handle) => handle.clone(),
+        }
+    }
+}
+
 /// Builds a new [Client] instance. By default, configs will be loaded from the default config directories with the following precedence:
 /// - If the `HADOOP_CONF_DIR` environment variable is defined, configs will be loaded from `${HADOOP_CONF_DIR}/{core,hdfs}-site.xml`
 /// - If the `HADOOP_HOME` environment variable is defined, configs will be loaded from `${HADOOP_HOME}/etc/hadoop/{core,hdfs}-site.xml`
@@ -170,7 +198,7 @@ impl MountTable {
 pub struct ClientBuilder {
     url: Option<String>,
     config: HashMap<String, String>,
-    runtime: Option<Runtime>,
+    runtime: Option<IORuntime>,
 }
 
 impl ClientBuilder {
@@ -197,9 +225,10 @@ impl ClientBuilder {
         self
     }
 
-    /// Use a dedicated tokio runtime for spawned tasks and IO operations
-    pub fn with_io_runtime(mut self, runtime: Runtime) -> Self {
-        self.runtime = Some(runtime);
+    /// Use a dedicated tokio runtime for spawned tasks and IO operations. Can either take ownership of a whole [Runtime]
+    /// or take a [Handle] to an externally owned runtime.
+    pub fn with_io_runtime(mut self, runtime: impl Into<IORuntime>) -> Self {
+        self.runtime = Some(runtime.into());
         self
     }
 
@@ -218,12 +247,12 @@ impl ClientBuilder {
 
 #[derive(Clone, Debug)]
 enum RuntimeHolder {
-    Custom(Arc<Runtime>),
+    Custom(Arc<IORuntime>),
     Default(Arc<OnceLock<Runtime>>),
 }
 
 impl RuntimeHolder {
-    fn new(rt: Option<Runtime>) -> Self {
+    fn new(rt: Option<IORuntime>) -> Self {
         if let Some(rt) = rt {
             Self::Custom(Arc::new(rt))
         } else {
@@ -287,7 +316,7 @@ impl Client {
         Ok(Url::parse(url)?)
     }
 
-    fn build(url: &Url, config: Configuration, rt: Option<Runtime>) -> Result<Self> {
+    fn build(url: &Url, config: Configuration, rt: Option<IORuntime>) -> Result<Self> {
         let resolved_url = if !url.has_host() {
             let default_url = Self::default_fs(&config)?;
             if url.scheme() != default_url.scheme() || !default_url.has_host() {
@@ -1024,5 +1053,21 @@ mod test {
         let (link, resolved) = mount_table.resolve("/mount3/nested/file");
         assert_eq!(link.viewfs_path, "/mount3/nested");
         assert_eq!(resolved, "/path3/file");
+    }
+
+    #[test]
+    fn test_io_runtime() {
+        assert!(ClientBuilder::new()
+            .with_url("hdfs://127.0.0.1:9000")
+            .with_io_runtime(Runtime::new().unwrap())
+            .build()
+            .is_ok());
+
+        let rt = Runtime::new().unwrap();
+        assert!(ClientBuilder::new()
+            .with_url("hdfs://127.0.0.1:9000")
+            .with_io_runtime(rt.handle().clone())
+            .build()
+            .is_ok());
     }
 }

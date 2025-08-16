@@ -1,6 +1,6 @@
 [package]
 name = "hdfs-native-python"
-version = "0.12.0"
+version = "0.12.1"
 edition = "2021"
 authors = ["Adam Binford <adamq43@gmail.com>"]
 homepage = "https://github.com/Kimahriman/hdfs-native"
