@@ -298,7 +298,12 @@ impl FileWriter {
                     return Ok(());
                 }
 
-                tokio::time::sleep(Duration::from_millis(retry_delay)).await;
+                // Sleep in the provided runtime in case we are not called from a tokio runtime
+                let sleep = {
+                    let _guard = self.handle.enter();
+                    tokio::time::sleep(Duration::from_millis(retry_delay))
+                };
+                sleep.await;
 
                 retry_delay *= 2;
                 retries += 1;
