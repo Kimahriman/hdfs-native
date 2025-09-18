@@ -23,6 +23,7 @@ const DFS_CLIENT_FAILOVER_RESOLVE_NEEDED: &str = "dfs.client.failover.resolve-ne
 const DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN: &str = "dfs.client.failover.resolver.useFQDN";
 const DFS_CLIENT_FAILOVER_RANDOM_ORDER: &str = "dfs.client.failover.random.order";
 const DFS_CLIENT_FAILOVER_PROXY_PROVIDER: &str = "dfs.client.failover.proxy.provider";
+const DFS_DATA_TRANSFER_PROTECTION: &str = "dfs.data.transfer.protection";
 
 const HADOOP_SECURITY_AUTHENTICATION: &str = "hadoop.security.authentication";
 
@@ -81,6 +82,10 @@ impl Configuration {
     pub(crate) fn security_enabled(&self) -> bool {
         self.get(HADOOP_SECURITY_AUTHENTICATION)
             .is_some_and(|c| c != "simple")
+    }
+
+    pub(crate) fn data_transfer_protection_enabled(&self) -> bool {
+        self.get(DFS_DATA_TRANSFER_PROTECTION).is_some()
     }
 
     pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Result<Vec<String>> {

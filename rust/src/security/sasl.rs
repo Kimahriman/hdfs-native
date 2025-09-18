@@ -600,8 +600,10 @@ impl SaslDatanodeConnection {
     /// 1. If `dfs.encrypt.data.transfer` is set on the NameNode, always encrypt the session
     ///    and use an encryption key from the NameNode for the negotiation. This will happen
     ///    if `encryption_key` is defined.
-    /// 2. If there is no block token or the DataNode transfer port is privileged (<= 1024), we
-    ///    skip the SASL handshake and assume it is trusted.
+    /// 2. If there is no block token
+    ///    or the DataNode transfer port is privileged (<= 1024)
+    ///    or `dfs.data.transfer.protection` not set,
+    ///    we skip the SASL handshake and assume it is trusted.
     /// 3. Otherwise, we do a SAL handshake using the provided block token.
     ///
     /// For cases 1 and 3, we optionally negotiate a cipher to use for encryption instead of
@@ -618,6 +620,7 @@ impl SaslDatanodeConnection {
         } else if !config.security_enabled()
             || token.identifier.is_empty()
             || datanode_id.xfer_port <= 1024
+            || !config.data_transfer_protection_enabled()
         {
             return self.split(None, None);
         } else {
