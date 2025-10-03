@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::io::Read;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 
@@ -205,8 +206,11 @@ impl Configuration {
 
     fn read_from_file(path: &Path) -> Result<Vec<(String, String)>> {
         let content = fs::read_to_string(path)?;
+        let mut resolver = EntityResolver::new(path)?;
+        let mut entity_resolver = move |_: Option<&str>, uri: &str| resolver.resolve(uri);
         let opts = roxmltree::ParsingOptions {
             allow_dtd: true,
+            entity_resolver: Some(&mut entity_resolver),
             ..Default::default()
         };
         let tree = roxmltree::Document::parse_with_options(&content, opts)?;
@@ -248,6 +252,168 @@ impl Configuration {
     }
 }
 
+/// A simple entity resolver to resolve the XML system entities.
+struct EntityResolver {
+    basepath: PathBuf,
+    bump: bumpalo::Bump,
+
+    file_length_limit: u64,
+    allocated_size_limit: u64,
+}
+
+impl EntityResolver {
+    fn new(config_file_path: &Path) -> Result<Self> {
+        let config_file_path = config_file_path.canonicalize()?;
+        let basepath = match config_file_path.parent() {
+            Some(p) => p.to_path_buf(),
+            None => {
+                // This should never happen, because the `config_file_path` is
+                // expected to be a file. And so its parent should be a valid
+                // directory.
+                return Err(crate::HdfsError::InvalidPath(format!(
+                    "invalid base path for configuration file: {}",
+                    config_file_path.display()
+                )));
+            }
+        };
+
+        Ok(Self {
+            basepath,
+            bump: bumpalo::Bump::new(),
+            file_length_limit: 16 * 1024 * 1024,    // 16 MiB
+            allocated_size_limit: 16 * 1024 * 1024, // 16 MiB
+        })
+    }
+
+    fn resolve(&mut self, uri: &str) -> core::result::Result<Option<&'static str>, String> {
+        // Load full path.
+        let full_path = self.resolve_full_path(uri)?;
+
+        // Make sure the file exists.
+        if !full_path.exists() {
+            return Ok(None);
+        }
+
+        // Get metadata.
+        let entity_file_metadata = match fs::metadata(&full_path) {
+            Ok(m) => m,
+            Err(e) => {
+                return Err(format!(
+                    "failed to get metadata of entity file {}: {}",
+                    full_path.display(),
+                    e
+                ))
+            }
+        };
+        let entity_file_size = entity_file_metadata.len();
+
+        // Make sure the file size is reasonable.
+        if entity_file_size > self.file_length_limit {
+            return Err(format!(
+                "entity file {} is too large ({} bytes)",
+                full_path.display(),
+                entity_file_size
+            ));
+        }
+
+        // Make sure the allocated size is reasonable.
+        let entity_file_allocated_size = self.bump.allocated_bytes() as u64;
+        if entity_file_allocated_size + entity_file_size > self.allocated_size_limit {
+            return Err(format!(
+                "entity resolver has no more memory (allocated {} bytes, entity file size {} bytes)",
+                entity_file_allocated_size,
+                entity_file_size,
+            ));
+        }
+
+        // Allocate memory in the bump arena.
+        if entity_file_size == 0 {
+            return Ok(Some(""));
+        }
+        let layout = std::alloc::Layout::from_size_align(entity_file_size as usize, 1)
+            .expect("Failed to create layout for entity file content");
+        let entity_file_content_ptr = self.bump.alloc_layout(layout).as_ptr() as *mut u8;
+
+        // Read the file content into the allocated memory.
+        //
+        // SAFETY: We have allocated enough memory for the file content already.
+        unsafe {
+            let entity_file_content_slice =
+                std::slice::from_raw_parts_mut(entity_file_content_ptr, entity_file_size as usize);
+            fs::File::open(&full_path)
+                .map_err(|e| {
+                    format!(
+                        "Failed to open entity file (path {}): {}",
+                        full_path.display(),
+                        e
+                    )
+                })?
+                .read_exact(entity_file_content_slice)
+                .map_err(|e| {
+                    format!(
+                        "Failed to read entity file content (path {}): {}",
+                        full_path.display(),
+                        e
+                    )
+                })?;
+        }
+
+        // Make sure the content is valid UTF-8.
+        let entity_file_content = unsafe {
+            std::str::from_utf8(std::slice::from_raw_parts(
+                entity_file_content_ptr,
+                entity_file_size as usize,
+            ))
+        };
+        let result = match entity_file_content {
+            Ok(s) => s,
+            Err(e) => {
+                return Err(format!(
+                    "entity file {} contains invalid UTF-8: {}",
+                    full_path.display(),
+                    e
+                ))
+            }
+        };
+
+        // Return the content.
+        Ok(Some(result))
+    }
+
+    fn resolve_full_path(&self, uri: &str) -> core::result::Result<PathBuf, String> {
+        use std::path::{Component, Path};
+
+        // Build the full path to the entity file.
+        //
+        // To make sure it is safe, we only allow relative path with `.` or
+        // normal components.
+        let path = Path::new(uri);
+        let mut full_path = self.basepath.clone();
+        for c in path.components() {
+            match c {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    return Err(
+                        "parent directory components `..` are not allowed in entity URIs"
+                            .to_string(),
+                    );
+                }
+                Component::Normal(p) => full_path.push(p),
+                Component::RootDir => {
+                    return Err("absolute paths are not allowed in entity URIs".to_string())
+                }
+                Component::Prefix(p) => {
+                    return Err(format!(
+                        "absolute paths (with prefix {p:?}) are not allowed in entity URIs"
+                    ))
+                }
+            }
+        }
+
+        Ok(full_path)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::collections::HashMap;
@@ -258,7 +424,7 @@ mod test {
     use crate::common::config::DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN;
 
     use super::{
-        Configuration, DFS_CLIENT_FAILOVER_RESOLVE_NEEDED,
+        Configuration, EntityResolver, DFS_CLIENT_FAILOVER_RESOLVE_NEEDED,
         DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_BEST_EFFORT_KEY,
         DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY,
         DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_POLICY_KEY, HA_NAMENODES_PREFIX,
@@ -495,5 +661,95 @@ mod test {
         };
         let policy = config.get_replace_datanode_on_failure_policy();
         assert!(!policy.is_best_effort());
+    }
+
+    #[test]
+    fn test_resolve_full_path() {
+        use tempfile::tempdir;
+
+        // Create a temporary directory for testing
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let basepath = temp_dir.path().to_path_buf();
+
+        let resolver = EntityResolver {
+            basepath: basepath.clone(),
+            bump: bumpalo::Bump::new(),
+            file_length_limit: 16 * 1024 * 1024,
+            allocated_size_limit: 16 * 1024 * 1024,
+        };
+
+        // Test normal relative path
+        let result = resolver.resolve_full_path("config.xml");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), basepath.join("config.xml"));
+
+        // Test relative path with subdirectory
+        let result = resolver.resolve_full_path("subdir/config.xml");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), basepath.join("subdir").join("config.xml"));
+
+        // Test path with current directory component
+        let result = resolver.resolve_full_path("./config.xml");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), basepath.join("config.xml"));
+
+        // Test path with multiple current directory components
+        let result = resolver.resolve_full_path("./subdir/./config.xml");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), basepath.join("subdir").join("config.xml"));
+
+        // Test path with parent directory component (should fail)
+        let result = resolver.resolve_full_path("../config.xml");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "parent directory components `..` are not allowed in entity URIs"
+        );
+
+        // Test path with parent directory in the middle (should fail)
+        let result = resolver.resolve_full_path("subdir/../config.xml");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "parent directory components `..` are not allowed in entity URIs"
+        );
+
+        // Test absolute path (should fail)
+        let result = resolver.resolve_full_path("/absolute/path/config.xml");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "absolute paths are not allowed in entity URIs"
+        );
+
+        // Test absolute path (should fail)
+        let result = resolver.resolve_full_path("/etc/passwd");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "absolute paths are not allowed in entity URIs"
+        );
+
+        // Test empty path
+        let result = resolver.resolve_full_path("");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), basepath);
+
+        // Test path with only current directory
+        let result = resolver.resolve_full_path(".");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), basepath);
+
+        // Test nested subdirectories
+        let result = resolver.resolve_full_path("dir1/dir2/dir3/config.xml");
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            basepath
+                .join("dir1")
+                .join("dir2")
+                .join("dir3")
+                .join("config.xml")
+        );
     }
 }

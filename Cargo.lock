@@ -764,6 +764,7 @@ dependencies = [
  "aes",
  "base64",
  "bitflags 2.9.1",
+ "bumpalo",
  "bytes",
  "cbc",
  "chrono",
@@ -1634,8 +1635,10 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 [[package]]
 name = "roxmltree"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
+source = "git+https://github.com/RazrFalcon/roxmltree.git?rev=634f4d0#634f4d0047ec947126f409f513c7dbcf34763704"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "rustc-demangle"

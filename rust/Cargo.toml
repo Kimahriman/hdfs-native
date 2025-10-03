@@ -14,6 +14,7 @@ license = "Apache-2.0"
 aes = "0.8"
 base64 = "0.22"
 bitflags = "2"
+bumpalo = "3.19.0"
 bytes = { workspace = true }
 cbc = "0.1"
 chrono = "0.4"
@@ -36,7 +37,7 @@ prost = "0.14"
 prost-types = "0.14"
 rand = "0.9"
 regex = "1"
-roxmltree = "0.20"
+roxmltree = { git = "https://github.com/RazrFalcon/roxmltree.git", rev = "634f4d0" } # TODO: Update it when new version is released.
 socket2 = "0.6"
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "io-util", "macros", "sync", "time"] }
