@@ -1634,8 +1634,8 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
 name = "roxmltree"
-version = "0.20.0"
-source = "git+https://github.com/RazrFalcon/roxmltree.git?rev=634f4d0#634f4d0047ec947126f409f513c7dbcf34763704"
+version = "0.21.1"
+source = "git+https://github.com/RazrFalcon/roxmltree.git?branch=fix-implicit-static#06e58ed65660de680260156db0f39e06769a1f39"
 dependencies = [
  "memchr",
 ]

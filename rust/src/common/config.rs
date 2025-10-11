@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::io::Read;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 
@@ -206,11 +205,12 @@ impl Configuration {
 
     fn read_from_file(path: &Path) -> Result<Vec<(String, String)>> {
         let content = fs::read_to_string(path)?;
-        let mut resolver = EntityResolver::new(path)?;
-        let mut entity_resolver = move |_: Option<&str>, uri: &str| resolver.resolve(uri);
+
+        let resolver = EntityResolver::new(path)?;
+        let entity_resolver = |_: Option<&str>, uri: &str| resolver.resolve(uri);
         let opts = roxmltree::ParsingOptions {
             allow_dtd: true,
-            entity_resolver: Some(&mut entity_resolver),
+            entity_resolver: Some(&entity_resolver),
             ..Default::default()
         };
         let tree = roxmltree::Document::parse_with_options(&content, opts)?;
@@ -280,12 +280,13 @@ impl EntityResolver {
         Ok(Self {
             basepath,
             bump: bumpalo::Bump::new(),
+
             file_length_limit: 16 * 1024 * 1024,    // 16 MiB
             allocated_size_limit: 16 * 1024 * 1024, // 16 MiB
         })
     }
 
-    fn resolve(&mut self, uri: &str) -> core::result::Result<Option<&'static str>, String> {
+    fn resolve<'a>(&'a self, uri: &str) -> core::result::Result<Option<&'a str>, String> {
         // Load full path.
         let full_path = self.resolve_full_path(uri)?;
 
@@ -326,58 +327,18 @@ impl EntityResolver {
             ));
         }
 
-        // Allocate memory in the bump arena.
-        if entity_file_size == 0 {
-            return Ok(Some(""));
-        }
-        let layout = std::alloc::Layout::from_size_align(entity_file_size as usize, 1)
-            .expect("Failed to create layout for entity file content");
-        let entity_file_content_ptr = self.bump.alloc_layout(layout).as_ptr() as *mut u8;
-
-        // Read the file content into the allocated memory.
-        //
-        // SAFETY: We have allocated enough memory for the file content already.
-        unsafe {
-            let entity_file_content_slice =
-                std::slice::from_raw_parts_mut(entity_file_content_ptr, entity_file_size as usize);
-            fs::File::open(&full_path)
-                .map_err(|e| {
-                    format!(
-                        "Failed to open entity file (path {}): {}",
-                        full_path.display(),
-                        e
-                    )
-                })?
-                .read_exact(entity_file_content_slice)
-                .map_err(|e| {
-                    format!(
-                        "Failed to read entity file content (path {}): {}",
-                        full_path.display(),
-                        e
-                    )
-                })?;
-        }
-
-        // Make sure the content is valid UTF-8.
-        let entity_file_content = unsafe {
-            std::str::from_utf8(std::slice::from_raw_parts(
-                entity_file_content_ptr,
-                entity_file_size as usize,
-            ))
-        };
-        let result = match entity_file_content {
-            Ok(s) => s,
-            Err(e) => {
-                return Err(format!(
-                    "entity file {} contains invalid UTF-8: {}",
-                    full_path.display(),
-                    e
-                ))
-            }
-        };
+        // Read the file content and move it into the bump arena.
+        let entity_file_content = fs::read_to_string(&full_path).map_err(|e| {
+            format!(
+                "read entity file content (path {}): {}",
+                full_path.display(),
+                e
+            )
+        })?;
+        let entity_file_content = self.bump.alloc_str(&entity_file_content);
 
         // Return the content.
-        Ok(Some(result))
+        Ok(Some(entity_file_content))
     }
 
     fn resolve_full_path(&self, uri: &str) -> core::result::Result<PathBuf, String> {
