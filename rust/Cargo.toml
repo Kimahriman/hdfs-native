@@ -37,7 +37,7 @@ prost = "0.14"
 prost-types = "0.14"
 rand = "0.9"
 regex = "1"
-roxmltree = { git = "https://github.com/RazrFalcon/roxmltree.git", branch = "fix-implicit-static" } # TODO: Remove when new version is released.
+roxmltree = "0.21.1"
 socket2 = "0.6"
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "io-util", "macros", "sync", "time"] }
