@@ -713,4 +713,66 @@ mod test {
                 .join("config.xml")
         );
     }
+
+    #[test]
+    fn test_config_read_from_file() {
+        use indoc::indoc;
+        use std::fs;
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+
+        // The main config file.
+        let config_path = temp_dir.path().join("test-config.xml");
+        let config_content = indoc! { r#"
+            <?xml version="1.0"?>
+            <!DOCTYPE configuration [
+                <!ENTITY example-entity SYSTEM "example-entity.xml">
+            ]>
+            <configuration>
+                <property>
+                    <name>fs.defaultFS</name>
+                    <value>hdfs://localhost:9000</value>
+                </property>
+                <property>
+                    <name>dfs.replication</name>
+                    <value>3</value>
+                </property>
+                &example-entity;
+            </configuration>
+        "# };
+        fs::write(&config_path, config_content).expect("Failed to write config file");
+
+        // The entity file.
+        let example_entity_path = temp_dir.path().join("example-entity.xml");
+        let example_entity_content = indoc! { r#"
+            <?xml version="1.0"?>
+            <property>
+                <name>custom.property</name>
+                <value>entity-value</value>
+            </property>
+        "# };
+        fs::write(example_entity_path, example_entity_content)
+            .expect("Failed to write entity file");
+
+        // Get the config map from files.
+        let map: HashMap<String, String> = {
+            let pairs =
+                Configuration::read_from_file(&config_path).expect("Failed to read config file");
+            let mut res = HashMap::new();
+            for (key, value) in pairs {
+                res.insert(key, value);
+            }
+            res
+        };
+        assert_eq!(
+            map.get("fs.defaultFS").map(|s| s.as_str()),
+            Some("hdfs://localhost:9000")
+        );
+        assert_eq!(map.get("dfs.replication").map(|s| s.as_str()), Some("3"));
+        assert_eq!(
+            map.get("custom.property").map(|s| s.as_str()),
+            Some("entity-value")
+        );
+    }
 }

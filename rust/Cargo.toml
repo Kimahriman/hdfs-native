@@ -60,6 +60,7 @@ env_logger = { workspace = true }
 serial_test = "3"
 tempfile = "3"
 which = "8"
+indoc = "2"
 
 [features]
 generate-protobuf = ["prost-build", "protobuf-src"]

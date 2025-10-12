@@ -780,6 +780,7 @@ dependencies = [
  "g2p",
  "hex",
  "hmac",
+ "indoc",
  "libc",
  "libloading",
  "log",
