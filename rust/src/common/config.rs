@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::io;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 
@@ -23,6 +22,10 @@ const HA_NAMENODE_RPC_ADDRESS_PREFIX: &str = "dfs.namenode.rpc-address";
 const DFS_CLIENT_FAILOVER_RESOLVE_NEEDED: &str = "dfs.client.failover.resolve-needed";
 const DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN: &str = "dfs.client.failover.resolver.useFQDN";
 const DFS_CLIENT_FAILOVER_RANDOM_ORDER: &str = "dfs.client.failover.random.order";
+const DFS_CLIENT_FAILOVER_PROXY_PROVIDER: &str = "dfs.client.failover.proxy.provider";
+const DFS_DATA_TRANSFER_PROTECTION: &str = "dfs.data.transfer.protection";
+
+const HADOOP_SECURITY_AUTHENTICATION: &str = "hadoop.security.authentication";
 
 // Viewfs settings
 const VIEWFS_MOUNTTABLE_PREFIX: &str = "fs.viewfs.mounttable";
@@ -40,7 +43,7 @@ pub struct Configuration {
 }
 
 impl Configuration {
-    pub fn new() -> io::Result<Self> {
+    pub fn new() -> Result<Self> {
         let mut map: HashMap<String, String> = HashMap::new();
 
         if let Some(conf_dir) = Self::get_conf_dir() {
@@ -59,15 +62,15 @@ impl Configuration {
         Ok(Configuration { map })
     }
 
-    pub fn new_with_config(conf_map: HashMap<String, String>) -> io::Result<Self> {
+    pub fn new_with_config(conf_map: HashMap<String, String>) -> Result<Self> {
         let mut conf = Self::new()?;
         conf.map.extend(conf_map);
         Ok(conf)
     }
 
     /// Get a value from the config, returning None if the key wasn't defined.
-    pub fn get(&self, key: &str) -> Option<String> {
-        self.map.get(key).cloned()
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.map.get(key).map(|s| s.as_ref())
     }
 
     fn get_boolean(&self, key: &str, default: bool) -> bool {
@@ -76,17 +79,25 @@ impl Configuration {
             .unwrap_or(default)
     }
 
+    pub(crate) fn security_enabled(&self) -> bool {
+        self.get(HADOOP_SECURITY_AUTHENTICATION)
+            .is_some_and(|c| c != "simple")
+    }
+
+    pub(crate) fn data_transfer_protection_enabled(&self) -> bool {
+        self.get(DFS_DATA_TRANSFER_PROTECTION).is_some()
+    }
+
     pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Result<Vec<String>> {
         let urls: Vec<String> = self
             .map
-            .get(&format!("{}.{}", HA_NAMENODES_PREFIX, nameservice))
+            .get(&format!("{HA_NAMENODES_PREFIX}.{nameservice}"))
             .into_iter()
             .flat_map(|namenodes| {
                 namenodes.split(',').flat_map(|namenode_id| {
                     self.map
                         .get(&format!(
-                            "{}.{}.{}",
-                            HA_NAMENODE_RPC_ADDRESS_PREFIX, nameservice, namenode_id
+                            "{HA_NAMENODE_RPC_ADDRESS_PREFIX}.{nameservice}.{namenode_id}"
                         ))
                         .map(|s| s.to_string())
                 })
@@ -94,11 +105,11 @@ impl Configuration {
             .collect();
 
         let mut urls = if self.get_boolean(
-            &format!("{}.{}", DFS_CLIENT_FAILOVER_RESOLVE_NEEDED, nameservice),
+            &format!("{DFS_CLIENT_FAILOVER_RESOLVE_NEEDED}.{nameservice}"),
             false,
         ) {
             let use_fqdn = self.get_boolean(
-                &format!("{}.{}", DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN, nameservice),
+                &format!("{DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN}.{nameservice}"),
                 true,
             );
 
@@ -127,7 +138,7 @@ impl Configuration {
         };
 
         if self.get_boolean(
-            &format!("{}.{}", DFS_CLIENT_FAILOVER_RANDOM_ORDER, nameservice),
+            &format!("{DFS_CLIENT_FAILOVER_RANDOM_ORDER}.{nameservice}"),
             false,
         ) {
             urls.shuffle(&mut rng());
@@ -135,15 +146,21 @@ impl Configuration {
         Ok(urls)
     }
 
+    pub(crate) fn get_proxy_for_nameservice(&self, nameservice: &str) -> Option<&str> {
+        self.get(&format!(
+            "{DFS_CLIENT_FAILOVER_PROXY_PROVIDER}.{nameservice}"
+        ))
+    }
+
     pub(crate) fn get_mount_table(&self, cluster: &str) -> Vec<(Option<String>, String)> {
         self.map
             .iter()
             .flat_map(|(key, value)| {
                 if let Some(path) =
-                    key.strip_prefix(&format!("{}.{}.link.", VIEWFS_MOUNTTABLE_PREFIX, cluster))
+                    key.strip_prefix(&format!("{VIEWFS_MOUNTTABLE_PREFIX}.{cluster}.link."))
                 {
                     Some((Some(path.to_string()), value.to_string()))
-                } else if key == &format!("{}.{}.linkFallback", VIEWFS_MOUNTTABLE_PREFIX, cluster) {
+                } else if key == &format!("{VIEWFS_MOUNTTABLE_PREFIX}.{cluster}.linkFallback") {
                     Some((None, value.to_string()))
                 } else {
                     None
@@ -173,7 +190,7 @@ impl Configuration {
 
         let policy_str = self
             .get(DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_POLICY_KEY)
-            .unwrap_or_else(|| "DEFAULT".to_string())
+            .unwrap_or("DEFAULT")
             .to_uppercase();
 
         let policy = match policy_str.as_str() {
@@ -186,9 +203,13 @@ impl Configuration {
         ReplaceDatanodeOnFailure::new(policy, best_effort)
     }
 
-    fn read_from_file(path: &Path) -> io::Result<Vec<(String, String)>> {
+    fn read_from_file(path: &Path) -> Result<Vec<(String, String)>> {
         let content = fs::read_to_string(path)?;
-        let tree = roxmltree::Document::parse(&content).unwrap();
+        let opts = roxmltree::ParsingOptions {
+            allow_dtd: true,
+            ..Default::default()
+        };
+        let tree = roxmltree::Document::parse_with_options(&content, opts)?;
 
         let pairs = tree
             .root()
@@ -259,17 +280,14 @@ mod test {
                 .iter()
                 .map(|(cluster, viewfs_path, hdfs_path)| {
                     (
-                        format!(
-                            "{}.{}.link.{}",
-                            VIEWFS_MOUNTTABLE_PREFIX, cluster, viewfs_path
-                        ),
-                        format!("hdfs://127.0.0.1:9000{}", hdfs_path),
+                        format!("{VIEWFS_MOUNTTABLE_PREFIX}.{cluster}.link.{viewfs_path}"),
+                        format!("hdfs://127.0.0.1:9000{hdfs_path}"),
                     )
                 })
                 .chain(fallbacks.iter().map(|(cluster, hdfs_path)| {
                     (
-                        format!("{}.{}.linkFallback", VIEWFS_MOUNTTABLE_PREFIX, cluster),
-                        format!("hdfs://127.0.0.1:9000{}", hdfs_path),
+                        format!("{VIEWFS_MOUNTTABLE_PREFIX}.{cluster}.linkFallback"),
+                        format!("hdfs://127.0.0.1:9000{hdfs_path}"),
                     )
                 }))
                 .collect(),
@@ -332,8 +350,8 @@ mod test {
 
         let urls = config.get_urls_for_nameservice("test").unwrap();
         let fqdn = lookup_addr(&IpAddr::from([127, 0, 0, 1])).unwrap();
-        assert_eq!(urls.len(), 1, "{:?}", urls);
-        assert_eq!(urls[0], format!("{}:9000", fqdn));
+        assert_eq!(urls.len(), 1, "{urls:?}");
+        assert_eq!(urls[0], format!("{fqdn}:9000"));
 
         config.map.insert(
             format!("{}.{}", DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN, "test"),
@@ -341,7 +359,7 @@ mod test {
         );
 
         let urls = config.get_urls_for_nameservice("test").unwrap();
-        assert_eq!(urls.len(), 1, "{:?}", urls);
+        assert_eq!(urls.len(), 1, "{urls:?}");
         assert_eq!(urls[0], "127.0.0.1:9000");
     }
 

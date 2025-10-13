@@ -18,10 +18,9 @@ mod test {
         test_write(&HashSet::from([DfsFeatures::HA])).await.unwrap();
     }
 
-    // These tests take a long time, so don't run by default
+    #[ignore = "Takes too long to run"]
     #[tokio::test]
     #[serial]
-    #[ignore]
     async fn test_write_sasl_encryption() {
         test_write(&HashSet::from([
             DfsFeatures::HA,
@@ -32,10 +31,9 @@ mod test {
         .unwrap();
     }
 
-    // These tests take a long time, so don't run by default
+    #[ignore = "Takes too long to run"]
     #[tokio::test]
     #[serial]
-    #[ignore]
     async fn test_write_cipher_encryption() {
         test_write(&HashSet::from([
             DfsFeatures::HA,
@@ -92,11 +90,7 @@ mod test {
             let mut reader = client.read("/newfile").await?;
             let read_data = reader.read(reader.file_length()).await?;
 
-            assert_bufs_equal(
-                &buf,
-                &read_data,
-                Some(format!("for size {}", size_to_check)),
-            );
+            assert_bufs_equal(&buf, &read_data, Some(format!("for size {size_to_check}")));
         }
 
         assert!(client.delete("/newfile", false).await.is_ok_and(|r| r));

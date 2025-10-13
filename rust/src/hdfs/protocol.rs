@@ -5,16 +5,16 @@ use std::time::{Duration, SystemTime};
 use chrono::Utc;
 use log::{debug, warn};
 use prost::Message;
+use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::acl::AclEntry;
+use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::{
     self, DataEncryptionKeyProto, FsServerDefaultsProto, GetDataEncryptionKeyResponseProto,
 };
 use crate::Result;
-
-use super::proxy::NameServiceProxy;
 
 const LEASE_RENEWAL_INTERVAL_SECS: u64 = 30;
 
@@ -28,6 +28,7 @@ struct LeasedFile {
 pub(crate) struct NamenodeProtocol {
     proxy: NameServiceProxy,
     client_name: String,
+    handle: Handle,
     // Stores files currently opened for writing for lease renewal purposes
     open_files: Arc<Mutex<HashSet<LeasedFile>>>,
     lease_renewer: Mutex<Option<JoinHandle<()>>>,
@@ -37,11 +38,12 @@ pub(crate) struct NamenodeProtocol {
 }
 
 impl NamenodeProtocol {
-    pub(crate) fn new(proxy: NameServiceProxy) -> Self {
+    pub(crate) fn new(proxy: NameServiceProxy, handle: Handle) -> Self {
         let client_name = format!("hdfs_native_client-{}", Uuid::new_v4().as_hyphenated());
         NamenodeProtocol {
             proxy,
             client_name,
+            handle,
             open_files: Arc::new(Mutex::new(HashSet::new())),
             lease_renewer: Mutex::new(None),
             server_defaults: tokio::sync::Mutex::new(None),
@@ -49,20 +51,28 @@ impl NamenodeProtocol {
         }
     }
 
-    async fn call<T: Message + Default>(
+    async fn call<Req, Res>(
         &self,
         method_name: &'static str,
-        message: impl Message,
+        message: Req,
         write: bool,
-    ) -> Result<T> {
+    ) -> Result<Res>
+    where
+        Req: Message + Default + std::fmt::Debug,
+        Res: Message + Default + std::fmt::Debug,
+    {
         debug!("{} request: {:?}", method_name, &message);
 
         let response = self
             .proxy
-            .call(method_name, message.encode_length_delimited_to_vec(), write)
+            .call(
+                method_name,
+                &message.encode_length_delimited_to_vec(),
+                write,
+            )
             .await?;
 
-        let decoded = T::decode_length_delimited(response)?;
+        let decoded = Res::decode_length_delimited(response)?;
         debug!("{} response: {:?}", method_name, &decoded);
 
         Ok(decoded)
@@ -393,7 +403,7 @@ impl NamenodeProtocol {
             acl_spec: acl_spec.into_iter().collect(),
         };
 
-        self.call("modifyAclEntries", message, false).await
+        self.call("modifyAclEntries", message, true).await
     }
 
     pub(crate) async fn remove_acl_entries(
@@ -406,7 +416,7 @@ impl NamenodeProtocol {
             acl_spec: acl_spec.into_iter().collect(),
         };
 
-        self.call("removeAclEntries", message, false).await
+        self.call("removeAclEntries", message, true).await
     }
 
     pub(crate) async fn remove_default_acl(
@@ -416,14 +426,14 @@ impl NamenodeProtocol {
         let message = hdfs::RemoveDefaultAclRequestProto {
             src: path.to_string(),
         };
-        self.call("removeDefaultAcl", message, false).await
+        self.call("removeDefaultAcl", message, true).await
     }
 
     pub(crate) async fn remove_acl(&self, path: &str) -> Result<hdfs::RemoveAclResponseProto> {
         let message = hdfs::RemoveAclRequestProto {
             src: path.to_string(),
         };
-        self.call("removeAcl", message, false).await
+        self.call("removeAcl", message, true).await
     }
 
     pub(crate) async fn set_acl(
@@ -435,7 +445,7 @@ impl NamenodeProtocol {
             src: path.to_string(),
             acl_spec: acl_spec.into_iter().collect(),
         };
-        self.call("setAcl", message, false).await
+        self.call("setAcl", message, true).await
     }
 
     pub(crate) async fn get_acl_status(
@@ -513,7 +523,7 @@ impl LeaseTracker for Arc<NamenodeProtocol> {
 }
 
 fn start_lease_renewal(protocol: Arc<NamenodeProtocol>) -> JoinHandle<()> {
-    tokio::spawn(async move {
+    protocol.handle.clone().spawn(async move {
         // Track renewal times for each protocol
         let mut last_renewal: Option<SystemTime> = None;
 

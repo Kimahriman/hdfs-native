@@ -27,11 +27,11 @@ async fn main() {
 
     // List files
     let listing = client.list_status("/", false).await.unwrap();
-    println!("{:?}", listing);
+    println!("{listing:?}");
 
     // Get info on a specific file
     let status = client.get_file_info("/hdfs-native-test").await.unwrap();
-    println!("{:?}", status);
+    println!("{status:?}");
 
     // Rename a file
     client
@@ -60,7 +60,7 @@ async fn main() {
     // Read a file
     let reader = client.read("/hdfs-native-write").await.unwrap();
     let content = reader.read_range(0, reader.file_length()).await.unwrap();
-    println!("{:?}", content);
+    println!("{content:?}");
 
     client.delete("/hdfs-native-write", false).await.unwrap();
 }

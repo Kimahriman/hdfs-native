@@ -1,5 +1,12 @@
+[![Build](https://img.shields.io/github/actions/workflow/status/Kimahriman/hdfs-native/rust-test.yml?branch=master)](https://github.com/Kimahriman/hdfs-native/actions/workflows/rust-test.yml?query=branch%3Amaster)
+[![Crates.io](https://img.shields.io/crates/v/hdfs-native.svg)](https://crates.io/crates/hdfs-native)
+[![PyPI](https://img.shields.io/pypi/v/hdfs-native.svg)](https://pypi.org/project/hdfs-native)
+[![Rust Docs](https://img.shields.io/docsrs/hdfs-native?label=rust%20docs)](https://docs.rs/hdfs-native/latest/hdfs_native)
+[![Python Docs](https://img.shields.io/readthedocs/hdfs-native?label=python%20docs)](https://hdfs-native.readthedocs.io)
+
 # Native Rust HDFS client
-This is an experimental HDFS client written natively in Rust. Several basic features are working, however it is not nearly as robust and the real HDFS client.
+
+`hdfs-native` is an HDFS client written natively in Rust. It supports nearly all major features of an HDFS client, and several key client configuration options listed below.
 
 ## Supported HDFS features
 Here is a list of currently supported and unsupported but possible future features.
@@ -63,6 +70,10 @@ The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xm
 - `dfs.client.failover.resolve-needed.*` - DNS based NameNode discovery
 - `dfs.client.failover.resolver.useFQDN.*` - DNS based NameNode discovery
 - `dfs.client.failover.random.order.*` - Randomize order of NameNodes to try
+- `dfs.client.failover.proxy.provider.*` - Supports the behavior of the following proxy providers. Any other values will default back to the `ConfiguredFailoverProxyProvider` behavior:
+    - `org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider`
+    - `org.apache.hadoop.hdfs.server.namenode.ha.ObserverReadProxyProvider`
+    - `org.apache.hadoop.hdfs.server.namenode.ha.RouterObserverReadConfiguredFailoverProxyProvider`
 - `dfs.client.block.write.replace-datanode-on-failure.enable`
 - `dfs.client.block.write.replace-datanode-on-failure.policy`
 - `dfs.client.block.write.replace-datanode-on-failure.best-effort`

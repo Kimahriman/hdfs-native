@@ -12,7 +12,8 @@ use bytes::Bytes;
 use futures::stream::BoxStream;
 use futures::StreamExt;
 use hdfs_native::acl::{AclEntry, AclStatus};
-use hdfs_native::client::ContentSummary;
+use hdfs_native::client::{ClientBuilder, ContentSummary};
+use pyo3::exceptions::PyStopAsyncIteration;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 use tokio::runtime::Runtime;
 
@@ -234,7 +235,7 @@ impl PyFileReadStream {
         slf
     }
 
-    fn __next__(slf: PyRefMut<'_, Self>) -> PyHdfsResult<Option<Cow<[u8]>>> {
+    fn __next__(slf: PyRefMut<'_, Self>) -> PyHdfsResult<Option<Cow<'_, [u8]>>> {
         let inner = Arc::clone(&slf.inner);
         let rt = Arc::clone(&slf.rt);
         if let Some(result) = slf
@@ -268,7 +269,7 @@ impl RawFileReader {
         self.inner.tell()
     }
 
-    pub fn read(&mut self, len: i64, py: Python) -> PyHdfsResult<Cow<[u8]>> {
+    pub fn read(&mut self, len: i64, py: Python) -> PyHdfsResult<Cow<'_, [u8]>> {
         let read_len = if len < 0 {
             self.inner.remaining()
         } else {
@@ -280,7 +281,7 @@ impl RawFileReader {
         ))
     }
 
-    pub fn read_range(&self, offset: usize, len: usize, py: Python) -> PyHdfsResult<Cow<[u8]>> {
+    pub fn read_range(&self, offset: usize, len: usize, py: Python) -> PyHdfsResult<Cow<'_, [u8]>> {
         Ok(Cow::from(
             py.allow_threads(|| self.rt.block_on(self.inner.read_range(offset, len)))?
                 .to_vec(),
@@ -408,11 +409,13 @@ impl RawClient {
 
         let config = config.unwrap_or_default();
 
-        let inner = if let Some(url) = url {
-            Client::new_with_config(url, config).map_err(PythonHdfsError::from)?
-        } else {
-            Client::default_with_config(config).map_err(PythonHdfsError::from)?
-        };
+        let mut builder = ClientBuilder::new().with_config(config);
+
+        if let Some(url) = url {
+            builder = builder.with_url(url);
+        }
+
+        let inner = builder.build().map_err(PythonHdfsError::from)?;
 
         Ok(RawClient {
             inner,
@@ -580,6 +583,275 @@ impl RawClient {
     }
 }
 
+#[pyclass(name = "FileStatusIter")]
+struct PyAsyncFileStatusIter {
+    inner: Arc<tokio::sync::Mutex<ListStatusIterator>>,
+}
+
+#[pymethods]
+impl PyAsyncFileStatusIter {
+    pub fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    pub fn __anext__<'py>(slf: PyRefMut<'_, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = slf.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            inner
+                .lock()
+                .await
+                .next()
+                .await
+                .transpose()
+                .map_err(PythonHdfsError::from)?
+                .map(PyFileStatus::from)
+                .ok_or(PyStopAsyncIteration::new_err(()))
+        })
+    }
+}
+
+#[pyclass(name = "AsyncFileReadStream")]
+struct PyAsyncFileReadStream {
+    inner: Arc<tokio::sync::Mutex<BoxStream<'static, hdfs_native::Result<Bytes>>>>,
+}
+
+#[pymethods]
+impl PyAsyncFileReadStream {
+    pub fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(slf: PyRefMut<'_, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = slf.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            inner
+                .lock()
+                .await
+                .next()
+                .await
+                .transpose()
+                .map_err(PythonHdfsError::from)?
+                .map(|b| Cow::from(b.to_vec()))
+                .ok_or(PyStopAsyncIteration::new_err(()))
+        })
+    }
+}
+
+#[pyclass]
+struct AsyncRawFileReader {
+    inner: FileReader,
+}
+
+#[pymethods]
+impl AsyncRawFileReader {
+    pub fn file_length(&self) -> usize {
+        self.inner.file_length()
+    }
+
+    pub fn seek(&mut self, pos: usize) {
+        self.inner.seek(pos);
+    }
+
+    pub fn tell(&self) -> usize {
+        self.inner.tell()
+    }
+
+    pub async fn read(&mut self, len: i64) -> PyHdfsResult<Cow<'static, [u8]>> {
+        let read_len = if len < 0 {
+            self.inner.remaining()
+        } else {
+            len as usize
+        };
+        Ok(Cow::from(self.inner.read(read_len).await?.to_vec()))
+    }
+
+    pub async fn read_range(&self, offset: usize, len: usize) -> PyHdfsResult<Cow<'static, [u8]>> {
+        let bytes = self.inner.read_range(offset, len).await?.to_vec();
+        Ok(Cow::from(bytes))
+    }
+
+    pub fn read_range_stream(&self, offset: usize, len: usize) -> PyAsyncFileReadStream {
+        let stream = Arc::new(tokio::sync::Mutex::new(
+            self.inner.read_range_stream(offset, len).boxed(),
+        ));
+        PyAsyncFileReadStream { inner: stream }
+    }
+}
+
+#[pyclass]
+struct AsyncRawFileWriter {
+    inner: FileWriter,
+}
+
+#[pymethods]
+impl AsyncRawFileWriter {
+    pub async fn write(&mut self, buf: Vec<u8>) -> PyHdfsResult<usize> {
+        Ok(self.inner.write(Bytes::from(buf)).await?)
+    }
+
+    pub async fn close(&mut self) -> PyHdfsResult<()> {
+        Ok(self.inner.close().await?)
+    }
+}
+
+#[pyclass(name = "AsyncRawClient", subclass)]
+struct AsyncRawClient {
+    inner: Client,
+}
+
+#[pymethods]
+impl AsyncRawClient {
+    #[new]
+    #[pyo3(signature = (url, config))]
+    pub fn new(url: Option<&str>, config: Option<HashMap<String, String>>) -> PyResult<Self> {
+        // Initialize logging, ignore errors if this is called multiple times
+        let _ = env_logger::try_init();
+
+        let config = config.unwrap_or_default();
+
+        let mut builder = ClientBuilder::new().with_config(config);
+
+        if let Some(url) = url {
+            builder = builder.with_url(url);
+        }
+
+        let inner = builder.build().map_err(PythonHdfsError::from)?;
+
+        Ok(Self { inner })
+    }
+
+    pub async fn get_file_info(&self, path: String) -> PyHdfsResult<PyFileStatus> {
+        Ok(self
+            .inner
+            .get_file_info(&path)
+            .await
+            .map(PyFileStatus::from)?)
+    }
+
+    pub fn list_status(&self, path: &str, recursive: bool) -> PyAsyncFileStatusIter {
+        let inner = self.inner.list_status_iter(path, recursive);
+        PyAsyncFileStatusIter {
+            inner: Arc::new(tokio::sync::Mutex::new(inner)),
+        }
+    }
+
+    pub async fn read(&self, path: String) -> PyHdfsResult<AsyncRawFileReader> {
+        let file_reader = self.inner.read(&path).await?;
+
+        Ok(AsyncRawFileReader { inner: file_reader })
+    }
+
+    pub async fn create(
+        &self,
+        src: String,
+        write_options: PyWriteOptions,
+    ) -> PyHdfsResult<AsyncRawFileWriter> {
+        let file_writer = self
+            .inner
+            .create(&src, WriteOptions::from(write_options))
+            .await?;
+
+        Ok(AsyncRawFileWriter { inner: file_writer })
+    }
+
+    pub async fn append(&self, src: String) -> PyHdfsResult<AsyncRawFileWriter> {
+        let file_writer = self.inner.append(&src).await?;
+
+        Ok(AsyncRawFileWriter { inner: file_writer })
+    }
+
+    pub async fn mkdirs(
+        &self,
+        path: String,
+        permission: u32,
+        create_parent: bool,
+    ) -> PyHdfsResult<()> {
+        Ok(self.inner.mkdirs(&path, permission, create_parent).await?)
+    }
+
+    pub async fn rename(&self, src: String, dst: String, overwrite: bool) -> PyHdfsResult<()> {
+        Ok(self.inner.rename(&src, &dst, overwrite).await?)
+    }
+
+    pub async fn delete(&self, path: String, recursive: bool) -> PyHdfsResult<bool> {
+        Ok(self.inner.delete(&path, recursive).await?)
+    }
+
+    pub async fn set_times(&self, path: String, mtime: u64, atime: u64) -> PyHdfsResult<()> {
+        Ok(self.inner.set_times(&path, mtime, atime).await?)
+    }
+
+    #[pyo3(signature = (path, owner=None, group=None))]
+    pub async fn set_owner(
+        &self,
+        path: String,
+        owner: Option<String>,
+        group: Option<String>,
+    ) -> PyHdfsResult<()> {
+        Ok(self
+            .inner
+            .set_owner(
+                &path,
+                owner.as_ref().map(String::as_ref),
+                group.as_ref().map(String::as_ref),
+            )
+            .await?)
+    }
+
+    pub async fn set_permission(&self, path: String, permission: u32) -> PyHdfsResult<()> {
+        Ok(self.inner.set_permission(&path, permission).await?)
+    }
+
+    pub async fn set_replication(&self, path: String, replication: u32) -> PyHdfsResult<bool> {
+        Ok(self.inner.set_replication(&path, replication).await?)
+    }
+
+    pub async fn get_content_summary(&self, path: String) -> PyHdfsResult<PyContentSummary> {
+        Ok(self.inner.get_content_summary(&path).await?.into())
+    }
+
+    pub async fn modify_acl_entries(
+        &self,
+        path: String,
+        acl_spec: Vec<PyAclEntry>,
+    ) -> PyHdfsResult<()> {
+        Ok(self
+            .inner
+            .modify_acl_entries(&path, acl_spec.into_iter().collect())
+            .await?)
+    }
+
+    pub async fn remove_acl_entries(
+        &self,
+        path: String,
+        acl_spec: Vec<PyAclEntry>,
+    ) -> PyHdfsResult<()> {
+        Ok(self
+            .inner
+            .remove_acl_entries(&path, acl_spec.into_iter().collect())
+            .await?)
+    }
+
+    pub async fn remove_default_acl(&self, path: String) -> PyHdfsResult<()> {
+        Ok(self.inner.remove_default_acl(&path).await?)
+    }
+
+    pub async fn remove_acl(&self, path: String) -> PyHdfsResult<()> {
+        Ok(self.inner.remove_acl(&path).await?)
+    }
+
+    pub async fn set_acl(&self, path: String, acl_spec: Vec<PyAclEntry>) -> PyHdfsResult<()> {
+        Ok(self
+            .inner
+            .set_acl(&path, acl_spec.into_iter().collect())
+            .await?)
+    }
+
+    pub async fn get_acl_status(&self, path: String) -> PyHdfsResult<PyAclStatus> {
+        Ok(self.inner.get_acl_status(&path).await?.into())
+    }
+}
+
 /// A Python module implemented in Rust.
 #[pymodule]
 fn _internal(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -589,5 +861,7 @@ fn _internal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWriteOptions>()?;
     m.add_class::<PyAclEntry>()?;
     m.add_class::<PyAclStatus>()?;
+
+    m.add_class::<AsyncRawClient>()?;
     Ok(())
 }

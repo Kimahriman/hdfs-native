@@ -5,28 +5,22 @@
 //!
 //! Create a client to a single NameNode
 //! ```rust
-//! use hdfs_native::Client;
-//! # use hdfs_native::Result;
-//! # fn main() -> Result<()> {
-//! let client = Client::new("hdfs://localhost:9000")?;
-//! # Ok(())
-//! # }
+//! use hdfs_native::ClientBuilder;
+//! let client = ClientBuilder::new().with_url("hdfs://localhost:9000").build().unwrap();
 //! ```
 //!
 //! Create a client for a Name Service
 //! ```rust
-//! use std::collections::HashMap;
-//! use hdfs_native::Client;
-//! # use hdfs_native::Result;
-//! # fn main() -> Result<()> {
-//! let config = HashMap::from([
-//!     ("dfs.ha.namenodes.ns".to_string(), "nn-1,nn-2".to_string()),
-//!     ("dfs.namenode.rpc-address.ns.nn-1".to_string(), "nn-1:9000".to_string()),
-//!     ("dfs.namenode.rpc-address.ns.nn-2".to_string(), "nn-2:9000".to_string()),
-//! ]);
-//! let client = Client::new_with_config("hdfs://ns", config)?;
-//! # Ok(())
-//! # }
+//! use hdfs_native::ClientBuilder;
+//! let client = ClientBuilder::new()
+//!     .with_url("hdfs://ns")
+//!     .with_config(vec![
+//!         ("dfs.ha.namenodes.ns", "nn-1,nn-2"),
+//!         ("dfs.namenode.rpc-address.ns.nn-1", "nn-1:9000"),
+//!         ("dfs.namenode.rpc-address.ns.nn-2", "nn-2:9000"),
+//!     ])
+//!     .build()
+//!     .unwrap();
 //! ```
 pub mod acl;
 pub mod client;
@@ -44,8 +38,8 @@ pub mod minidfs;
 pub(crate) mod proto;
 pub(crate) mod security;
 
-pub use client::Client;
 pub use client::WriteOptions;
+pub use client::{Client, ClientBuilder};
 pub use error::HdfsError;
 pub use error::Result;
 

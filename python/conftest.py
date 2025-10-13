@@ -1,13 +1,12 @@
+import asyncio
 import os
 import subprocess
-import urllib
-import urllib.parse
 
-import fsspec
 import pytest
+import pytest_asyncio
+from pytest_benchmark.fixture import BenchmarkFixture
 
-from hdfs_native import Client
-from hdfs_native.fsspec import HdfsFileSystem
+from hdfs_native import AsyncClient, Client
 
 
 @pytest.fixture(scope="module")
@@ -55,7 +54,25 @@ def client(minidfs: str):
             client.delete(status.path, True)
 
 
-@pytest.fixture(scope="module")
-def fs(minidfs: str) -> HdfsFileSystem:
-    url = urllib.parse.urlparse(minidfs)
-    return fsspec.filesystem(url.scheme, host=url.hostname, port=url.port)
+@pytest.fixture
+def async_client(minidfs: str):
+    client = AsyncClient(minidfs)
+
+    yield client
+
+
+@pytest_asyncio.fixture
+async def aio_benchmark(benchmark: BenchmarkFixture):
+    async def run_async_coroutine(func, *args, **kwargs):
+        return await func(*args, **kwargs)
+
+    def _wrapper(func, *args, **kwargs):
+        assert asyncio.iscoroutinefunction(func)
+
+        @benchmark
+        def _():
+            return asyncio.get_event_loop().run_until_complete(
+                run_async_coroutine(func, *args, **kwargs)
+            )
+
+    return _wrapper

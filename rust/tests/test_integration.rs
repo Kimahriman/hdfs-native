@@ -7,8 +7,9 @@ mod test {
     use bytes::{BufMut, BytesMut};
     use hdfs_native::{
         acl::AclEntry,
-        client::FileStatus,
+        client::{ClientBuilder, FileStatus},
         minidfs::{DfsFeatures, MiniDfs},
+        test::PROXY_CALLS,
         Client, Result, WriteOptions,
     };
     use serial_test::serial;
@@ -171,11 +172,17 @@ mod test {
             .unwrap();
     }
 
+    #[test]
+    #[serial]
+    fn test_no_tokio() {
+        futures::executor::block_on(test_with_features(&HashSet::new())).unwrap();
+    }
+
     pub async fn test_with_features(features: &HashSet<DfsFeatures>) -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
         let _dfs = MiniDfs::with_features(features);
-        let client = Client::default();
+        let client = ClientBuilder::new().build().unwrap();
 
         let mut file = client.create("/testfile", WriteOptions::default()).await?;
         for i in 0..TEST_FILE_INTS as i32 {
@@ -196,6 +203,10 @@ mod test {
         test_set_replication(&client).await?;
         test_get_content_summary(&client).await?;
         test_acls(&client).await?;
+
+        if features.contains(&DfsFeatures::HA) {
+            test_observer_read(&client).await?;
+        }
 
         Ok(())
     }
@@ -550,6 +561,23 @@ mod test {
         client.remove_default_acl("/testdir").await?;
 
         client.delete("/testdir", true).await?;
+
+        Ok(())
+    }
+
+    async fn test_observer_read(client: &Client) -> Result<()> {
+        *PROXY_CALLS.lock().unwrap() = Some(Vec::new());
+
+        client.mkdirs("/test", 0o755, true).await?;
+        client.get_file_info("/test").await?;
+
+        let calls = PROXY_CALLS.lock().unwrap().take().unwrap();
+
+        assert!(calls
+            .into_iter()
+            .any(|(name, observer)| name == "getFileInfo" && observer));
+
+        client.delete("/test", true).await?;
 
         Ok(())
     }

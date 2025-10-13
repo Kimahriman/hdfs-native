@@ -12,7 +12,7 @@ mod test {
         file::FileReader,
         minidfs::{DfsFeatures, MiniDfs},
         test::{WRITE_CONNECTION_FAULT_INJECTOR, WRITE_REPLY_FAULT_INJECTOR},
-        Client, Result, WriteOptions,
+        Client, ClientBuilder, Result, WriteOptions,
     };
     use serial_test::serial;
 
@@ -86,13 +86,19 @@ mod test {
         }
 
         for (i, client) in [
-            Client::default_with_config(replace_dn_conf(true)).unwrap(),
-            Client::default_with_config(replace_dn_conf(false)).unwrap(),
+            ClientBuilder::new()
+                .with_config(replace_dn_conf(true))
+                .build()
+                .unwrap(),
+            ClientBuilder::new()
+                .with_config(replace_dn_conf(false))
+                .build()
+                .unwrap(),
         ]
         .iter()
         .enumerate()
         {
-            let file = format!("/testfile{}", i);
+            let file = format!("/testfile{i}");
             let bytes_to_write = 2usize * 1024 * 1024;
 
             let mut data = BytesMut::with_capacity(bytes_to_write);
@@ -192,7 +198,10 @@ mod test {
         );
 
         let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::HA]));
-        let client = Client::default_with_config(replace_dn_on_failure_conf).unwrap();
+        let client = ClientBuilder::new()
+            .with_config(replace_dn_on_failure_conf)
+            .build()
+            .unwrap();
 
         let file = "/testfile_replace_failed_datanode";
         let bytes_to_write = 2usize * 1024 * 1024;

@@ -12,6 +12,7 @@ use tokio::{
 };
 
 use super::user::BlockTokenIdentifier;
+use crate::common::config::Configuration;
 use crate::proto::hdfs::{CipherOptionProto, CipherSuiteProto, DataEncryptionKeyProto};
 use crate::proto::{
     common::{
@@ -66,160 +67,145 @@ pub(crate) trait SaslSession: Send + Sync {
     fn get_user_info(&self) -> Result<UserInfo>;
 }
 
-pub struct SaslRpcClient {
-    reader: SaslReader,
-    writer: SaslWriter,
-    session: Option<Arc<Mutex<Box<dyn SaslSession>>>>,
+pub(crate) async fn negotiate_sasl_session(
+    stream: TcpStream,
+    service: &str,
+    config: &Configuration,
+) -> Result<(UserInfo, SaslReader, SaslWriter)> {
+    let (reader, writer) = stream.into_split();
+    let mut reader = SaslReader::new(reader);
+    let mut writer = SaslWriter::new(writer);
+
+    if !config.security_enabled() {
+        return Ok((User::get_simple_user(), reader, writer));
+    }
+
+    let rpc_sasl = RpcSaslProto {
+        state: SaslState::Negotiate as i32,
+        ..Default::default()
+    };
+
+    writer.send_sasl_message(&rpc_sasl).await?;
+
+    let mut done = false;
+    let mut session: Option<Box<dyn SaslSession>> = None;
+    while !done {
+        let mut response: Option<RpcSaslProto> = None;
+        let message = reader.read_response().await?;
+        debug!("Handling SASL message: {:?}", message);
+        match SaslState::try_from(message.state).unwrap() {
+            SaslState::Negotiate => {
+                let (mut selected_auth, selected_session) = select_method(&message.auths, service)?;
+                session = selected_session;
+
+                let token = if let Some(session) = session.as_mut() {
+                    let (token, finished) =
+                        session.step(selected_auth.challenge.as_ref().map(|c| &c[..]))?;
+                    if finished {
+                        return Err(HdfsError::SASLError(
+                            "SASL negotiation finished too soon".to_string(),
+                        ));
+                    }
+                    Some(token)
+                } else {
+                    done = true;
+                    None
+                };
+
+                // Response shouldn't contain the challenge
+                selected_auth.challenge = None;
+
+                let r = RpcSaslProto {
+                    state: SaslState::Initiate as i32,
+                    auths: Vec::from([selected_auth]),
+                    token: token.or(Some(Vec::new())),
+                    ..Default::default()
+                };
+                response = Some(r);
+            }
+            SaslState::Challenge => {
+                let (token, _) = session
+                    .as_mut()
+                    .unwrap()
+                    .step(message.token.as_ref().map(|t| &t[..]))?;
+
+                let r = RpcSaslProto {
+                    state: SaslState::Response as i32,
+                    token: Some(token),
+                    ..Default::default()
+                };
+                response = Some(r);
+            }
+            SaslState::Success => {
+                if let Some(token) = message.token.as_ref() {
+                    let (_, finished) = session.as_mut().unwrap().step(Some(&token[..]))?;
+                    if !finished {
+                        return Err(HdfsError::SASLError(
+                            "Client not finished after server success".to_string(),
+                        ));
+                    }
+                }
+                done = true;
+            }
+            _ => todo!(),
+        }
+
+        if let Some(r) = response {
+            debug!("Sending SASL response {:?}", r);
+            writer.send_sasl_message(&r).await?;
+        }
+    }
+
+    let user_info = if let Some(s) = session.as_ref() {
+        s.get_user_info()?
+    } else {
+        User::get_simple_user()
+    };
+    let session = session
+        .filter(|x| {
+            debug!("Has security layer: {:?}", x.has_security_layer());
+            x.has_security_layer()
+        })
+        .map(|s| Arc::new(Mutex::new(s)));
+
+    if let Some(session) = session {
+        reader.set_session(Arc::clone(&session));
+        writer.set_session(session);
+    }
+    Ok((user_info, reader, writer))
 }
 
-impl SaslRpcClient {
-    pub fn create(stream: TcpStream) -> SaslRpcClient {
-        let (reader, writer) = stream.into_split();
-        SaslRpcClient {
-            reader: SaslReader::new(reader),
-            writer: SaslWriter::new(writer),
-            session: None,
-        }
-    }
-
-    /// Service should be the connection host:port for a single NameNode connection, or the
-    /// name service name when connecting to HA NameNodes.
-    pub(crate) async fn negotiate(&mut self, service: &str) -> Result<UserInfo> {
-        let rpc_sasl = RpcSaslProto {
-            state: SaslState::Negotiate as i32,
-            ..Default::default()
-        };
-
-        self.writer.send_sasl_message(&rpc_sasl).await?;
-
-        let mut done = false;
-        let mut session: Option<Box<dyn SaslSession>> = None;
-        while !done {
-            let mut response: Option<RpcSaslProto> = None;
-            let message = self.reader.read_response().await?;
-            debug!("Handling SASL message: {:?}", message);
-            match SaslState::try_from(message.state).unwrap() {
-                SaslState::Negotiate => {
-                    let (mut selected_auth, selected_session) =
-                        self.select_method(&message.auths, service)?;
-                    session = selected_session;
-
-                    let token = if let Some(session) = session.as_mut() {
-                        let (token, finished) =
-                            session.step(selected_auth.challenge.as_ref().map(|c| &c[..]))?;
-                        if finished {
-                            return Err(HdfsError::SASLError(
-                                "SASL negotiation finished too soon".to_string(),
-                            ));
-                        }
-                        Some(token)
-                    } else {
-                        done = true;
-                        None
-                    };
-
-                    // Response shouldn't contain the challenge
-                    selected_auth.challenge = None;
-
-                    let r = RpcSaslProto {
-                        state: SaslState::Initiate as i32,
-                        auths: Vec::from([selected_auth]),
-                        token: token.or(Some(Vec::new())),
-                        ..Default::default()
-                    };
-                    response = Some(r);
-                }
-                SaslState::Challenge => {
-                    let (token, _) = session
-                        .as_mut()
-                        .unwrap()
-                        .step(message.token.as_ref().map(|t| &t[..]))?;
-
-                    let r = RpcSaslProto {
-                        state: SaslState::Response as i32,
-                        token: Some(token),
-                        ..Default::default()
-                    };
-                    response = Some(r);
-                }
-                SaslState::Success => {
-                    if let Some(token) = message.token.as_ref() {
-                        let (_, finished) = session.as_mut().unwrap().step(Some(&token[..]))?;
-                        if !finished {
-                            return Err(HdfsError::SASLError(
-                                "Client not finished after server success".to_string(),
-                            ));
-                        }
-                    }
-                    done = true;
-                }
-                _ => todo!(),
+fn select_method(
+    auths: &[SaslAuth],
+    service: &str,
+) -> Result<(SaslAuth, Option<Box<dyn SaslSession>>)> {
+    let user = User::get();
+    for auth in auths.iter() {
+        match (
+            AuthMethod::parse(&auth.method),
+            user.get_token(HDFS_DELEGATION_TOKEN, service),
+        ) {
+            (Some(AuthMethod::Simple), _) => {
+                return Ok((auth.clone(), None));
             }
-
-            if let Some(r) = response {
-                debug!("Sending SASL response {:?}", r);
-                self.writer.send_sasl_message(&r).await?;
+            (Some(AuthMethod::Kerberos), _) => {
+                let session = GssapiSession::new(auth.protocol(), auth.server_id())?;
+                return Ok((auth.clone(), Some(Box::new(session))));
             }
-        }
+            (Some(AuthMethod::Token), Some(token)) => {
+                let session = DigestSaslSession::from_token(
+                    auth.protocol().to_string(),
+                    auth.server_id().to_string(),
+                    token,
+                );
+                // let session = GSASLSession::new(auth.protocol(), auth.server_id(), token)?;
 
-        let user_info = if let Some(s) = session.as_ref() {
-            s.get_user_info()?
-        } else {
-            User::get_simpler_user()
-        };
-        self.session = session
-            .filter(|x| {
-                debug!("Has security layer: {:?}", x.has_security_layer());
-                x.has_security_layer()
-            })
-            .map(|s| Arc::new(Mutex::new(s)));
-
-        Ok(user_info)
-    }
-
-    fn select_method(
-        &mut self,
-        auths: &[SaslAuth],
-        service: &str,
-    ) -> Result<(SaslAuth, Option<Box<dyn SaslSession>>)> {
-        let user = User::get();
-        for auth in auths.iter() {
-            match (
-                AuthMethod::parse(&auth.method),
-                user.get_token(HDFS_DELEGATION_TOKEN, service),
-            ) {
-                (Some(AuthMethod::Simple), _) => {
-                    return Ok((auth.clone(), None));
-                }
-                (Some(AuthMethod::Kerberos), _) => {
-                    let session = GssapiSession::new(auth.protocol(), auth.server_id())?;
-                    return Ok((auth.clone(), Some(Box::new(session))));
-                }
-                (Some(AuthMethod::Token), Some(token)) => {
-                    let session = DigestSaslSession::from_token(
-                        auth.protocol().to_string(),
-                        auth.server_id().to_string(),
-                        token,
-                    );
-                    // let session = GSASLSession::new(auth.protocol(), auth.server_id(), token)?;
-
-                    return Ok((auth.clone(), Some(Box::new(session))));
-                }
-                _ => (),
+                return Ok((auth.clone(), Some(Box::new(session))));
             }
+            _ => (),
         }
-        Err(HdfsError::NoSASLMechanism)
     }
-
-    pub(crate) fn split(self) -> (SaslReader, SaslWriter) {
-        let mut reader = self.reader;
-        let mut writer = self.writer;
-        if let Some(session) = self.session {
-            reader.set_session(Arc::clone(&session));
-            writer.set_session(session);
-        }
-        (reader, writer)
-    }
+    Err(HdfsError::NoSASLMechanism)
 }
 
 pub(crate) struct SaslReader {
@@ -614,8 +600,10 @@ impl SaslDatanodeConnection {
     /// 1. If `dfs.encrypt.data.transfer` is set on the NameNode, always encrypt the session
     ///    and use an encryption key from the NameNode for the negotiation. This will happen
     ///    if `encryption_key` is defined.
-    /// 2. If there is no block token or the DataNode transfer port is privileged (<= 1024), we
-    ///    skip the SASL handshake and assume it is trusted.
+    /// 2. If there is no block token
+    ///    or the DataNode transfer port is privileged (<= 1024)
+    ///    or `dfs.data.transfer.protection` not set,
+    ///    we skip the SASL handshake and assume it is trusted.
     /// 3. Otherwise, we do a SAL handshake using the provided block token.
     ///
     /// For cases 1 and 3, we optionally negotiate a cipher to use for encryption instead of
@@ -625,10 +613,15 @@ impl SaslDatanodeConnection {
         datanode_id: &DatanodeIdProto,
         token: &TokenProto,
         encryption_key: Option<&DataEncryptionKeyProto>,
+        config: &Configuration,
     ) -> Result<(SaslDatanodeReader, SaslDatanodeWriter)> {
         let mut session = if let Some(key) = encryption_key {
             DigestSaslSession::from_encryption_key("hdfs".to_string(), "0".to_string(), key)
-        } else if token.identifier.is_empty() || datanode_id.xfer_port <= 1024 {
+        } else if !config.security_enabled()
+            || token.identifier.is_empty()
+            || datanode_id.xfer_port <= 1024
+            || !config.data_transfer_protection_enabled()
+        {
             return self.split(None, None);
         } else {
             DigestSaslSession::from_token(
@@ -747,7 +740,7 @@ impl SaslDatanodeConnection {
                     let writer = SaslDatanodeWriter::cipher(stream_writer, encryptor);
                     Ok((reader, writer))
                 }
-                c => Err(HdfsError::SASLError(format!("Unsupported cipher {:?}", c))),
+                c => Err(HdfsError::SASLError(format!("Unsupported cipher {c:?}"))),
             }
         } else if let Some(session) = session {
             let reader_session = Arc::new(Mutex::new(session));
@@ -768,7 +761,7 @@ impl SaslDatanodeConnection {
             128 => Box::new(Aes128Ctr::new(key.into(), iv.into())),
             192 => Box::new(Aes192Ctr::new(key.into(), iv.into())),
             256 => Box::new(Aes256Ctr::new(key.into(), iv.into())),
-            x => panic!("Unsupported AES bit length {}", x),
+            x => panic!("Unsupported AES bit length {x}"),
         }
     }
 }

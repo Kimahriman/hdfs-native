@@ -10,11 +10,13 @@ use futures::{
 };
 use log::{debug, warn};
 use tokio::{
+    runtime::Handle,
     sync::mpsc::{self, Receiver, Sender},
     task::JoinHandle,
 };
 
 use crate::{
+    common::config::Configuration,
     ec::EcSchema,
     hdfs::connection::{DatanodeConnection, Op, DATANODE_CACHE},
     proto::{
@@ -38,19 +40,22 @@ pub(crate) fn get_block_stream(
     offset: usize,
     len: usize,
     ec_schema: Option<EcSchema>,
+    config: Arc<Configuration>,
+    handle: Handle,
 ) -> BoxStream<'static, Result<Bytes>> {
     if let Some(ec_schema) = ec_schema {
-        StripedBlockStream::new(protocol, block, offset, len, ec_schema)
+        StripedBlockStream::new(protocol, block, offset, len, ec_schema, config, handle)
             .into_stream()
             .boxed()
     } else {
-        ReplicatedBlockStream::new(protocol, block, offset, len)
+        ReplicatedBlockStream::new(protocol, block, offset, len, config, handle)
             .into_stream()
             .boxed()
     }
 }
 
 /// Connects to a DataNode to do a read, attempting to used cached connections.
+#[allow(clippy::too_many_arguments)]
 async fn connect_and_send(
     protocol: &Arc<NamenodeProtocol>,
     datanode_id: &hdfs::DatanodeIdProto,
@@ -58,7 +63,17 @@ async fn connect_and_send(
     token: common::TokenProto,
     offset: u64,
     len: u64,
+    config: &Configuration,
+    handle: &Handle,
 ) -> Result<(DatanodeConnection, BlockOpResponseProto)> {
+    #[cfg(feature = "integration-test")]
+    if crate::test::DATANODE_CONNECT_FAULT_INJECTOR.swap(false, std::sync::atomic::Ordering::SeqCst)
+    {
+        return Err(HdfsError::DataTransferError(
+            "DataNode connect fault injection".to_string(),
+        ));
+    }
+
     let mut remaining_attempts = 2;
     while remaining_attempts > 0 {
         if let Some(mut conn) = DATANODE_CACHE.get(datanode_id) {
@@ -88,6 +103,8 @@ async fn connect_and_send(
         datanode_id,
         &token,
         protocol.get_cached_data_encryption_key().await?,
+        config,
+        handle,
     )
     .await?;
 
@@ -110,11 +127,13 @@ struct ReplicatedBlockStream {
     block: hdfs::LocatedBlockProto,
     offset: usize,
     len: usize,
+    config: Arc<Configuration>,
+    handle: Handle,
 
     listener: Option<JoinHandle<Result<DatanodeConnection>>>,
     sender: Sender<Result<(PacketHeaderProto, Bytes)>>,
     receiver: Receiver<Result<(PacketHeaderProto, Bytes)>>,
-    current_replica: usize,
+    next_replica: usize,
 }
 
 impl ReplicatedBlockStream {
@@ -123,6 +142,8 @@ impl ReplicatedBlockStream {
         block: hdfs::LocatedBlockProto,
         offset: usize,
         len: usize,
+        config: Arc<Configuration>,
+        handle: Handle,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(READ_PACKET_BUFFER_LEN);
 
@@ -131,41 +152,69 @@ impl ReplicatedBlockStream {
             block,
             offset,
             len,
+            config,
+            handle,
             listener: None,
             sender,
             receiver,
-            current_replica: 0,
+            next_replica: 0,
         }
     }
 
     async fn select_next_datanode(
         &mut self,
     ) -> Result<(DatanodeConnection, Option<ReadOpChecksumInfoProto>)> {
-        if self.current_replica >= self.block.locs.len() {
-            return Err(HdfsError::DataTransferError(
-                "All DataNodes failed".to_string(),
-            ));
+        loop {
+            if self.next_replica >= self.block.locs.len() {
+                return Err(HdfsError::DataTransferError(format!(
+                    "All DataNodes failed: {:?}",
+                    self.block.locs
+                )));
+            }
+
+            let datanode = &self.block.locs[self.next_replica].id;
+
+            self.next_replica += 1;
+
+            match connect_and_send(
+                &self.protocol,
+                datanode,
+                &self.block.b,
+                self.block.block_token.clone(),
+                self.offset as u64,
+                self.len as u64,
+                &self.config,
+                &self.handle,
+            )
+            .await
+            {
+                Ok((connection, response)) => {
+                    if response.status() != hdfs::Status::Success {
+                        warn!(
+                            "Read operation did not succeed for DataNode {:?}: {}",
+                            datanode,
+                            response.message()
+                        );
+                    } else {
+                        return Ok((connection, response.read_op_checksum_info));
+                    }
+                }
+                Err(e) => warn!("Failed to connect to DataNode {:?}: {:?}", datanode, e),
+            }
+        }
+    }
+
+    async fn next_packet_from_receiver(&mut self) -> Option<Result<(PacketHeaderProto, Bytes)>> {
+        #[cfg(feature = "integration-test")]
+        if crate::test::DATANODE_READ_FAULT_INJECTOR
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Some(Err(HdfsError::IOError(std::io::Error::from(
+                std::io::ErrorKind::UnexpectedEof,
+            ))));
         }
 
-        let datanode = &self.block.locs[self.current_replica].id;
-
-        self.current_replica += 1;
-
-        let (connection, response) = connect_and_send(
-            &self.protocol,
-            datanode,
-            &self.block.b,
-            self.block.block_token.clone(),
-            self.offset as u64,
-            self.len as u64,
-        )
-        .await?;
-
-        if response.status() != hdfs::Status::Success {
-            return Err(HdfsError::DataTransferError(response.message().to_string()));
-        }
-
-        Ok((connection, response.read_op_checksum_info))
+        self.receiver.recv().await
     }
 
     async fn next_packet(&mut self) -> Result<Option<Bytes>> {
@@ -175,20 +224,31 @@ impl ReplicatedBlockStream {
         }
 
         let (header, data) = loop {
-            if self.listener.is_none() {
+            // If we are using an existing listener, we should retry on the same DataNode in case of
+            // transient IO errors due to socket timeouts. If this is a new listener, there should be no socket
+            // timeout so we should move directly to the next node.
+            let retry_connection = if self.listener.is_none() {
                 let (connection, checksum_info) = self.select_next_datanode().await?;
                 self.listener = Some(Self::start_packet_listener(
                     connection,
                     checksum_info,
                     self.sender.clone(),
+                    &self.handle,
                 ));
-            }
+                false
+            } else {
+                true
+            };
 
-            match self.receiver.recv().await {
+            match self.next_packet_from_receiver().await {
                 Some(Ok(data)) => break data,
                 Some(Err(e)) => {
                     // Some error communicating with datanode, log a warning and then retry on a different Datanode
-                    warn!("Error occured while reading from DataNode: {:?}", e);
+                    warn!("Error occurred while reading from DataNode: {:?}", e);
+                    if retry_connection && matches!(e, HdfsError::IOError(_)) {
+                        // Retry transient IO errors on the same DataNode
+                        self.next_replica -= 1;
+                    }
                     self.listener = None;
                 }
                 None => {
@@ -201,11 +261,7 @@ impl ReplicatedBlockStream {
             }
         };
 
-        let packet_offset = if self.offset > header.offset_in_block as usize {
-            self.offset - header.offset_in_block as usize
-        } else {
-            0
-        };
+        let packet_offset = self.offset.saturating_sub(header.offset_in_block as usize);
         let packet_len = usize::min(header.data_len as usize - packet_offset, self.len);
 
         self.offset += packet_len;
@@ -235,8 +291,9 @@ impl ReplicatedBlockStream {
         mut connection: DatanodeConnection,
         checksum_info: Option<ReadOpChecksumInfoProto>,
         sender: Sender<Result<(PacketHeaderProto, Bytes)>>,
+        handle: &Handle,
     ) -> JoinHandle<Result<DatanodeConnection>> {
-        tokio::spawn(async move {
+        handle.spawn(async move {
             loop {
                 let next_packet = Self::get_next_packet(&mut connection, checksum_info).await;
                 if next_packet.as_ref().is_ok_and(|(_, data)| data.is_empty()) {
@@ -354,6 +411,8 @@ struct StripedBlockStream {
     block_map: HashMap<usize, (hdfs::DatanodeInfoProto, common::TokenProto)>,
     remaining: usize,
     bytes_to_skip: usize,
+    config: Arc<Configuration>,
+    handle: Handle,
     ec_schema: EcSchema,
     // Position of the start of the current cell in a single block
     current_block_start: usize,
@@ -369,6 +428,8 @@ impl StripedBlockStream {
         offset: usize,
         len: usize,
         ec_schema: EcSchema,
+        config: Arc<Configuration>,
+        handle: Handle,
     ) -> Self {
         assert_eq!(block.block_indices().len(), block.locs.len());
 
@@ -407,6 +468,8 @@ impl StripedBlockStream {
             remaining: len,
             bytes_to_skip,
             ec_schema,
+            config,
+            handle,
             current_block_start,
             block_end,
             cell_readers: vec![],
@@ -539,6 +602,8 @@ impl StripedBlockStream {
                 block,
                 self.current_block_start,
                 len,
+                Arc::clone(&self.config),
+                self.handle.clone(),
             );
 
             self.cell_readers.push(Some(CellReader::new(
