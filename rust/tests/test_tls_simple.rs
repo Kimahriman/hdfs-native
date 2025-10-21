@@ -4,13 +4,12 @@ mod common;
 #[cfg(feature = "integration-test")]
 mod test {
     use hdfs_native::{
-        client::ClientBuilder,
+        client::{ClientBuilder, FileStatus},
         security::tls::TlsConfig,
         Client, Result, WriteOptions,
     };
     use serial_test::serial;
     use std::env;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     /// Get TLS configuration from environment variables
     /// 
@@ -32,7 +31,7 @@ mod test {
 
         // Optional CA certificate
         if let Ok(ca_path) = env::var("HDFS_CA_CERT_PATH") {
-            tls_config = tls_config.with_ca_certificate(ca_path);
+            tls_config = tls_config.with_ca_cert(ca_path);
         }
 
         // Optional server verification setting
@@ -54,10 +53,26 @@ mod test {
         let (namenode_url, tls_config) = get_tls_config()
             .expect("TLS integration test requires environment configuration. Set HDFS_NAMENODE_URL, HDFS_CLIENT_CERT_PATH, and HDFS_CLIENT_KEY_PATH");
 
-        ClientBuilder::new(&namenode_url)
-            .with_tls_config(tls_config)
+        // Convert TLS config to configuration map
+        let mut config_map = std::collections::HashMap::new();
+        config_map.insert("hdfs.tls.enabled".to_string(), "true".to_string());
+        config_map.insert("hdfs.tls.client.cert.path".to_string(), tls_config.client_cert_path.clone());
+        config_map.insert("hdfs.tls.client.key.path".to_string(), tls_config.client_key_path.clone());
+        
+        if let Some(ca_cert_path) = &tls_config.ca_cert_path {
+            config_map.insert("hdfs.tls.ca.cert.path".to_string(), ca_cert_path.clone());
+        }
+        
+        config_map.insert("hdfs.tls.verify.server".to_string(), tls_config.verify_server.to_string());
+        
+        if let Some(server_hostname) = &tls_config.server_hostname {
+            config_map.insert("hdfs.tls.server.hostname".to_string(), server_hostname.clone());
+        }
+
+        ClientBuilder::new()
+            .with_url(&namenode_url)
+            .with_config(config_map)
             .build()
-            .await
     }
 
     /// Test basic TLS connection and root directory listing
@@ -92,27 +107,26 @@ mod test {
 
         // Write test data
         let mut writer = client.create(test_path, WriteOptions::default()).await?;
-        writer.write_all(test_data).await?;
+        writer.write(test_data.to_vec().into()).await?;
         writer.close().await?;
 
         println!("Successfully wrote {} bytes to {}", test_data.len(), test_path);
 
         // Read back the data
-        let mut reader = client.open(test_path).await?;
-        let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).await?;
+        let mut reader = client.read(test_path).await?;
+        let buffer = reader.read(reader.file_length()).await?;
 
         println!("Successfully read {} bytes from {}", buffer.len(), test_path);
 
         // Verify data integrity
-        assert_eq!(buffer, test_data, "Read data doesn't match written data");
+        assert_eq!(buffer.as_ref(), test_data, "Read data doesn't match written data");
 
         // Get file status
-        let file_status = client.get_file_status(test_path).await?;
-        assert_eq!(file_status.len as usize, test_data.len());
+        let file_status = client.get_file_info(test_path).await?;
+        assert_eq!(file_status.length, test_data.len());
         assert!(!file_status.isdir);
 
-        println!("File status: {} bytes, modified: {:?}", file_status.len, file_status.modification_time);
+        println!("File status: {} bytes, modified: {:?}", file_status.length, file_status.modification_time);
 
         // Clean up
         client.delete(test_path, false).await?;
@@ -144,7 +158,7 @@ mod test {
 
         // Create a file in the directory
         let mut writer = client.create(test_file, WriteOptions::default()).await?;
-        writer.write_all(b"test content").await?;
+        writer.write(b"test content".to_vec().into()).await?;
         writer.close().await?;
         println!("Successfully created file: {}", test_file);
 
@@ -189,7 +203,7 @@ mod test {
 
         for i in 0..total_chunks {
             let chunk: Vec<u8> = (0..chunk_size).map(|j| ((i * chunk_size + j) % 256) as u8).collect();
-            writer.write_all(&chunk).await?;
+            writer.write(chunk.clone().into()).await?;
             original_data.extend_from_slice(&chunk);
         }
         writer.close().await?;
@@ -197,22 +211,20 @@ mod test {
         println!("Successfully wrote {} bytes in {} chunks", original_data.len(), total_chunks);
 
         // Read back the entire file
-        let mut reader = client.open(test_path).await?;
-        let mut read_data = Vec::new();
-        reader.read_to_end(&mut read_data).await?;
+        let mut reader = client.read(test_path).await?;
+        let read_data = reader.read(reader.file_length()).await?;
 
         println!("Successfully read {} bytes", read_data.len());
 
         // Verify data integrity
         assert_eq!(read_data.len(), original_data.len(), "File size mismatch");
-        assert_eq!(read_data, original_data, "File content mismatch");
+        assert_eq!(read_data.as_ref(), &original_data, "File content mismatch");
 
         // Test partial reads
-        let mut reader = client.open(test_path).await?;
-        let mut partial_buffer = vec![0u8; chunk_size];
-        reader.read_exact(&mut partial_buffer).await?;
+        let mut reader = client.read(test_path).await?;
+        let partial_data = reader.read(chunk_size).await?;
         
-        assert_eq!(partial_buffer, &original_data[0..chunk_size], "Partial read mismatch");
+        assert_eq!(partial_data.as_ref(), &original_data[0..chunk_size], "Partial read mismatch");
         println!("Partial read verification successful");
 
         // Clean up
@@ -269,26 +281,24 @@ mod test {
 
         // Create source file
         let mut writer = client.create(source_path, WriteOptions::default()).await?;
-        writer.write_all(test_data).await?;
+        writer.write(test_data.to_vec().into()).await?;
         writer.close().await?;
 
         // Copy by reading from source and writing to destination
-        let mut reader = client.open(source_path).await?;
-        let mut source_data = Vec::new();
-        reader.read_to_end(&mut source_data).await?;
+        let mut reader = client.read(source_path).await?;
+        let source_data = reader.read(reader.file_length()).await?;
 
         let mut dest_writer = client.create(dest_path, WriteOptions::default()).await?;
-        dest_writer.write_all(&source_data).await?;
+        dest_writer.write(source_data.clone()).await?;
         dest_writer.close().await?;
 
         println!("Successfully copied {} bytes from {} to {}", source_data.len(), source_path, dest_path);
 
         // Verify the copy
-        let mut dest_reader = client.open(dest_path).await?;
-        let mut dest_data = Vec::new();
-        dest_reader.read_to_end(&mut dest_data).await?;
+        let mut dest_reader = client.read(dest_path).await?;
+        let dest_data = dest_reader.read(dest_reader.file_length()).await?;
 
-        assert_eq!(dest_data, test_data, "Copied file content doesn't match original");
+        assert_eq!(dest_data.as_ref(), test_data, "Copied file content doesn't match original");
         println!("File copy verification successful");
 
         // Clean up

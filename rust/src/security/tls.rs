@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
-use rustls::{ClientConfig, RootCertStore};
+use rustls::{ClientConfig, RootCertStore, DigitallySignedStruct};
 use rustls_pemfile::{certs, private_key};
 use tokio::net::TcpStream;
 use tokio_rustls::{TlsConnector, client::TlsStream};
@@ -111,6 +111,9 @@ impl TlsConfig {
 
     /// Create a rustls ClientConfig from this TLS configuration
     pub fn build_client_config(&self) -> Result<ClientConfig> {
+        // Initialize crypto provider if not already done
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        
         let certs = self.load_client_certs()?;
         let key = self.load_client_key()?;
 
@@ -125,10 +128,18 @@ impl TlsConfig {
             root_store
         };
 
-        let client_config = ClientConfig::builder()
-            .with_root_certificates(root_store)
+        // Create Arc for sharing the root store
+        let root_store_arc = Arc::new(root_store);
+
+        let mut client_config = ClientConfig::builder()
+            .with_root_certificates(root_store_arc.as_ref().clone())
             .with_client_auth_cert(certs, key)
             .map_err(|e| HdfsError::SASLError(format!("Failed to configure client authentication: {}", e)))?;
+
+        // Skip hostname verification by default (like Go client)
+        if !self.verify_server {
+            client_config.dangerous().set_certificate_verifier(std::sync::Arc::new(NoHostnameVerifier::new(root_store_arc)));
+        }
 
         Ok(client_config)
     }
@@ -548,5 +559,66 @@ mod tests {
         fs::write(&key_path, test_key).unwrap();
         
         (temp_dir, cert_path.to_string_lossy().to_string(), key_path.to_string_lossy().to_string())
+    }
+}
+
+/// Custom certificate verifier that skips hostname verification
+/// This is similar to Go's InsecureSkipVerify but still validates the certificate chain
+#[derive(Debug)]
+struct NoHostnameVerifier {
+    inner: std::sync::Arc<rustls::client::WebPkiServerVerifier>,
+}
+
+impl NoHostnameVerifier {
+    fn new(root_store: Arc<RootCertStore>) -> Self {
+        Self {
+            inner: rustls::client::WebPkiServerVerifier::builder(root_store)
+                .build()
+                .unwrap(),
+        }
+    }
+}
+
+impl rustls::client::danger::ServerCertVerifier for NoHostnameVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName,
+        ocsp_response: &[u8],
+        now: rustls::pki_types::UnixTime,
+    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        // Always use a dummy hostname to skip hostname verification
+        // but still validate the certificate chain and other properties
+        let dummy_hostname = ServerName::try_from("namenode.hopsworks").unwrap();
+        self.inner.verify_server_cert(
+            end_entity,
+            intermediates,
+            &dummy_hostname,
+            ocsp_response,
+            now,
+        )
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.inner.supported_verify_schemes()
     }
 }

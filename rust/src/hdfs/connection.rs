@@ -13,12 +13,12 @@ use crc::{Crc, Table, CRC_32_CKSUM, CRC_32_ISCSI};
 use log::{debug, warn};
 use once_cell::sync::Lazy;
 use prost::Message;
-use socket2::Socket;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
 use tokio::{io::AsyncWriteExt, net::TcpStream, task::JoinHandle};
 use tokio_rustls::client::TlsStream;
+use rustls::pki_types::ServerName;
 use uuid::Uuid;
 
 use crate::common::config::Configuration;
@@ -210,23 +210,25 @@ async fn connect_tls(addr: &str, tls_config: &TlsConfig, handle: &Handle) -> Res
     socket.set_keepalive(true)?;
     let tcp_stream = TcpStream::from_std(socket.into())?;
     
-    // Setup TLS session
-    let tls_session = crate::security::tls::TlsSession::with_config(
-        "hdfs",
-        "0",
-        tls_config.clone(),
-    );
+    // Build TLS client config directly (like Go code)
+    let client_config = tls_config.build_client_config()?;
+    let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(client_config));
     
     // Determine hostname for TLS SNI
     let hostname = if let Some(ref configured_hostname) = tls_config.server_hostname {
-        configured_hostname.as_str()
+        configured_hostname.clone()
     } else {
         // Extract hostname from address
-        addr.split(':').next().unwrap_or(&addr)
+        addr.split(':').next().unwrap_or(&addr).to_string()
     };
     
+    // Convert hostname to ServerName
+    let server_name = ServerName::try_from(hostname.clone())
+        .map_err(|_| HdfsError::InvalidArgument(format!("Invalid hostname: {}", hostname)))?;
+    
     // Establish TLS connection
-    let tls_stream = tls_session.connect_tls(tcp_stream, hostname).await?;
+    let tls_stream = connector.connect(server_name, tcp_stream).await
+        .map_err(|e| HdfsError::IOError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
     
     Ok(ConnectionStream::Tls(tls_stream))
 }

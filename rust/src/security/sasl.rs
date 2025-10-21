@@ -29,7 +29,6 @@ use crate::security::digest::DigestSaslSession;
 use crate::{HdfsError, Result};
 
 use super::gssapi::GssapiSession;
-use super::tls::TlsSession;
 use super::user::{User, UserInfo};
 
 type Aes128Ctr = ctr::Ctr128BE<aes::Aes128>;
@@ -44,15 +43,13 @@ pub(crate) enum AuthMethod {
     Simple,
     Kerberos,
     Token,
-    Tls,
 }
 impl AuthMethod {
-    fn parse(method: &str) -> Option<Self> {
+    pub fn parse(method: &str) -> Option<Self> {
         match method {
-            "SIMPLE" => Some(Self::Simple),
-            "KERBEROS" => Some(Self::Kerberos),
-            "TOKEN" => Some(Self::Token),
-            "TLS" => Some(Self::Tls),
+            "SIMPLE" => Some(AuthMethod::Simple),
+            "GSSAPI" => Some(AuthMethod::Kerberos),
+            "DIGEST-MD5" => Some(AuthMethod::Token),
             _ => None,
         }
     }
@@ -203,10 +200,6 @@ fn select_method(
                 );
                 // let session = GSASLSession::new(auth.protocol(), auth.server_id(), token)?;
 
-                return Ok((auth.clone(), Some(Box::new(session))));
-            }
-            (Some(AuthMethod::Tls), _) => {
-                let session = TlsSession::new(auth.protocol(), auth.server_id())?;
                 return Ok((auth.clone(), Some(Box::new(session))));
             }
             _ => (),

@@ -35,7 +35,7 @@ pub(crate) mod hdfs;
 #[cfg(any(feature = "integration-test", feature = "benchmark"))]
 pub mod minidfs;
 pub(crate) mod proto;
-pub(crate) mod security;
+pub mod security;
 
 pub use client::WriteOptions;
 pub use client::{Client, ClientBuilder};
