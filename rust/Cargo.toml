@@ -40,7 +40,6 @@ regex = "1"
 roxmltree = "0.21.1"
 rustls = { version = "0.23", features = ["ring"] }
 rustls-pemfile = "2.0"
-rustls-webpki = "0.103"
 socket2 = "0.6"
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "io-util", "macros", "sync", "time"] }
@@ -49,7 +48,6 @@ url = "2"
 uuid = { version = "1", features = ["v4"] }
 webpki-roots = "0.26"
 which = { version = "8", optional = true }
-x509-parser = "0.16"
 whoami = "1"
 
 [target.'cfg(unix)'.dependencies]

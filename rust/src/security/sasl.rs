@@ -48,8 +48,8 @@ impl AuthMethod {
     pub fn parse(method: &str) -> Option<Self> {
         match method {
             "SIMPLE" => Some(AuthMethod::Simple),
-            "GSSAPI" => Some(AuthMethod::Kerberos),
-            "DIGEST-MD5" => Some(AuthMethod::Token),
+            "KERBEROS" => Some(AuthMethod::Kerberos),
+            "TOKEN" => Some(AuthMethod::Token),
             _ => None,
         }
     }
