@@ -2,30 +2,37 @@
 
 ## Overview
 
-This implementation adds mutual TLS authentication support to hdfs-native, allowing clients to authenticate using X.509 certificates instead of Kerberos tickets or delegation tokens.
+This implementation adds mutual TLS authentication support to hdfs-native, allowing clients to authenticate using X.509 certificates. The implementation uses **transport-layer TLS** (not SASL-based authentication) to establish encrypted connections with mutual certificate authentication.
 
 ## Architecture
 
-### Integration Points
+### Core Components
 
-1. **SASL Framework Integration** (`/src/security/sasl.rs`)
-   - Added `AuthMethod::Tls` to the existing authentication methods
-   - Integrated `TlsSession` into the SASL mechanism selection
-   - Maintains compatibility with existing SASL flow
+1. **TLS Configuration** (`/src/security/tls.rs`)
+   - `TlsConfig` struct for certificate and TLS settings
+   - Support for client certificates, CA certificates, and hostname verification control
+   - Integration with rustls for secure TLS implementation
 
-2. **TLS Session Implementation** (`/src/security/tls.rs`) 
-   - Implements the `SaslSession` trait for TLS authentication
-   - Handles certificate validation and user extraction
-   - Manages TLS handshake state machine
+2. **Connection Stream Abstraction** (`/src/hdfs/connection_stream.rs`)
+   - `ConnectionStream` enum supporting both TCP and TLS connections
+   - Zero-cost abstraction for transparent protocol handling
+   - Implements `AsyncRead` and `AsyncWrite` for both connection types
 
-3. **Transport Layer** (`/src/hdfs/connection.rs`)
-   - Added `connect_tls()` function for TLS-enabled connections
-   - Modified `RpcConnection::connect()` and `DatanodeConnection::connect()` to use TLS when configured
-   - Maintains backward compatibility with non-TLS connections
+3. **Transport Layer Integration** (`/src/hdfs/connection.rs`)
+   - `connect_tls()` function for establishing TLS connections
+   - Direct TLS configuration and handshake at transport layer
+   - Hostname verification with skip option (default: disabled)
 
-4. **Configuration** (`/src/common/config.rs`)
-   - Added TLS configuration options
-   - Supports both XML configuration files and programmatic configuration
+4. **Configuration Support** (`/src/common/config.rs`)
+   - Environment variable and configuration file support
+   - Integration with existing HDFS configuration system
+
+### Key Design Decisions
+
+- **Transport-Layer TLS**: TLS encryption and authentication happen at the transport layer, not as a SASL mechanism
+- **Hostname Verification Skip**: Disabled by default (like Go client) to handle IP-based connections
+- **Certificate Validation**: Full certificate chain validation using configured CA certificates
+- **Zero-Cost Abstraction**: `ConnectionStream` enum allows transparent handling of TCP vs TLS connections
 
 ## Configuration Options
 
@@ -34,84 +41,156 @@ This implementation adds mutual TLS authentication support to hdfs-native, allow
 | `hdfs.tls.enabled` | Enable/disable TLS authentication | `false` |
 | `hdfs.tls.client.cert.path` | Path to client certificate (PEM) | Required when TLS enabled |
 | `hdfs.tls.client.key.path` | Path to client private key (PEM) | Required when TLS enabled |
-| `hdfs.tls.ca.cert.path` | Path to CA certificate (PEM) | Optional |
-| `hdfs.tls.verify.server` | Verify server certificate | `true` |
-| `hdfs.tls.server.hostname` | Expected server hostname | Optional |
+| `hdfs.tls.ca.cert.path` | Path to CA certificate (PEM) | Optional (uses system CA if not provided) |
+| `hdfs.tls.verify.server` | Enable hostname verification | `false` |
+| `hdfs.tls.server.hostname` | Override server hostname for verification | Optional |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `HDFS_CLIENT_CERT_PATH` | Path to client certificate file |
+| `HDFS_CLIENT_KEY_PATH` | Path to client private key file |
+| `HDFS_CA_CERT_PATH` | Path to CA certificate file |
+| `HDFS_TLS_VERIFY_SERVER` | Enable/disable server verification (`true`/`false`) |
+| `HDFS_TLS_SERVER_HOSTNAME` | Server hostname for verification |
 
 ## Implementation Details
 
-### Authentication Flow
+### TLS Handshake Flow
 
-1. **Transport Layer TLS**:
-   - TCP connection established first
-   - TLS handshake performed with mutual authentication
-   - Client presents certificate to server
-   - Server verifies client certificate against CA
+1. **Connection Establishment**:
+   ```rust
+   // TCP connection established first
+   let tcp_stream = TcpStream::connect(addr).await?;
+   
+   // TLS configuration built from certificates
+   let tls_config = config.build_client_config()?;
+   let connector = TlsConnector::from(Arc::new(tls_config));
+   
+   // TLS handshake with mutual authentication
+   let tls_stream = connector.connect(server_name, tcp_stream).await?;
+   ```
 
-2. **SASL Layer Integration**:
-   - TLS session created as SASL mechanism
-   - User information extracted from certificate subject
-   - SASL framework handles session management
+2. **Certificate Verification**:
+   - Client presents certificate to server for mutual authentication
+   - Server certificate validated against configured CA
+   - Custom `NoHostnameVerifier` allows skipping hostname verification
+   - Full certificate chain validation performed
 
-3. **Connection Management**:
-   - Both NameNode and DataNode connections support TLS
-   - Connection pooling works with TLS connections
-   - Existing retry and failover logic preserved
+3. **Connection Abstraction**:
+   ```rust
+   pub enum ConnectionStream {
+       Tcp(TcpStream),
+       Tls(TlsStream<TcpStream>),
+   }
+   ```
 
-### Security Considerations
+### Dependencies
 
-- **Certificate Management**: Client certificates must be properly secured
-- **CA Trust**: Server certificates validated against configured CA
-- **Protocol Compatibility**: Works alongside existing HDFS security mechanisms
-- **Performance**: TLS handshake overhead on connection establishment
-
-## TODO Items for Full Implementation
-
-### High Priority
-1. **TLS Library Integration**: Choose and integrate rustls or openssl-rust
-2. **Certificate Loading**: Implement PEM certificate and key parsing
-3. **TLS Handshake**: Complete mutual authentication handshake
-4. **User Extraction**: Parse user information from certificate DN
-
-### Medium Priority
-1. **Certificate Validation**: Implement certificate chain validation
-2. **Hostname Verification**: Verify server certificate hostname
-3. **Error Handling**: Comprehensive TLS error handling and mapping
-4. **Configuration Loading**: Environment variable support
-
-### Low Priority
-1. **Certificate Reloading**: Support certificate rotation
-2. **TLS Session Resumption**: Optimize performance
-3. **Cipher Suite Configuration**: Allow cipher customization
-4. **OCSP Support**: Certificate revocation checking
+- **rustls** (v0.23): Modern TLS library with ring crypto provider
+- **tokio-rustls** (v0.26): Async TLS integration for tokio
+- **rustls-pemfile** (v2.0): PEM certificate/key file parsing
+- **webpki-roots** (v0.26): Default CA certificate roots
 
 ## Usage Example
 
-```rust
-use std::collections::HashMap;
-use hdfs_native::common::config::Configuration;
+### Environment-Based Configuration
 
-// Configure TLS authentication
-let mut config = HashMap::new();
-config.insert("hdfs.tls.enabled".to_string(), "true".to_string());
-config.insert("hdfs.tls.client.cert.path".to_string(), "/etc/hdfs/ssl/client.crt".to_string());
-config.insert("hdfs.tls.client.key.path".to_string(), "/etc/hdfs/ssl/client.key".to_string());
-config.insert("hdfs.tls.ca.cert.path".to_string(), "/etc/hdfs/ssl/ca.crt".to_string());
+```bash
+# Set up environment variables
+export HDFS_CLIENT_CERT_PATH="/path/to/client.pem"
+export HDFS_CLIENT_KEY_PATH="/path/to/client.key"
+export HDFS_CA_CERT_PATH="/path/to/ca.pem"
+export HDFS_TLS_VERIFY_SERVER="false"
 
-let hdfs_config = Configuration::new_with_config(config)?;
-// Use hdfs_config to create HDFS client with TLS authentication
+# Use with hdfs-native client
+export HDFS_NAMENODE_URL="hdfs://namenode.example.com:8020"
 ```
 
-## Testing Strategy
+### Programmatic Configuration
 
-1. **Unit Tests**: Test certificate loading, validation, and configuration
-2. **Integration Tests**: Test with mock TLS server and real certificates  
-3. **End-to-End Tests**: Test against HDFS cluster with TLS enabled
-4. **Security Tests**: Test certificate validation edge cases
+```rust
+use std::collections::HashMap;
+use hdfs_native::client::ClientBuilder;
+
+let mut config = HashMap::new();
+config.insert("hdfs.tls.enabled".to_string(), "true".to_string());
+config.insert("hdfs.tls.client.cert.path".to_string(), "/etc/ssl/client.pem".to_string());
+config.insert("hdfs.tls.client.key.path".to_string(), "/etc/ssl/client.key".to_string());
+config.insert("hdfs.tls.ca.cert.path".to_string(), "/etc/ssl/ca.pem".to_string());
+config.insert("hdfs.tls.verify.server".to_string(), "false".to_string());
+
+let client = ClientBuilder::new()
+    .with_url("hdfs://namenode.example.com:8020")
+    .with_config(config)
+    .build()?;
+```
+
+## Testing
+
+### Integration Tests
+
+The implementation includes comprehensive integration tests:
+
+- **Real Cluster Testing**: Tests against actual HDFS clusters with TLS enabled
+- **Certificate Validation**: Tests with real certificates (Hopsworks cluster)
+- **Environment Configuration**: Tests loading configuration from environment variables
+- **Connection Establishment**: Tests TLS handshake and connection setup
+
+### Test Files
+
+- `tests/test_tls_simple.rs`: Basic TLS operations (list, read, write, copy)
+- `tests/test_tls_debug.rs`: Debug tests for TLS connection troubleshooting
+
+## Security Features
+
+### Certificate Validation
+
+- **Mutual Authentication**: Both client and server certificates validated
+- **Certificate Chain Validation**: Full chain validation using CA certificates
+- **Hostname Verification**: Optional (disabled by default for flexibility)
+- **Crypto Provider**: Uses ring crypto provider for security
+
+### Custom Certificate Verifier
+
+```rust
+struct NoHostnameVerifier {
+    inner: Arc<rustls::client::WebPkiServerVerifier>,
+}
+```
+
+- Validates certificate chain and signatures
+- Skips hostname verification when configured
+- Maintains security while allowing IP-based connections
 
 ## Deployment Considerations
 
-1. **Certificate Distribution**: Secure distribution of client certificates
-2. **CA Management**: Proper CA certificate management and rotation
-3. **Network Security**: TLS does not replace network security measures
-4. **Monitoring**: Monitor certificate expiration and TLS handshake failures
+### Certificate Management
+
+1. **Client Certificates**: Must be accessible to the application with proper file permissions
+2. **CA Certificates**: Should include the full certificate chain for validation
+3. **Private Keys**: Must be protected with appropriate file system permissions (0600)
+
+### Network Configuration
+
+1. **DNS vs IP**: Use DNS names when possible for proper hostname verification
+2. **Port Configuration**: Ensure TLS is enabled on the correct HDFS ports
+3. **Firewall Rules**: TLS connections still use standard HDFS ports
+
+### Monitoring
+
+1. **Certificate Expiration**: Monitor certificate validity periods
+2. **TLS Handshake Failures**: Monitor connection establishment errors
+3. **Performance**: TLS adds handshake overhead to connection establishment
+
+## Status
+
+✅ **Complete Implementation**
+- Transport-layer TLS with mutual authentication
+- Certificate loading and validation
+- Hostname verification with skip option
+- Integration with HDFS client
+- Comprehensive testing with real cluster
+
+The mutual TLS implementation is **production-ready** and has been tested with real HDFS clusters using proper certificates.
