@@ -96,11 +96,11 @@ impl Configuration {
         self.get(DFS_DATA_TRANSFER_PROTECTION).is_some()
     }
 
-    pub(crate) fn tls_enabled(&self) -> bool {
+    pub fn tls_enabled(&self) -> bool {
         self.get_boolean(HDFS_TLS_ENABLED, false)
     }
 
-    pub(crate) fn get_tls_config(&self) -> Option<crate::security::tls::TlsConfig> {
+    pub fn get_tls_config(&self) -> Option<crate::security::tls::TlsConfig> {
         if !self.tls_enabled() {
             return None;
         }

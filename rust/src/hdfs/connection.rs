@@ -24,6 +24,7 @@ use crate::proto::hdfs::{DataEncryptionKeyProto, DatanodeIdProto};
 use crate::proto::{common, hdfs};
 use crate::security::sasl::{
     negotiate_sasl_session, SaslDatanodeConnection, SaslDatanodeReader, SaslDatanodeWriter,
+    SaslSession,
 };
 use crate::security::sasl::{SaslReader, SaslWriter};
 use crate::security::tls::TlsConfig;
@@ -57,13 +58,39 @@ async fn connect(addr: &str, handle: &Handle) -> Result<TcpStream> {
 
 // Connect with mutual TLS authentication  
 async fn connect_tls(addr: &str, tls_config: &TlsConfig, handle: &Handle) -> Result<TcpStream> {
-    // TODO: Implement TLS connection establishment
-    // 1. Create regular TCP connection first
-    // 2. Wrap it with TLS using rustls or openssl
-    // 3. Configure mutual authentication with client certificate
-    // 4. Perform TLS handshake
-    // 5. Return the wrapped TLS stream (cast to TcpStream or use trait object)
-    todo!("Implement TLS connection with mutual authentication")
+    let addr_string = addr.to_string();
+    
+    // Create TLS session for configuration
+    let mut tls_session = crate::security::tls::TlsSession::with_config("hdfs", "0", tls_config.clone());
+    
+    // Validate certificates and build client config
+    tls_session.step(None)?;
+    tls_session.step(None)?; // Complete the SASL-style authentication
+    
+    // Create regular TCP connection first
+    let tcp_stream = handle.spawn(TcpStream::connect(addr_string.clone())).await.unwrap()?;
+    tcp_stream.set_nodelay(true)?;
+    
+    let sf = SockRef::from(&tcp_stream);
+    sf.set_keepalive(true)?;
+    
+    // Extract hostname from address for TLS SNI
+    let hostname = if let Some(colon_pos) = addr.find(':') {
+        &addr[..colon_pos]
+    } else {
+        addr
+    };
+    
+    // Establish TLS connection
+    let _tls_stream = tls_session.connect_tls(tcp_stream, hostname).await?;
+    
+    // TODO: For now, we return the original TCP stream as a placeholder
+    // In a full implementation, we'd need to abstract over TcpStream and TlsStream
+    // or wrap them in a common trait/enum
+    
+    // This is a limitation of the current approach - we need to redesign the connection
+    // handling to support both TcpStream and TlsStream types
+    todo!("Need to refactor connection handling to support TLS streams alongside TCP streams")
 }
 
 #[derive(Debug)]

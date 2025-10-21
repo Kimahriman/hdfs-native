@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use hdfs_native::common::config::Configuration;
+use hdfs_native::security::tls::{TlsConfig, TlsSession};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 1: Configure TLS through configuration map
@@ -27,13 +28,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create configuration with TLS settings
     let config = Configuration::new_with_config(tls_config)?;
     
-    // TODO: Use this configuration to create HDFS client connections
-    // The actual client connection code would automatically use TLS
-    // when hdfs.tls.enabled is set to true
-    
     println!("TLS configuration loaded successfully");
     println!("Client cert: {:?}", config.get("hdfs.tls.client.cert.path"));
     println!("TLS enabled: {}", config.tls_enabled());
+    
+    // Example 2: Create TLS configuration directly
+    let tls_config = TlsConfig::new(
+        "/etc/hdfs/ssl/client.crt".to_string(),
+        "/etc/hdfs/ssl/client.key".to_string(),
+    )
+    .with_ca_cert("/etc/hdfs/ssl/ca.crt".to_string())
+    .with_server_verification(true)
+    .with_server_hostname("namenode.example.com".to_string());
+    
+    println!("Direct TLS config created");
+    println!("Client cert path: {}", tls_config.client_cert_path);
+    println!("Verify server: {}", tls_config.verify_server);
+    
+    // Example 3: Create TLS session from environment variables
+    println!("Testing environment variable loading...");
+    std::env::set_var("HDFS_CLIENT_CERT_PATH", "/tmp/client.crt");
+    std::env::set_var("HDFS_CLIENT_KEY_PATH", "/tmp/client.key");
+    
+    // This would work if the certificate files existed
+    // let session_result = TlsSession::new("hdfs", "namenode");
+    // match session_result {
+    //     Ok(_) => println!("TLS session created successfully from environment"),
+    //     Err(e) => println!("Failed to create TLS session: {}", e),
+    // }
+    
+    std::env::remove_var("HDFS_CLIENT_CERT_PATH");
+    std::env::remove_var("HDFS_CLIENT_KEY_PATH");
     
     Ok(())
 }
