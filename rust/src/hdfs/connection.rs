@@ -26,6 +26,7 @@ use crate::security::sasl::{
     negotiate_sasl_session, SaslDatanodeConnection, SaslDatanodeReader, SaslDatanodeWriter,
 };
 use crate::security::sasl::{SaslReader, SaslWriter};
+use crate::security::tls::TlsConfig;
 use crate::security::user::UserInfo;
 use crate::{HdfsError, Result};
 
@@ -52,6 +53,17 @@ async fn connect(addr: &str, handle: &Handle) -> Result<TcpStream> {
     sf.set_keepalive(true)?;
 
     Ok(stream)
+}
+
+// Connect with mutual TLS authentication  
+async fn connect_tls(addr: &str, tls_config: &TlsConfig, handle: &Handle) -> Result<TcpStream> {
+    // TODO: Implement TLS connection establishment
+    // 1. Create regular TCP connection first
+    // 2. Wrap it with TLS using rustls or openssl
+    // 3. Configure mutual authentication with client certificate
+    // 4. Perform TLS handshake
+    // 5. Return the wrapped TLS stream (cast to TcpStream or use trait object)
+    todo!("Implement TLS connection with mutual authentication")
 }
 
 #[derive(Debug)]
@@ -136,7 +148,12 @@ impl RpcConnection {
         let next_call_id = AtomicI32::new(0);
         let call_map = Arc::new(Mutex::new(HashMap::new()));
 
-        let mut stream = connect(url, handle).await?;
+        let mut stream = if let Some(tls_config) = config.get_tls_config() {
+            connect_tls(url, &tls_config, handle).await?
+        } else {
+            connect(url, handle).await?
+        };
+        
         stream.write_all("hrpc".as_bytes()).await?;
         // Current version
         stream.write_all(&[9u8]).await?;
@@ -559,7 +576,12 @@ impl DatanodeConnection {
         handle: &Handle,
     ) -> Result<Self> {
         let url = format!("{}:{}", datanode_id.ip_addr, datanode_id.xfer_port);
-        let stream = connect(&url, handle).await?;
+        
+        let stream = if let Some(tls_config) = config.get_tls_config() {
+            connect_tls(&url, &tls_config, handle).await?
+        } else {
+            connect(&url, handle).await?
+        };
 
         let sasl_connection = SaslDatanodeConnection::create(stream);
         let (reader, writer) = sasl_connection

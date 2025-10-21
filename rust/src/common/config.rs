@@ -27,6 +27,14 @@ const DFS_DATA_TRANSFER_PROTECTION: &str = "dfs.data.transfer.protection";
 
 const HADOOP_SECURITY_AUTHENTICATION: &str = "hadoop.security.authentication";
 
+// TLS configuration keys
+const HDFS_TLS_ENABLED: &str = "hdfs.tls.enabled";
+const HDFS_TLS_CLIENT_CERT_PATH: &str = "hdfs.tls.client.cert.path";
+const HDFS_TLS_CLIENT_KEY_PATH: &str = "hdfs.tls.client.key.path";
+const HDFS_TLS_CA_CERT_PATH: &str = "hdfs.tls.ca.cert.path";
+const HDFS_TLS_VERIFY_SERVER: &str = "hdfs.tls.verify.server";
+const HDFS_TLS_SERVER_HOSTNAME: &str = "hdfs.tls.server.hostname";
+
 // Viewfs settings
 const VIEWFS_MOUNTTABLE_PREFIX: &str = "fs.viewfs.mounttable";
 
@@ -86,6 +94,38 @@ impl Configuration {
 
     pub(crate) fn data_transfer_protection_enabled(&self) -> bool {
         self.get(DFS_DATA_TRANSFER_PROTECTION).is_some()
+    }
+
+    pub(crate) fn tls_enabled(&self) -> bool {
+        self.get_boolean(HDFS_TLS_ENABLED, false)
+    }
+
+    pub(crate) fn get_tls_config(&self) -> Option<crate::security::tls::TlsConfig> {
+        if !self.tls_enabled() {
+            return None;
+        }
+
+        let client_cert_path = self.get(HDFS_TLS_CLIENT_CERT_PATH)?;
+        let client_key_path = self.get(HDFS_TLS_CLIENT_KEY_PATH)?;
+
+        let mut config = crate::security::tls::TlsConfig::new(
+            client_cert_path.to_string(),
+            client_key_path.to_string(),
+        );
+
+        if let Some(ca_cert_path) = self.get(HDFS_TLS_CA_CERT_PATH) {
+            config = config.with_ca_cert(ca_cert_path.to_string());
+        }
+
+        if let Some(verify_server) = self.get(HDFS_TLS_VERIFY_SERVER) {
+            config = config.with_server_verification(verify_server.to_lowercase() == "true");
+        }
+
+        if let Some(server_hostname) = self.get(HDFS_TLS_SERVER_HOSTNAME) {
+            config = config.with_server_hostname(server_hostname.to_string());
+        }
+
+        Some(config)
     }
 
     pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Result<Vec<String>> {
