@@ -49,6 +49,7 @@ url = "2"
 uuid = { version = "1", features = ["v4"] }
 webpki-roots = "0.26"
 which = { version = "8", optional = true }
+x509-parser = "0.16"
 whoami = "1"
 
 [target.'cfg(unix)'.dependencies]
