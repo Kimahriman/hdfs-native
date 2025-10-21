@@ -1,9 +1,11 @@
 use std::collections::{HashMap, VecDeque};
 use std::default::Default;
 use std::io::ErrorKind;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::task::{Context, Poll};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use chrono::{prelude::*, TimeDelta};
@@ -11,10 +13,12 @@ use crc::{Crc, Table, CRC_32_CKSUM, CRC_32_ISCSI};
 use log::{debug, warn};
 use once_cell::sync::Lazy;
 use prost::Message;
-use socket2::SockRef;
+use socket2::Socket;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
 use tokio::{io::AsyncWriteExt, net::TcpStream, task::JoinHandle};
+use tokio_rustls::client::TlsStream;
 use uuid::Uuid;
 
 use crate::common::config::Configuration;
@@ -24,7 +28,6 @@ use crate::proto::hdfs::{DataEncryptionKeyProto, DatanodeIdProto};
 use crate::proto::{common, hdfs};
 use crate::security::sasl::{
     negotiate_sasl_session, SaslDatanodeConnection, SaslDatanodeReader, SaslDatanodeWriter,
-    SaslSession,
 };
 use crate::security::sasl::{SaslReader, SaslWriter};
 use crate::security::tls::TlsConfig;
@@ -42,55 +45,190 @@ const CRC32C: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_ISCSI);
 pub(crate) static DATANODE_CACHE: Lazy<DatanodeConnectionCache> =
     Lazy::new(DatanodeConnectionCache::new);
 
-// Connect to a remote host and return a TcpStream with standard options we want
-async fn connect(addr: &str, handle: &Handle) -> Result<TcpStream> {
-    let addr = addr.to_string();
+/// Abstraction over different connection stream types
+#[derive(Debug)]
+pub enum ConnectionStream {
+    Tcp(TcpStream),
+    Tls(TlsStream<TcpStream>),
+}
+
+impl ConnectionStream {
+    /// Check if this is a TLS connection
+    pub fn is_tls(&self) -> bool {
+        matches!(self, ConnectionStream::Tls(_))
+    }
+    
+    /// Get the peer address if available
+    pub fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        match self {
+            ConnectionStream::Tcp(stream) => stream.peer_addr(),
+            ConnectionStream::Tls(stream) => stream.get_ref().0.peer_addr(),
+        }
+    }
+    
+    /// Split the stream into read and write halves
+    pub fn into_split(self) -> (ConnectionStreamReadHalf, ConnectionStreamWriteHalf) {
+        match self {
+            ConnectionStream::Tcp(stream) => {
+                let (read, write) = stream.into_split();
+                (ConnectionStreamReadHalf::Tcp(read), ConnectionStreamWriteHalf::Tcp(write))
+            }
+            ConnectionStream::Tls(stream) => {
+                let (read, write) = tokio::io::split(stream);
+                (ConnectionStreamReadHalf::Tls(read), ConnectionStreamWriteHalf::Tls(write))
+            }
+        }
+    }
+}
+
+/// Read half of a ConnectionStream
+#[derive(Debug)]
+pub enum ConnectionStreamReadHalf {
+    Tcp(tokio::net::tcp::OwnedReadHalf),
+    Tls(tokio::io::ReadHalf<TlsStream<TcpStream>>),
+}
+
+impl AsyncRead for ConnectionStreamReadHalf {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ConnectionStreamReadHalf::Tcp(stream) => Pin::new(stream).poll_read(cx, buf),
+            ConnectionStreamReadHalf::Tls(stream) => Pin::new(stream).poll_read(cx, buf),
+        }
+    }
+}
+
+/// Write half of a ConnectionStream  
+#[derive(Debug)]
+pub enum ConnectionStreamWriteHalf {
+    Tcp(tokio::net::tcp::OwnedWriteHalf),
+    Tls(tokio::io::WriteHalf<TlsStream<TcpStream>>),
+}
+
+impl AsyncWrite for ConnectionStreamWriteHalf {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            ConnectionStreamWriteHalf::Tcp(stream) => Pin::new(stream).poll_write(cx, buf),
+            ConnectionStreamWriteHalf::Tls(stream) => Pin::new(stream).poll_write(cx, buf),
+        }
+    }
+    
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ConnectionStreamWriteHalf::Tcp(stream) => Pin::new(stream).poll_flush(cx),
+            ConnectionStreamWriteHalf::Tls(stream) => Pin::new(stream).poll_flush(cx),
+        }
+    }
+    
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ConnectionStreamWriteHalf::Tcp(stream) => Pin::new(stream).poll_shutdown(cx),
+            ConnectionStreamWriteHalf::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
+        }
+    }
+}
+
+// Implement AsyncRead for ConnectionStream
+impl AsyncRead for ConnectionStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ConnectionStream::Tcp(stream) => Pin::new(stream).poll_read(cx, buf),
+            ConnectionStream::Tls(stream) => Pin::new(stream).poll_read(cx, buf),
+        }
+    }
+}
+
+// Implement AsyncWrite for ConnectionStream
+impl AsyncWrite for ConnectionStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            ConnectionStream::Tcp(stream) => Pin::new(stream).poll_write(cx, buf),
+            ConnectionStream::Tls(stream) => Pin::new(stream).poll_write(cx, buf),
+        }
+    }
+    
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ConnectionStream::Tcp(stream) => Pin::new(stream).poll_flush(cx),
+            ConnectionStream::Tls(stream) => Pin::new(stream).poll_flush(cx),
+        }
+    }
+    
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ConnectionStream::Tcp(stream) => Pin::new(stream).poll_shutdown(cx),
+            ConnectionStream::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
+        }
+    }
+}
+
+// Connect to a remote host and return a ConnectionStream with standard options we want
+async fn connect(addr: &str, handle: &Handle) -> Result<ConnectionStream> {
+    debug!("Connecting to {}", addr);
+    let addr = addr.to_string(); // Convert to owned String to avoid lifetime issues
     // Spawn a task to create the TcpStream so it captures the tokio runtime in case we
-    // are not called from one
+    // are running from a sync context
     let stream = handle.spawn(TcpStream::connect(addr)).await.unwrap()?;
+    
+    // Disable Nagle's algorithm
     stream.set_nodelay(true)?;
-
-    let sf = SockRef::from(&stream);
-    sf.set_keepalive(true)?;
-
-    Ok(stream)
+    
+    // Set TCP keepalive to be a bit more aggressive than the OS default
+    let socket = socket2::Socket::from(stream.into_std()?);
+    socket.set_keepalive(true)?;
+    let tcp_stream = TcpStream::from_std(socket.into())?;
+    
+    Ok(ConnectionStream::Tcp(tcp_stream))
 }
 
 // Connect with mutual TLS authentication  
-async fn connect_tls(addr: &str, tls_config: &TlsConfig, handle: &Handle) -> Result<TcpStream> {
-    let addr_string = addr.to_string();
+async fn connect_tls(addr: &str, tls_config: &TlsConfig, handle: &Handle) -> Result<ConnectionStream> {
+    debug!("Connecting to {} with TLS", addr);
+    let addr = addr.to_string(); // Convert to owned String to avoid lifetime issues
     
-    // Create TLS session for configuration
-    let mut tls_session = crate::security::tls::TlsSession::with_config("hdfs", "0", tls_config.clone());
+    // First establish TCP connection with proper socket options
+    let tcp_stream = handle.spawn(TcpStream::connect(addr.clone())).await.unwrap()?;
     
-    // Validate certificates and build client config
-    tls_session.step(None)?;
-    tls_session.step(None)?; // Complete the SASL-style authentication
-    
-    // Create regular TCP connection first
-    let tcp_stream = handle.spawn(TcpStream::connect(addr_string.clone())).await.unwrap()?;
+    // Configure TCP socket options
     tcp_stream.set_nodelay(true)?;
+    let socket = socket2::Socket::from(tcp_stream.into_std()?);
+    socket.set_keepalive(true)?;
+    let tcp_stream = TcpStream::from_std(socket.into())?;
     
-    let sf = SockRef::from(&tcp_stream);
-    sf.set_keepalive(true)?;
+    // Setup TLS session
+    let tls_session = crate::security::tls::TlsSession::with_config(
+        "hdfs",
+        "0",
+        tls_config.clone(),
+    );
     
-    // Extract hostname from address for TLS SNI
-    let hostname = if let Some(colon_pos) = addr.find(':') {
-        &addr[..colon_pos]
+    // Determine hostname for TLS SNI
+    let hostname = if let Some(ref configured_hostname) = tls_config.server_hostname {
+        configured_hostname.as_str()
     } else {
-        addr
+        // Extract hostname from address
+        addr.split(':').next().unwrap_or(&addr)
     };
     
     // Establish TLS connection
-    let _tls_stream = tls_session.connect_tls(tcp_stream, hostname).await?;
+    let tls_stream = tls_session.connect_tls(tcp_stream, hostname).await?;
     
-    // TODO: For now, we return the original TCP stream as a placeholder
-    // In a full implementation, we'd need to abstract over TcpStream and TlsStream
-    // or wrap them in a common trait/enum
-    
-    // This is a limitation of the current approach - we need to redesign the connection
-    // handling to support both TcpStream and TlsStream types
-    todo!("Need to refactor connection handling to support TLS streams alongside TCP streams")
+    Ok(ConnectionStream::Tls(tls_stream))
 }
 
 #[derive(Debug)]

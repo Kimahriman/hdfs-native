@@ -7,9 +7,9 @@ use std::sync::{Arc, Mutex};
 use tokio::io::BufReader;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufStream},
-    net::tcp::{OwnedReadHalf, OwnedWriteHalf},
-    net::TcpStream,
 };
+
+use crate::hdfs::connection::{ConnectionStream, ConnectionStreamReadHalf, ConnectionStreamWriteHalf};
 
 use super::user::BlockTokenIdentifier;
 use crate::common::config::Configuration;
@@ -71,7 +71,7 @@ pub(crate) trait SaslSession: Send + Sync {
 }
 
 pub(crate) async fn negotiate_sasl_session(
-    stream: TcpStream,
+    stream: ConnectionStream,
     service: &str,
     config: &Configuration,
 ) -> Result<(UserInfo, SaslReader, SaslWriter)> {
@@ -216,13 +216,13 @@ fn select_method(
 }
 
 pub(crate) struct SaslReader {
-    stream: OwnedReadHalf,
+    stream: ConnectionStreamReadHalf,
     session: Option<Arc<Mutex<Box<dyn SaslSession>>>>,
     buffer: Bytes,
 }
 
 impl SaslReader {
-    fn new(stream: OwnedReadHalf) -> Self {
+    fn new(stream: ConnectionStreamReadHalf) -> Self {
         SaslReader {
             stream,
             session: None,
@@ -303,12 +303,12 @@ impl SaslReader {
 }
 
 pub(crate) struct SaslWriter {
-    stream: OwnedWriteHalf,
+    stream: ConnectionStreamWriteHalf,
     session: Option<Arc<Mutex<Box<dyn SaslSession>>>>,
 }
 
 impl SaslWriter {
-    fn new(stream: OwnedWriteHalf) -> Self {
+    fn new(stream: ConnectionStreamWriteHalf) -> Self {
         SaslWriter {
             stream,
             session: None,
@@ -389,7 +389,7 @@ struct SaslDecryptor {
 }
 
 impl SaslDecryptor {
-    async fn read_more_data(&mut self, stream: &mut BufReader<OwnedReadHalf>) -> Result<()> {
+    async fn read_more_data(&mut self, stream: &mut BufReader<ConnectionStreamReadHalf>) -> Result<()> {
         stream.read_exact(&mut self.size_buffer).await?;
         let msg_length = u32::from_be_bytes(self.size_buffer) as usize;
 
@@ -419,19 +419,19 @@ enum DatanodeDecryptor {
 }
 
 pub(crate) struct SaslDatanodeReader {
-    stream: BufReader<OwnedReadHalf>,
+    stream: BufReader<ConnectionStreamReadHalf>,
     decryptor: Option<DatanodeDecryptor>,
 }
 
 impl SaslDatanodeReader {
-    fn unencrypted(stream: OwnedReadHalf) -> Self {
+    fn unencrypted(stream: ConnectionStreamReadHalf) -> Self {
         Self {
             stream: BufReader::new(stream),
             decryptor: None,
         }
     }
 
-    fn sasl(stream: OwnedReadHalf, session: Arc<Mutex<DigestSaslSession>>) -> Self {
+    fn sasl(stream: ConnectionStreamReadHalf, session: Arc<Mutex<DigestSaslSession>>) -> Self {
         let decryptor = SaslDecryptor {
             session,
             size_buffer: [0u8; 4],
@@ -444,7 +444,7 @@ impl SaslDatanodeReader {
         }
     }
 
-    fn cipher(stream: OwnedReadHalf, cipher: Box<dyn StreamCipher + Send>) -> Self {
+    fn cipher(stream: ConnectionStreamReadHalf, cipher: Box<dyn StreamCipher + Send>) -> Self {
         Self {
             stream: BufReader::new(stream),
             decryptor: Some(DatanodeDecryptor::Cipher(cipher)),
@@ -541,26 +541,26 @@ enum DatanodeEncryptor {
 }
 
 pub(crate) struct SaslDatanodeWriter {
-    stream: OwnedWriteHalf,
+    stream: ConnectionStreamWriteHalf,
     encryptor: Option<DatanodeEncryptor>,
 }
 
 impl SaslDatanodeWriter {
-    fn unencrypted(stream: OwnedWriteHalf) -> Self {
+    fn unencrypted(stream: ConnectionStreamWriteHalf) -> Self {
         Self {
             stream,
             encryptor: None,
         }
     }
 
-    fn sasl(stream: OwnedWriteHalf, session: Arc<Mutex<DigestSaslSession>>) -> Self {
+    fn sasl(stream: ConnectionStreamWriteHalf, session: Arc<Mutex<DigestSaslSession>>) -> Self {
         Self {
             stream,
             encryptor: Some(DatanodeEncryptor::Sasl(session)),
         }
     }
 
-    fn cipher(stream: OwnedWriteHalf, cipher: Box<dyn StreamCipher + Send>) -> Self {
+    fn cipher(stream: ConnectionStreamWriteHalf, cipher: Box<dyn StreamCipher + Send>) -> Self {
         Self {
             stream,
             encryptor: Some(DatanodeEncryptor::Cipher(cipher)),
@@ -592,11 +592,11 @@ impl SaslDatanodeWriter {
 }
 
 pub(crate) struct SaslDatanodeConnection {
-    stream: BufStream<TcpStream>,
+    stream: BufStream<ConnectionStream>,
 }
 
 impl SaslDatanodeConnection {
-    pub fn create(stream: TcpStream) -> Self {
+    pub fn create(stream: ConnectionStream) -> Self {
         Self {
             stream: BufStream::new(stream),
         }
