@@ -9,7 +9,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufStream},
 };
 
-use crate::hdfs::connection::{ConnectionStream, ConnectionStreamReadHalf, ConnectionStreamWriteHalf};
+use crate::hdfs::connection_stream::{ConnectionStream, ConnectionStreamReadHalf, ConnectionStreamWriteHalf};
 
 use super::user::BlockTokenIdentifier;
 use crate::common::config::Configuration;

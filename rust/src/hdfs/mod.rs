@@ -4,3 +4,4 @@ pub(crate) mod connection;
 pub(crate) mod protocol;
 pub(crate) mod proxy;
 pub(crate) mod replace_datanode;
+pub(crate) mod connection_stream;

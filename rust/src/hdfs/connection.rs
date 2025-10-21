@@ -1,11 +1,10 @@
 use std::collections::{HashMap, VecDeque};
 use std::default::Default;
 use std::io::ErrorKind;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::task::{Context, Poll};
+
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use chrono::{prelude::*, TimeDelta};
@@ -13,15 +12,15 @@ use crc::{Crc, Table, CRC_32_CKSUM, CRC_32_ISCSI};
 use log::{debug, warn};
 use once_cell::sync::Lazy;
 use prost::Message;
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
 use tokio::{io::AsyncWriteExt, net::TcpStream, task::JoinHandle};
-use tokio_rustls::client::TlsStream;
+
 use rustls::pki_types::ServerName;
 use uuid::Uuid;
 
 use crate::common::config::Configuration;
+use crate::hdfs::connection_stream::ConnectionStream;
 use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
 use crate::proto::common::TokenProto;
 use crate::proto::hdfs::{DataEncryptionKeyProto, DatanodeIdProto};
@@ -44,138 +43,6 @@ const CRC32C: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_ISCSI);
 
 pub(crate) static DATANODE_CACHE: Lazy<DatanodeConnectionCache> =
     Lazy::new(DatanodeConnectionCache::new);
-
-/// Abstraction over different connection stream types
-#[derive(Debug)]
-pub enum ConnectionStream {
-    Tcp(TcpStream),
-    Tls(TlsStream<TcpStream>),
-}
-
-impl ConnectionStream {
-    /// Check if this is a TLS connection
-    pub fn is_tls(&self) -> bool {
-        matches!(self, ConnectionStream::Tls(_))
-    }
-    
-    /// Get the peer address if available
-    pub fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
-        match self {
-            ConnectionStream::Tcp(stream) => stream.peer_addr(),
-            ConnectionStream::Tls(stream) => stream.get_ref().0.peer_addr(),
-        }
-    }
-    
-    /// Split the stream into read and write halves
-    pub fn into_split(self) -> (ConnectionStreamReadHalf, ConnectionStreamWriteHalf) {
-        match self {
-            ConnectionStream::Tcp(stream) => {
-                let (read, write) = stream.into_split();
-                (ConnectionStreamReadHalf::Tcp(read), ConnectionStreamWriteHalf::Tcp(write))
-            }
-            ConnectionStream::Tls(stream) => {
-                let (read, write) = tokio::io::split(stream);
-                (ConnectionStreamReadHalf::Tls(read), ConnectionStreamWriteHalf::Tls(write))
-            }
-        }
-    }
-}
-
-/// Read half of a ConnectionStream
-#[derive(Debug)]
-pub enum ConnectionStreamReadHalf {
-    Tcp(tokio::net::tcp::OwnedReadHalf),
-    Tls(tokio::io::ReadHalf<TlsStream<TcpStream>>),
-}
-
-impl AsyncRead for ConnectionStreamReadHalf {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            ConnectionStreamReadHalf::Tcp(stream) => Pin::new(stream).poll_read(cx, buf),
-            ConnectionStreamReadHalf::Tls(stream) => Pin::new(stream).poll_read(cx, buf),
-        }
-    }
-}
-
-/// Write half of a ConnectionStream  
-#[derive(Debug)]
-pub enum ConnectionStreamWriteHalf {
-    Tcp(tokio::net::tcp::OwnedWriteHalf),
-    Tls(tokio::io::WriteHalf<TlsStream<TcpStream>>),
-}
-
-impl AsyncWrite for ConnectionStreamWriteHalf {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        match self.get_mut() {
-            ConnectionStreamWriteHalf::Tcp(stream) => Pin::new(stream).poll_write(cx, buf),
-            ConnectionStreamWriteHalf::Tls(stream) => Pin::new(stream).poll_write(cx, buf),
-        }
-    }
-    
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            ConnectionStreamWriteHalf::Tcp(stream) => Pin::new(stream).poll_flush(cx),
-            ConnectionStreamWriteHalf::Tls(stream) => Pin::new(stream).poll_flush(cx),
-        }
-    }
-    
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            ConnectionStreamWriteHalf::Tcp(stream) => Pin::new(stream).poll_shutdown(cx),
-            ConnectionStreamWriteHalf::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
-        }
-    }
-}
-
-// Implement AsyncRead for ConnectionStream
-impl AsyncRead for ConnectionStream {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            ConnectionStream::Tcp(stream) => Pin::new(stream).poll_read(cx, buf),
-            ConnectionStream::Tls(stream) => Pin::new(stream).poll_read(cx, buf),
-        }
-    }
-}
-
-// Implement AsyncWrite for ConnectionStream
-impl AsyncWrite for ConnectionStream {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        match self.get_mut() {
-            ConnectionStream::Tcp(stream) => Pin::new(stream).poll_write(cx, buf),
-            ConnectionStream::Tls(stream) => Pin::new(stream).poll_write(cx, buf),
-        }
-    }
-    
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            ConnectionStream::Tcp(stream) => Pin::new(stream).poll_flush(cx),
-            ConnectionStream::Tls(stream) => Pin::new(stream).poll_flush(cx),
-        }
-    }
-    
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            ConnectionStream::Tcp(stream) => Pin::new(stream).poll_shutdown(cx),
-            ConnectionStream::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
-        }
-    }
-}
 
 // Connect to a remote host and return a ConnectionStream with standard options we want
 async fn connect(addr: &str, handle: &Handle) -> Result<ConnectionStream> {
