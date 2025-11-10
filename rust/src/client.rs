@@ -737,7 +737,6 @@ impl Client {
         let mut saw_wildcard = false;
 
         for flat in flattened.into_iter() {
-            println!("Processing glob pattern: {}", &flat);
             // Make the pattern absolute-ish. We keep the pattern as-is; components
             // will be split on '/'. An empty pattern yields no results.
             if flat.is_empty() {
@@ -745,7 +744,6 @@ impl Client {
             }
 
             let components = get_path_components(&flat);
-            println!("  Components: {:?}", &components);
 
             // Candidate holds a path (fully built so far) and optionally a resolved FileStatus
             #[derive(Clone, Debug)]
@@ -852,7 +850,6 @@ impl Client {
 
                 candidates = new_candidates;
             }
-            println!("  Candidates: {:?}", &candidates);
 
             // Resolve any placeholder candidates (including root) and collect results
             for cand in candidates.into_iter() {
@@ -870,7 +867,6 @@ impl Client {
                 results.push(status);
             }
         }
-        println!("Glob results: {:?}", &results);
 
         Ok(results)
     }
@@ -1034,6 +1030,11 @@ impl FileStatus {
         if !relative_path.is_empty() {
             path.push('/');
             path.push_str(relative_path);
+        }
+
+        // Root path should be a slash
+        if path.is_empty() {
+            path.push('/');
         }
 
         FileStatus {

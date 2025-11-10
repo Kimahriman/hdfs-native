@@ -67,12 +67,9 @@ def _path_for_url(url: str) -> str:
 
 
 def _glob_path(client: Client, glob: str) -> List[str]:
-    print(f"Globbing path: {glob}", file=sys.stderr)
     statuses = client.glob_status(glob)
     if len(statuses) == 0:
         raise FileNotFoundError(glob)
-
-    print(statuses)
 
     return [status.path for status in statuses]
 
