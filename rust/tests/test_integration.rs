@@ -197,6 +197,7 @@ mod test {
         test_read_write(&client).await?;
         // We use writing to create files, so do this after
         test_recursive_listing(&client).await?;
+        test_glob(&client).await?;
         test_set_times(&client).await?;
         test_set_owner(&client).await?;
         test_set_permission(&client).await?;
@@ -213,9 +214,12 @@ mod test {
 
     async fn test_file_info(client: &Client) -> Result<()> {
         let status = client.get_file_info("/testfile").await?;
-        // Path is empty, I guess because we already know what file we just got the info for?
         assert_eq!(status.path, "/testfile");
         assert_eq!(status.length, TEST_FILE_INTS * 4);
+
+        let status = client.get_file_info("/").await?;
+        assert_eq!(status.path, "/");
+        assert!(status.isdir);
         Ok(())
     }
 
@@ -348,6 +352,48 @@ mod test {
 
         let statuses = client.list_status("/dir", true).await?;
         assert_eq!(statuses.len(), 4);
+
+        client.delete("/dir", true).await?;
+
+        Ok(())
+    }
+
+    async fn test_glob(client: &Client) -> Result<()> {
+        let write_options = WriteOptions::default();
+        client.mkdirs("/dir/nested", 0o755, true).await?;
+        client
+            .create("/dir/file1", &write_options)
+            .await?
+            .close()
+            .await?;
+        client
+            .create("/dir/nested/file2", &write_options)
+            .await?
+            .close()
+            .await?;
+        client
+            .create("/dir/nested/file3", &write_options)
+            .await?
+            .close()
+            .await?;
+
+        let statuses = client.glob_status("/").await?;
+        assert_eq!(statuses.len(), 1);
+
+        let statuses = client.glob_status("/dir/*").await?;
+        assert_eq!(statuses.len(), 2);
+
+        let statuses = client.glob_status("/dir/nested/file*").await?;
+        assert_eq!(statuses.len(), 2);
+
+        let statuses = client.glob_status("/dir/file").await?;
+        assert_eq!(statuses.len(), 0);
+
+        let statuses = client.glob_status("/dir/file?").await?;
+        assert_eq!(statuses.len(), 1);
+
+        let statuses = client.glob_status("/dir/{nested/file*,file*}").await?;
+        assert_eq!(statuses.len(), 3);
 
         client.delete("/dir", true).await?;
 

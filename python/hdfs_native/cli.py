@@ -67,8 +67,19 @@ def _path_for_url(url: str) -> str:
 
 
 def _glob_path(client: Client, glob: str) -> List[str]:
-    # TODO: Actually implement this, for now just pretend we have multiple results
-    return [glob]
+    statuses = client.glob_status(glob)
+    if len(statuses) == 0:
+        raise FileNotFoundError(glob)
+
+    return [status.path for status in statuses]
+
+
+def _glob_status(client: Client, glob: str) -> List[FileStatus]:
+    statuses = client.glob_status(glob)
+    if len(statuses) == 0:
+        raise FileNotFoundError(glob)
+
+    return statuses
 
 
 def _glob_local_path(glob_pattern: str) -> List[str]:
@@ -542,9 +553,13 @@ def rm(args: Namespace):
 
     for url in args.src:
         client = _client_for_url(url)
-        for path in _glob_path(client, _path_for_url(url)):
-            if not client.delete(path, args.recursive) and not args.force:
-                raise FileNotFoundError(f"Failed to delete {path}")
+        try:
+            for path in _glob_path(client, _path_for_url(url)):
+                if not client.delete(path, args.recursive) and not args.force:
+                    raise FileNotFoundError(f"Failed to delete {path}")
+        except FileNotFoundError:
+            if not args.force:
+                raise
 
 
 def rmdir(args: Namespace):
@@ -559,25 +574,34 @@ def rmdir(args: Namespace):
 
 
 def touch(args: Namespace):
+    timestamp = None
+    if args.timestamp:
+        timestamp = datetime.strptime(args.timestamp, r"%Y%m%d:%H%M%S")
+
     for url in args.path:
         client = _client_for_url(url)
-        for path in _glob_path(client, _path_for_url(url)):
-            timestamp = None
-            if args.timestamp:
-                timestamp = datetime.strptime(args.timestamp, r"%Y%m%d:%H%M%S")
+        path = _path_for_url(url)
+        now = datetime.now(timezone.utc)
 
-            try:
-                status = client.get_file_info(path)
-                if timestamp is None:
-                    timestamp = datetime.now(timezone.utc)
-            except FileNotFoundError:
-                if args.only_change:
-                    return
+        try:
+            for status in _glob_status(client, _path_for_url(url)):
+                new_timestamp = now if timestamp is None else timestamp
+                access_time = int(new_timestamp.timestamp() * 1000)
+                modification_time = int(new_timestamp.timestamp() * 1000)
+                if args.access_time:
+                    modification_time = status.modification_time
+                if args.modification_time:
+                    access_time = status.access_time
 
-                client.create(path).close()
-                status = client.get_file_info(path)
+                client.set_times(path, modification_time, access_time)
+        except FileNotFoundError:
+            if args.only_change:
+                return
+
+            client.create(path).close()
 
             if timestamp:
+                status = client.get_file_info(path)
                 access_time = int(timestamp.timestamp() * 1000)
                 modification_time = int(timestamp.timestamp() * 1000)
                 if args.access_time:

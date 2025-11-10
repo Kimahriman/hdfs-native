@@ -442,6 +442,15 @@ impl RawClient {
         }
     }
 
+    pub fn glob_status(&self, pattern: String, py: Python) -> PyHdfsResult<Vec<PyFileStatus>> {
+        py.allow_threads(|| {
+            self.rt
+                .block_on(self.inner.glob_status(pattern.as_ref()))
+                .map_err(PythonHdfsError::from)
+                .map(|statuses| statuses.into_iter().map(PyFileStatus::from).collect())
+        })
+    }
+
     pub fn read(&self, path: &str, py: Python) -> PyHdfsResult<RawFileReader> {
         let file_reader = py.allow_threads(|| self.rt.block_on(self.inner.read(path)))?;
 
@@ -733,6 +742,16 @@ impl AsyncRawClient {
         PyAsyncFileStatusIter {
             inner: Arc::new(tokio::sync::Mutex::new(inner)),
         }
+    }
+
+    pub async fn glob_status(&self, pattern: String) -> PyHdfsResult<Vec<PyFileStatus>> {
+        let statuses = self
+            .inner
+            .glob_status(pattern.as_ref())
+            .await
+            .map_err(PythonHdfsError::from)?;
+
+        Ok(statuses.into_iter().map(PyFileStatus::from).collect())
     }
 
     pub async fn read(&self, path: String) -> PyHdfsResult<AsyncRawFileReader> {
