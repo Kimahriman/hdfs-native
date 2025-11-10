@@ -18,7 +18,7 @@ mod test {
     const CELL_SIZE: usize = 1024 * 1024;
 
     fn create_file(url: &str, path: &str, size: usize) -> io::Result<()> {
-        assert!(size % 4 == 0);
+        assert!(size.is_multiple_of(4));
         let num_ints = size / 4;
 
         let hadoop_exc = which("hadoop").expect("Failed to find hadoop executable");
@@ -50,7 +50,7 @@ mod test {
     }
 
     fn verify_read(mut data: Bytes, size: usize) {
-        assert_eq!(size % 4, 0);
+        assert!(size.is_multiple_of(4));
         assert_eq!(data.len(), size);
         let num_ints = size / 4;
 
@@ -60,8 +60,8 @@ mod test {
     }
 
     async fn verify_positioned_read(reader: &FileReader, offset: usize, len: usize) -> Result<()> {
-        assert!(offset % 4 == 0);
-        assert!(len % 4 == 0);
+        assert!(offset.is_multiple_of(4));
+        assert!(len.is_multiple_of(4));
         let first_int = offset / 4;
         let num_ints = len / 4;
 
