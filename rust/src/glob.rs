@@ -196,6 +196,23 @@ pub fn get_path_components(pattern: &str) -> Vec<&str> {
     pattern.split('/').filter(|c| !c.is_empty()).collect()
 }
 
+/// Unescape simple backslash escapes in a path component.
+pub fn unescape_component(comp: &str) -> String {
+    let mut unescaped = String::new();
+    let mut chars = comp.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(n) = chars.next() {
+                unescaped.push(n);
+            }
+        } else {
+            unescaped.push(c);
+        }
+    }
+
+    unescaped
+}
+
 /// A compiled glob pattern helper.
 ///
 /// This mirrors the Java `GlobPattern` class converted to Rust. It

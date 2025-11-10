@@ -15,7 +15,7 @@ use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
 
-use crate::glob::{expand_glob, get_path_components, GlobPattern};
+use crate::glob::{expand_glob, get_path_components, unescape_component, GlobPattern};
 use crate::proto::hdfs::{ContentSummaryProto, HdfsFileStatusProto};
 
 #[derive(Clone)]
@@ -734,7 +734,6 @@ impl Client {
         let flattened = expand_glob(pattern.to_string())?;
 
         let mut results: Vec<FileStatus> = Vec::new();
-        let mut saw_wildcard = false;
 
         for flat in flattened.into_iter() {
             // Make the pattern absolute-ish. We keep the pattern as-is; components
@@ -759,39 +758,22 @@ impl Client {
             }];
 
             for (idx, comp) in components.iter().enumerate() {
-                let is_last = idx == components.len() - 1;
-
-                // Unescape simple backslash escapes in the component
-                let mut unescaped = String::new();
-                let mut chars = comp.chars();
-                while let Some(c) = chars.next() {
-                    if c == '\\' {
-                        if let Some(n) = chars.next() {
-                            unescaped.push(n);
-                        }
-                    } else {
-                        unescaped.push(c);
-                    }
-                }
-
-                let glob_pat = GlobPattern::new(comp)?;
-                if glob_pat.has_wildcard() {
-                    saw_wildcard = true;
-                }
-
-                if candidates.is_empty() && saw_wildcard {
+                if candidates.is_empty() {
                     break;
                 }
+
+                let is_last = idx == components.len() - 1;
+
+                let unescaped = unescape_component(comp);
+                let glob_pat = GlobPattern::new(comp)?;
 
                 if !is_last && !glob_pat.has_wildcard() {
                     // Optimization: just append the literal component to each candidate
                     for cand in candidates.iter_mut() {
-                        if cand.path.ends_with('/') {
-                            cand.path.push_str(&unescaped);
-                        } else {
+                        if !cand.path.ends_with('/') {
                             cand.path.push('/');
-                            cand.path.push_str(&unescaped);
                         }
+                        cand.path.push_str(&unescaped);
                         // keep status as None (we'll resolve later if needed)
                     }
                     continue;
@@ -832,12 +814,10 @@ impl Client {
                     } else {
                         // Non-glob component: use get_file_info for exact path
                         let mut next_path = cand.path.clone();
-                        if next_path.ends_with('/') {
-                            next_path.push_str(&unescaped);
-                        } else {
+                        if !next_path.ends_with('/') {
                             next_path.push('/');
-                            next_path.push_str(&unescaped);
                         }
+                        next_path.push_str(&unescaped);
 
                         if let Ok(status) = self.get_file_info(&next_path).await {
                             new_candidates.push(Candidate {
