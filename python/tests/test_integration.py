@@ -21,6 +21,13 @@ def test_sync(client: Client):
     assert len(file_list) == 1
     assert file_list[0].path == "/testfile2"
 
+    file_list = client.glob_status("/*")
+    assert len(file_list) == 1
+    assert file_list[0].path == "/testfile2"
+
+    file_list = client.glob_status("/notexist*")
+    assert len(file_list) == 0
+
     client.delete("/testfile2", False)
 
     file_list = list(client.list_status("/", False))
@@ -175,6 +182,13 @@ async def test_async(async_client: AsyncClient):
     file_list = [status async for status in async_client.list_status("/", False)]
     assert len(file_list) == 1
     assert file_list[0].path == "/testfile2"
+
+    file_list = await async_client.glob_status("/*")
+    assert len(file_list) == 1
+    assert file_list[0].path == "/testfile2"
+
+    file_list = await async_client.glob_status("/notexist*")
+    assert len(file_list) == 0
 
     await async_client.delete("/testfile2", False)
 

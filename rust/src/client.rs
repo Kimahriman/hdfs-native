@@ -728,7 +728,8 @@ impl Client {
             .into())
     }
 
-    /// Get all file statuses matching the glob pattern.
+    /// Get all file statuses matching the glob `pattern`. Supports Hadoop-style globbing
+    /// which only applies to individual components of a path.
     pub async fn glob_status(&self, pattern: &str) -> Result<Vec<FileStatus>> {
         // Expand any brace groups first
         let flattened = expand_glob(pattern.to_string())?;

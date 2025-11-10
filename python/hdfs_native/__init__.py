@@ -144,7 +144,7 @@ class Client:
         return self.inner.list_status(path, recursive)
 
     def glob_status(self, pattern: str) -> List[FileStatus]:
-        """Gets the status of files rooted at `path`. If `recursive` is true, lists all files recursively."""
+        """Gets the status of files matching glob pattern `pattern`."""
         return self.inner.glob_status(pattern)
 
     def read(self, path: str) -> FileReader:
@@ -377,6 +377,10 @@ class AsyncClient:
     ) -> AsyncIterator[FileStatus]:
         """Gets the status of files rooted at `path`. If `recursive` is true, lists all files recursively."""
         return self.inner.list_status(path, recursive)
+    
+    async def glob_status(self, pattern: str) -> List[FileStatus]:
+        """Gets the status of files matching glob pattern `pattern`."""
+        return await self.inner.glob_status(pattern)
 
     async def read(self, path: str) -> AsyncFileReader:
         """Opens a file for reading at `path`"""
