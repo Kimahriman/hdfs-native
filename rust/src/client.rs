@@ -15,6 +15,7 @@ use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
 
+use crate::glob::{expand_glob, get_path_components, GlobPattern};
 use crate::proto::hdfs::{ContentSummaryProto, HdfsFileStatusProto};
 
 #[derive(Clone)]
@@ -729,7 +730,149 @@ impl Client {
 
     /// Get all file statuses matching the glob pattern.
     pub async fn glob_status(&self, pattern: &str) -> Result<Vec<FileStatus>> {
-        Ok(vec![])
+        // Expand any brace groups first
+        let flattened = expand_glob(pattern.to_string())?;
+
+        let mut results: Vec<FileStatus> = Vec::new();
+        let mut saw_wildcard = false;
+
+        for flat in flattened.into_iter() {
+            println!("Processing glob pattern: {}", &flat);
+            // Make the pattern absolute-ish. We keep the pattern as-is; components
+            // will be split on '/'. An empty pattern yields no results.
+            if flat.is_empty() {
+                continue;
+            }
+
+            let components = get_path_components(&flat);
+            println!("  Components: {:?}", &components);
+
+            // Candidate holds a path (fully built so far) and optionally a resolved FileStatus
+            #[derive(Clone, Debug)]
+            struct Candidate {
+                path: String,
+                status: Option<FileStatus>,
+            }
+
+            // Start from the root placeholder
+            let mut candidates: Vec<Candidate> = vec![Candidate {
+                path: "/".to_string(),
+                status: None,
+            }];
+
+            for (idx, comp) in components.iter().enumerate() {
+                let is_last = idx == components.len() - 1;
+
+                // Unescape simple backslash escapes in the component
+                let mut unescaped = String::new();
+                let mut chars = comp.chars();
+                while let Some(c) = chars.next() {
+                    if c == '\\' {
+                        if let Some(n) = chars.next() {
+                            unescaped.push(n);
+                        }
+                    } else {
+                        unescaped.push(c);
+                    }
+                }
+
+                let glob_pat = GlobPattern::new(comp)?;
+                if glob_pat.has_wildcard() {
+                    saw_wildcard = true;
+                }
+
+                if candidates.is_empty() && saw_wildcard {
+                    break;
+                }
+
+                if !is_last && !glob_pat.has_wildcard() {
+                    // Optimization: just append the literal component to each candidate
+                    for cand in candidates.iter_mut() {
+                        if cand.path.ends_with('/') {
+                            cand.path.push_str(&unescaped);
+                        } else {
+                            cand.path.push('/');
+                            cand.path.push_str(&unescaped);
+                        }
+                        // keep status as None (we'll resolve later if needed)
+                    }
+                    continue;
+                }
+
+                let mut new_candidates: Vec<Candidate> = Vec::new();
+
+                for cand in candidates.into_iter() {
+                    if glob_pat.has_wildcard() {
+                        // List the directory represented by cand.path
+                        let listing = self.list_status(&cand.path, false).await?;
+                        if listing.len() == 1 && listing[0].path == cand.path {
+                            // listing corresponds to the candidate itself (file), skip
+                            continue;
+                        }
+
+                        for child in listing.into_iter() {
+                            // If this is not the terminal component, only recurse into directories
+                            if !is_last && !child.isdir {
+                                continue;
+                            }
+
+                            // child.path already contains the full path
+                            // Extract the name portion to match against the glob pattern
+                            let name = child
+                                .path
+                                .rsplit_once('/')
+                                .map(|(_, n)| n)
+                                .unwrap_or(child.path.as_str());
+
+                            if glob_pat.matches(name) {
+                                new_candidates.push(Candidate {
+                                    path: child.path.clone(),
+                                    status: Some(child),
+                                });
+                            }
+                        }
+                    } else {
+                        // Non-glob component: use get_file_info for exact path
+                        let mut next_path = cand.path.clone();
+                        if next_path.ends_with('/') {
+                            next_path.push_str(&unescaped);
+                        } else {
+                            next_path.push('/');
+                            next_path.push_str(&unescaped);
+                        }
+
+                        if let Ok(status) = self.get_file_info(&next_path).await {
+                            new_candidates.push(Candidate {
+                                path: status.path.clone(),
+                                status: Some(status),
+                            });
+                        }
+                    }
+                }
+
+                candidates = new_candidates;
+            }
+            println!("  Candidates: {:?}", &candidates);
+
+            // Resolve any placeholder candidates (including root) and collect results
+            for cand in candidates.into_iter() {
+                let status = if let Some(s) = cand.status {
+                    s
+                } else {
+                    // Try to resolve the path to a real FileStatus
+                    match self.get_file_info(&cand.path).await {
+                        Ok(s) => s,
+                        Err(HdfsError::FileNotFound(_)) => continue,
+                        Err(e) => return Err(e),
+                    }
+                };
+
+                results.push(status);
+            }
+        }
+        println!("Glob results: {:?}", &results);
+
+        Ok(results)
     }
 }
 
@@ -870,7 +1013,7 @@ impl ListStatusIterator {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FileStatus {
     pub path: String,
     pub length: usize,
