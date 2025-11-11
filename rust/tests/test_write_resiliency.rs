@@ -9,10 +9,10 @@ mod test {
 
     use bytes::{Buf, BufMut, Bytes, BytesMut};
     use hdfs_native::{
+        Client, ClientBuilder, Result, WriteOptions,
         file::FileReader,
         minidfs::{DfsFeatures, MiniDfs},
         test::{WRITE_CONNECTION_FAULT_INJECTOR, WRITE_REPLY_FAULT_INJECTOR},
-        Client, ClientBuilder, Result, WriteOptions,
     };
     use serial_test::serial;
 

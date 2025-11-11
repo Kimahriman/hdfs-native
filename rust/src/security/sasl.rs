@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use tokio::io::BufReader;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufStream},
-    net::tcp::{OwnedReadHalf, OwnedWriteHalf},
     net::TcpStream,
+    net::tcp::{OwnedReadHalf, OwnedWriteHalf},
 };
 
 use super::user::BlockTokenIdentifier;
@@ -16,13 +16,13 @@ use crate::common::config::Configuration;
 use crate::proto::hdfs::{CipherOptionProto, CipherSuiteProto, DataEncryptionKeyProto};
 use crate::proto::{
     common::{
+        RpcKindProto, RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto, TokenProto,
         rpc_response_header_proto::RpcStatusProto,
         rpc_sasl_proto::{SaslAuth, SaslState},
-        RpcKindProto, RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto, TokenProto,
     },
     hdfs::{
-        data_transfer_encryptor_message_proto::DataTransferEncryptorStatus,
         DataTransferEncryptorMessageProto, DatanodeIdProto, HandshakeSecretProto,
+        data_transfer_encryptor_message_proto::DataTransferEncryptorStatus,
     },
 };
 use crate::security::digest::DigestSaslSession;

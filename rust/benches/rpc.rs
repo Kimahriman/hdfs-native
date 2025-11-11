@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use criterion::*;
 use futures::future::join_all;
-use hdfs_native::{minidfs::MiniDfs, Client, WriteOptions};
+use hdfs_native::{Client, WriteOptions, minidfs::MiniDfs};
 
 fn bench(c: &mut Criterion) {
     let _ = env_logger::builder().is_test(true).try_init();

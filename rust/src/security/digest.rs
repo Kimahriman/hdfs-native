@@ -3,7 +3,7 @@ use std::{
     fmt::{Display, Formatter},
 };
 
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use cbc::cipher::{BlockEncryptMut, KeyIvInit};
 use cipher::BlockDecryptMut;
 use hmac::{Hmac, Mac};
@@ -12,7 +12,7 @@ use once_cell::sync::Lazy;
 use rand::Rng;
 use regex::Regex;
 
-use crate::{proto::hdfs::DataEncryptionKeyProto, HdfsError, Result};
+use crate::{HdfsError, Result, proto::hdfs::DataEncryptionKeyProto};
 
 use super::{
     sasl::SaslSession,
@@ -134,8 +134,8 @@ fn kd(k: impl AsRef<[u8]>, v: impl AsRef<[u8]>) -> Vec<u8> {
 }
 
 fn gen_nonce() -> String {
-    let mut gen = rand::rng();
-    let cnonce_bytes: Vec<u8> = (0..12).map(|_| gen.random()).collect();
+    let mut rng = rand::rng();
+    let cnonce_bytes: Vec<u8> = (0..12).map(|_| rng.random()).collect();
     general_purpose::STANDARD.encode(cnonce_bytes)
 }
 
@@ -399,7 +399,7 @@ impl SaslSession for DigestSaslSession {
                     (Qop::AuthConf, None) => {
                         return Err(HdfsError::SASLError(
                             "Confidentiality was chosen, but no cipher was provided".to_string(),
-                        ))
+                        ));
                     }
                     _ => None,
                 };

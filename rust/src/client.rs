@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
 
 use futures::stream::BoxStream;
-use futures::{stream, StreamExt};
+use futures::{StreamExt, stream};
 use tokio::runtime::{Handle, Runtime};
 use url::Url;
 
@@ -15,7 +15,7 @@ use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
 
-use crate::glob::{expand_glob, get_path_components, unescape_component, GlobPattern};
+use crate::glob::{GlobPattern, expand_glob, get_path_components, unescape_component};
 use crate::proto::hdfs::{ContentSummaryProto, HdfsFileStatusProto};
 
 #[derive(Clone)]
@@ -357,7 +357,7 @@ impl Client {
             _ => {
                 return Err(HdfsError::InvalidArgument(
                     "Only `hdfs` and `viewfs` schemes are supported".to_string(),
-                ))
+                ));
             }
         };
 
@@ -1085,33 +1085,43 @@ mod test {
 
     #[test]
     fn test_default_fs() {
-        assert!(ClientBuilder::new()
-            .with_config(vec![("fs.defaultFS", "hdfs://test:9000")])
-            .build()
-            .is_ok());
+        assert!(
+            ClientBuilder::new()
+                .with_config(vec![("fs.defaultFS", "hdfs://test:9000")])
+                .build()
+                .is_ok()
+        );
 
-        assert!(ClientBuilder::new()
-            .with_config(vec![("fs.defaultFS", "hdfs://")])
-            .build()
-            .is_err());
+        assert!(
+            ClientBuilder::new()
+                .with_config(vec![("fs.defaultFS", "hdfs://")])
+                .build()
+                .is_err()
+        );
 
-        assert!(ClientBuilder::new()
-            .with_url("hdfs://")
-            .with_config(vec![("fs.defaultFS", "hdfs://test:9000")])
-            .build()
-            .is_ok());
+        assert!(
+            ClientBuilder::new()
+                .with_url("hdfs://")
+                .with_config(vec![("fs.defaultFS", "hdfs://test:9000")])
+                .build()
+                .is_ok()
+        );
 
-        assert!(ClientBuilder::new()
-            .with_url("hdfs://")
-            .with_config(vec![("fs.defaultFS", "hdfs://")])
-            .build()
-            .is_err());
+        assert!(
+            ClientBuilder::new()
+                .with_url("hdfs://")
+                .with_config(vec![("fs.defaultFS", "hdfs://")])
+                .build()
+                .is_err()
+        );
 
-        assert!(ClientBuilder::new()
-            .with_url("hdfs://")
-            .with_config(vec![("fs.defaultFS", "viewfs://test")])
-            .build()
-            .is_err());
+        assert!(
+            ClientBuilder::new()
+                .with_url("hdfs://")
+                .with_config(vec![("fs.defaultFS", "viewfs://test")])
+                .build()
+                .is_err()
+        );
     }
 
     #[test]
@@ -1187,17 +1197,21 @@ mod test {
 
     #[test]
     fn test_io_runtime() {
-        assert!(ClientBuilder::new()
-            .with_url("hdfs://127.0.0.1:9000")
-            .with_io_runtime(Runtime::new().unwrap())
-            .build()
-            .is_ok());
+        assert!(
+            ClientBuilder::new()
+                .with_url("hdfs://127.0.0.1:9000")
+                .with_io_runtime(Runtime::new().unwrap())
+                .build()
+                .is_ok()
+        );
 
         let rt = Runtime::new().unwrap();
-        assert!(ClientBuilder::new()
-            .with_url("hdfs://127.0.0.1:9000")
-            .with_io_runtime(rt.handle().clone())
-            .build()
-            .is_ok());
+        assert!(
+            ClientBuilder::new()
+                .with_url("hdfs://127.0.0.1:9000")
+                .with_io_runtime(rt.handle().clone())
+                .build()
+                .is_ok()
+        );
     }
 }

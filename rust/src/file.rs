@@ -3,12 +3,12 @@ use std::time::Duration;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::stream::BoxStream;
-use futures::{stream, Stream, StreamExt};
+use futures::{Stream, StreamExt, stream};
 use log::warn;
 use tokio::runtime::Handle;
 
 use crate::common::config::Configuration;
-use crate::ec::{resolve_ec_policy, EcSchema};
+use crate::ec::{EcSchema, resolve_ec_policy};
 use crate::hdfs::block_reader::get_block_stream;
 use crate::hdfs::block_writer::BlockWriter;
 use crate::hdfs::protocol::{LeaseTracker, NamenodeProtocol};
@@ -130,7 +130,7 @@ impl FileReader {
         &self,
         offset: usize,
         len: usize,
-    ) -> impl Stream<Item = Result<Bytes>> {
+    ) -> impl Stream<Item = Result<Bytes>> + use<> {
         if offset + len > self.file_length() {
             panic!("Cannot read past end of the file");
         }
@@ -320,7 +320,9 @@ impl FileWriter {
 impl Drop for FileWriter {
     fn drop(&mut self) {
         if !self.closed {
-            warn!("FileWriter dropped without being closed. File content may not have saved or may not be complete");
+            warn!(
+                "FileWriter dropped without being closed. File content may not have saved or may not be complete"
+            );
         }
 
         self.protocol

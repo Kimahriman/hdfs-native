@@ -69,7 +69,7 @@ static LIBGSSAPI: Lazy<Option<bindings::GSSAPI>> = Lazy::new(|| {
             #[cfg(target_os = "macos")]
             let message = "Try installing via \"brew install krb5\"";
             #[cfg(target_os = "linux")]
-                let message = "On Debian based systems, try \"apt-get install libgssapi-krb5-2\". On RHEL based systems, try \"yum install krb5-libs\"";
+            let message = "On Debian based systems, try \"apt-get install libgssapi-krb5-2\". On RHEL based systems, try \"yum install krb5-libs\"";
             #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             let message = "Loading Kerberos libraries are not supported on this system";
             log::warn!("Failed to libgssapi_krb5.\n{}.\n{:?}", message, e);

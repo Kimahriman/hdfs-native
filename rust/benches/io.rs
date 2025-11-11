@@ -4,8 +4,8 @@ use std::collections::HashSet;
 use bytes::{Buf, BufMut, BytesMut};
 use criterion::*;
 use hdfs_native::{
-    minidfs::{DfsFeatures, MiniDfs},
     Client, WriteOptions,
+    minidfs::{DfsFeatures, MiniDfs},
 };
 
 async fn write_file(client: &Client, path: &str, ints: usize) {

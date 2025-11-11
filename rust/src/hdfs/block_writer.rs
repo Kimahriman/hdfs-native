@@ -6,15 +6,15 @@ use log::{debug, warn};
 use tokio::{runtime::Handle, sync::mpsc, task::JoinHandle};
 
 use crate::{
+    HdfsError, Result,
     common::config::Configuration,
-    ec::{gf256::Coder, EcSchema},
+    ec::{EcSchema, gf256::Coder},
     hdfs::{
         connection::{DatanodeConnection, DatanodeReader, DatanodeWriter, Op, WritePacket},
         protocol::NamenodeProtocol,
         replace_datanode::ReplaceDatanodeOnFailure,
     },
     proto::{common, hdfs},
-    HdfsError, Result,
 };
 
 const HEART_BEAT_SEQNO: i64 = -1;
@@ -588,7 +588,7 @@ impl ReplicatedBlockWriter {
                     WriteStatus::Success => {
                         return Err(HdfsError::DataTransferError(
                             "Pipeline succeeded but failure was expected".to_string(),
-                        ))
+                        ));
                     }
                     WriteStatus::Recover(failed_nodes, packets_to_replay) => {
                         self.recover(failed_nodes, packets_to_replay, Some(&current_packet))

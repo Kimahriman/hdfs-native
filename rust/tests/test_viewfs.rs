@@ -4,8 +4,8 @@ mod common;
 #[cfg(feature = "integration-test")]
 mod test {
     use hdfs_native::{
-        minidfs::{DfsFeatures, MiniDfs},
         Client, ClientBuilder, Result, WriteOptions,
+        minidfs::{DfsFeatures, MiniDfs},
     };
     use serial_test::serial;
     use std::collections::HashSet;
@@ -101,10 +101,12 @@ mod test {
             .await
             .unwrap();
 
-        assert!(viewfs
-            .rename("/mount1/file1", "/root/file1", false)
-            .await
-            .is_err());
+        assert!(
+            viewfs
+                .rename("/mount1/file1", "/root/file1", false)
+                .await
+                .is_err()
+        );
 
         Ok(())
     }

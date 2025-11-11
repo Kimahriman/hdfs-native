@@ -10,13 +10,13 @@ use std::path::PathBuf;
 
 use whoami::username;
 
+use crate::HdfsError;
+use crate::Result;
 use crate::proto::common::CredentialsProto;
 use crate::proto::common::TokenProto;
 use crate::proto::hdfs::AccessModeProto;
 use crate::proto::hdfs::BlockTokenSecretProto;
 use crate::proto::hdfs::StorageTypeProto;
-use crate::HdfsError;
-use crate::Result;
 
 const HADOOP_USER_NAME: &str = "HADOOP_USER_NAME";
 const HADOOP_PROXY_USER: &str = "HADOOP_PROXY_USER";
@@ -301,11 +301,7 @@ fn parse_vlong(reader: &mut impl Buf) -> i64 {
 
     let is_negative = first_byte < -120 || (-112..0).contains(&first_byte);
 
-    if is_negative {
-        i ^ -1
-    } else {
-        i
-    }
+    if is_negative { i ^ -1 } else { i }
 }
 
 fn parse_vint(reader: &mut impl Buf) -> i32 {
@@ -407,7 +403,7 @@ mod tests {
 
     #[test]
     fn test_load_writable_token() {
-        use base64::{engine::general_purpose, Engine as _};
+        use base64::{Engine as _, engine::general_purpose};
         let b64_token = "SERUUwABDjEyNy4wLjAuMTo5MDAwLgAaaGRmcy9sb2NhbGhvc3RARVhBTVBMRS5DT00AAIoBiX/hghSKAYmj7gYUAQIUadF4ni3ObKqU8niv40WBFsGhFm4VSERGU19ERUxFR0FUSU9OX1RPS0VODjEyNy4wLjAuMTo5MDAwAA==";
         let mut token_file = NamedTempFile::new().unwrap();
         token_file
@@ -432,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_load_protobuf_token() {
-        use base64::{engine::general_purpose, Engine as _};
+        use base64::{Engine as _, engine::general_purpose};
         let b64_token = "SERUUwGBAQp/Cg5sb2NhbGhvc3Q6OTAwMBJtCi4AGmhkZnMvbG9jYWxob3N0QEVYQU1QTEUuQ09NAACKAYiiTtt9igGIxltffQECEhQoROcYNFMxMuoK9UHlAna6ZmhQSBoVSERGU19ERUxFR0FUSU9OX1RPS0VOIg4xMjcuMC4wLjE6OTAwMA==";
         let mut token_file = NamedTempFile::new().unwrap();
         token_file
