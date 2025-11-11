@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 from urllib.parse import urlparse
 
-from hdfs_native import Client
+from hdfs_native import AclStatus, Client
 from hdfs_native._internal import FileStatus, WriteOptions
 
 __all__ = ["main"]
@@ -351,6 +351,130 @@ def get(args: Namespace):
             # Iterate to raise any exceptions thrown
             for f in as_completed(futures):
                 f.result()
+
+
+def _permission_to_string(permission: str) -> str:
+    """Convert permission string to rwx format"""
+    return permission
+
+
+def _format_acl_entry(entry) -> str:
+    """Format an ACL entry for display"""
+    type_name = entry.type
+    permissions = _permission_to_string(entry.permissions)
+
+    if entry.name:
+        return f"{type_name}:{entry.name}:{permissions}"
+    else:
+        return f"{type_name}::{permissions}"
+
+
+def _print_acl_status(acl_status: AclStatus, full_path: str) -> None:
+    """Print ACL status for a single file"""
+    print(f"# file: {full_path}")
+    print(f"# owner: {acl_status.owner}")
+    print(f"# group: {acl_status.group}")
+
+    permission_string = stat.filemode(acl_status.permission)
+    user_acl_entries = sorted(
+        [
+            entry
+            for entry in acl_status.entries
+            if entry.type == "user"
+            and entry.name is not None
+            and entry.scope == "access"
+        ],
+        key=lambda e: e.name or "",
+    )
+    group_acl_entries = sorted(
+        [
+            entry
+            for entry in acl_status.entries
+            if entry.type == "group"
+            and entry.name is not None
+            and entry.scope == "access"
+        ],
+        key=lambda e: e.name or "",
+    )
+
+    user_default_acl_entries = sorted(
+        [
+            entry
+            for entry in acl_status.entries
+            if entry.type == "user" and entry.scope == "default"
+        ],
+        key=lambda e: e.name or "",
+    )
+    group_default_acl_entries = sorted(
+        [
+            entry
+            for entry in acl_status.entries
+            if entry.type == "group" and entry.scope == "default"
+        ],
+        key=lambda e: e.name or "",
+    )
+    mask_default_acl_entries = [
+        entry
+        for entry in acl_status.entries
+        if entry.type == "mask" and entry.scope == "default"
+    ]
+
+    other_default_acl_entries = [
+        entry
+        for entry in acl_status.entries
+        if entry.type == "other" and entry.scope == "default"
+    ]
+
+    # Print base user permission
+    print(f"user::{permission_string[1:4]}")
+    for entry in user_acl_entries:
+        print(_format_acl_entry(entry))
+
+    # Print base group permission
+    print(f"group::{permission_string[4:7]}")
+    for entry in group_acl_entries:
+        print(_format_acl_entry(entry))
+
+    print(f"other::{permission_string[7:10]}")
+
+    # Print default ACL entries if any exist
+    for user_default in user_default_acl_entries:
+        entry_str = _format_acl_entry(user_default)
+        print(f"default:{entry_str}")
+
+    for group_default in group_default_acl_entries:
+        entry_str = _format_acl_entry(group_default)
+        print(f"default:{entry_str}")
+
+    for mask_default in mask_default_acl_entries:
+        entry_str = _format_acl_entry(mask_default)
+        print(f"default:{entry_str}")
+
+    for other_default in other_default_acl_entries:
+        entry_str = _format_acl_entry(other_default)
+        print(f"default:{entry_str}")
+
+
+def getfacl(args: Namespace):
+    for url in args.path:
+        client = _client_for_url(url)
+
+        # Glob expand the path
+        for path in _glob_path(client, _path_for_url(url)):
+            prefix = _prefix_for_url(url)
+
+            if args.recursive:
+                # For recursive, list all files under this path and get their ACLs
+                for status in client.list_status(path, recursive=True):
+                    file_full_path = prefix + status.path
+                    acl_status = client.get_acl_status(status.path)
+                    _print_acl_status(acl_status, file_full_path)
+                    print("")
+            else:
+                # For non-recursive, just get the path and its ACL
+                full_path = prefix + path
+                acl_status = client.get_acl_status(path)
+                _print_acl_status(acl_status, full_path)
 
 
 def ls(args: Namespace):
@@ -745,6 +869,22 @@ def main(in_args: Optional[Sequence[str]] = None):
         help="Local destination to write to. Defaults to current directory.",
     )
     get_parser.set_defaults(func=get)
+
+    getfacl_parser = subparsers.add_parser(
+        "getfacl",
+        help="Displays the Access Control Lists (ACLs) of files and directories",
+        description="""Displays the Access Control Lists (ACLs) of files and directories.
+        If a directory has a default ACL, then getfacl also displays the default ACL.""",
+        add_help=False,
+    )
+    getfacl_parser.add_argument(
+        "-R",
+        "--recursive",
+        action="store_true",
+        help="List the ACLs of all files and directories recursively",
+    )
+    getfacl_parser.add_argument("path", nargs="+", help="File or directory to list")
+    getfacl_parser.set_defaults(func=getfacl)
 
     ls_parser = subparsers.add_parser(
         "ls",
