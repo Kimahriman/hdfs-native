@@ -91,7 +91,7 @@ impl MiniDfs {
         }
 
         // Make sure this doesn't care over from a token test to a non-token test
-        env::remove_var("HADOOP_TOKEN_FILE_LOCATION");
+        unsafe { env::remove_var("HADOOP_TOKEN_FILE_LOCATION") };
 
         if features.contains(&DfsFeatures::Security) {
             let krb_conf = output.next().unwrap().unwrap();
@@ -106,18 +106,22 @@ impl MiniDfs {
                 panic!("Failed to find krb5.conf");
             }
 
-            env::set_var("KRB5_CONFIG", &krb_conf);
-            env::set_var(
-                "HADOOP_OPTS",
-                format!("-Djava.security.krb5.conf={}", &krb_conf),
-            );
+            unsafe {
+                env::set_var("KRB5_CONFIG", &krb_conf);
+                env::set_var(
+                    "HADOOP_OPTS",
+                    format!("-Djava.security.krb5.conf={}", &krb_conf),
+                );
+            }
 
             // If we testing token auth, set the path to the file and make sure we don't have an old kinit, otherwise kinit
             if features.contains(&DfsFeatures::Token) {
-                env::set_var("HADOOP_TOKEN_FILE_LOCATION", "target/test/delegation_token");
+                unsafe {
+                    env::set_var("HADOOP_TOKEN_FILE_LOCATION", "target/test/delegation_token")
+                };
             } else {
                 let kinit_exec = which("kinit").expect("Failed to find kinit executable");
-                env::set_var("KRB5CCNAME", "FILE:target/test/krbcache");
+                unsafe { env::set_var("KRB5CCNAME", "FILE:target/test/krbcache") };
                 Command::new(kinit_exec)
                     .args(["-kt", "target/test/hdfs.keytab", "hdfs/localhost"])
                     .spawn()
@@ -137,7 +141,7 @@ impl MiniDfs {
             "hdfs://127.0.0.1:9000"
         };
 
-        env::set_var("HADOOP_CONF_DIR", "target/test");
+        unsafe { env::set_var("HADOOP_CONF_DIR", "target/test") };
         MiniDfs {
             process: child,
             url: url.to_string(),
