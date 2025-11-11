@@ -2,15 +2,15 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use ::hdfs_native::file::{FileReader, FileWriter};
 use ::hdfs_native::WriteOptions;
+use ::hdfs_native::file::{FileReader, FileWriter};
 use ::hdfs_native::{
-    client::{FileStatus, ListStatusIterator},
     Client,
+    client::{FileStatus, ListStatusIterator},
 };
 use bytes::Bytes;
-use futures::stream::BoxStream;
 use futures::StreamExt;
+use futures::stream::BoxStream;
 use hdfs_native::acl::{AclEntry, AclStatus};
 use hdfs_native::client::{ClientBuilder, ContentSummary};
 use pyo3::exceptions::PyStopAsyncIteration;
@@ -58,18 +58,23 @@ impl From<FileStatus> for PyFileStatus {
 impl PyFileStatus {
     /// Return a dataclass-esque format for the repr
     fn __repr__(&self) -> String {
-        format!("FileStatus(path='{}', length={}, isdir={}, permission={}, owner={}, group={}, modification_time={}, access_time={}, replication={}, blocksize={})",
-        self.path,
-        self.length,
-        self.isdir,
-        self.permission,
-        self.owner,
-        self.group,
-        self.modification_time,
-        self.access_time,
-        self.replication.map(|r| r.to_string()).unwrap_or("None".to_string()),
-        self.blocksize.map(|r| r.to_string()).unwrap_or("None".to_string())
-    )
+        format!(
+            "FileStatus(path='{}', length={}, isdir={}, permission={}, owner={}, group={}, modification_time={}, access_time={}, replication={}, blocksize={})",
+            self.path,
+            self.length,
+            self.isdir,
+            self.permission,
+            self.owner,
+            self.group,
+            self.modification_time,
+            self.access_time,
+            self.replication
+                .map(|r| r.to_string())
+                .unwrap_or("None".to_string()),
+            self.blocksize
+                .map(|r| r.to_string())
+                .unwrap_or("None".to_string())
+        )
     }
 }
 
@@ -124,7 +129,8 @@ impl From<ContentSummary> for PyContentSummary {
 impl PyContentSummary {
     /// Return a dataclass-esque format for the repr
     fn __repr__(&self) -> String {
-        format!("ContentSummary(length={}, file_count={}, directory_count={}, quota={}, space_consumed={}, space_quota={})",
+        format!(
+            "ContentSummary(length={}, file_count={}, directory_count={}, quota={}, space_consumed={}, space_quota={})",
             self.length,
             self.file_count,
             self.directory_count,
@@ -366,9 +372,14 @@ impl PyWriteOptions {
 
     /// Return a dataclass-esque format for the repr
     fn __repr__(&self) -> String {
-        format!("WriteOptions(block_size={}, replication={}, permission={}, overwrite={}, create_parent={})",
-            self.block_size.map(|x| x.to_string()).unwrap_or("None".to_string()),
-            self.replication.map(|x| x.to_string()).unwrap_or("None".to_string()),
+        format!(
+            "WriteOptions(block_size={}, replication={}, permission={}, overwrite={}, create_parent={})",
+            self.block_size
+                .map(|x| x.to_string())
+                .unwrap_or("None".to_string()),
+            self.replication
+                .map(|x| x.to_string())
+                .unwrap_or("None".to_string()),
             self.permission,
             self.overwrite,
             self.create_parent
