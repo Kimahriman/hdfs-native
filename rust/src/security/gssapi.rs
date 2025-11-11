@@ -448,11 +448,10 @@ impl SaslSession for GssapiSession {
             GssapiState::Pending(mut ctx) => {
                 let mut ret = Vec::<u8>::new();
                 let (out_token, complete) = ctx.step(token)?;
-                if let Some(token) = out_token {
-                    if !token.is_empty() {
+                if let Some(token) = out_token
+                    && !token.is_empty() {
                         ret = token.to_vec();
                     }
-                }
                 if !complete {
                     self.state = GssapiState::Pending(ctx);
                     return Ok((ret, false));

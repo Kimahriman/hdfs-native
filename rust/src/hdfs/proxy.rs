@@ -212,11 +212,9 @@ impl NameServiceProxy {
                 Ok(response) => {
                     if let Ok(ha_state) =
                         hdfs::HaServiceStateResponseProto::decode_length_delimited(response)
-                    {
-                        if matches!(ha_state.state(), HaServiceStateProto::Observer) {
+                        && matches!(ha_state.state(), HaServiceStateProto::Observer) {
                             return Some(i);
                         }
-                    }
                 }
                 Err(e) => {
                     debug!("Couldn't get HA service status: {e:?}");
