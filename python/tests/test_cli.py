@@ -504,15 +504,15 @@ def test_getfacl(client: Client):
     client.mkdirs("/testdir")
     output = capture_stdout(lambda: cli_main(["getfacl", "/testdir"]))
     lines = output.strip().split("\n")
-    assert any(
-        "# file:" in line for line in lines
-    ), "Directory output should contain file header"
-    assert any(
-        "# owner:" in line for line in lines
-    ), "Directory output should contain owner"
-    assert any(
-        "# group:" in line for line in lines
-    ), "Directory output should contain group"
+    assert any("# file:" in line for line in lines), (
+        "Directory output should contain file header"
+    )
+    assert any("# owner:" in line for line in lines), (
+        "Directory output should contain owner"
+    )
+    assert any("# group:" in line for line in lines), (
+        "Directory output should contain group"
+    )
 
     # Test with multiple paths
     client.create("/testfile2").close()
@@ -528,9 +528,9 @@ def test_getfacl(client: Client):
     client.create("/testdir/subdir/file2").close()
     output = capture_stdout(lambda: cli_main(["getfacl", "-R", "/testdir"]))
     file_headers = [line for line in output.split("\n") if "# file:" in line]
-    assert (
-        len(file_headers) >= 3
-    ), "Recursive output should contain multiple file headers"
+    assert len(file_headers) >= 3, (
+        "Recursive output should contain multiple file headers"
+    )
     assert "/testdir" in output, "Recursive output should mention testdir"
     assert "/file1" in output, "Recursive output should mention file1"
     assert "/file2" in output, "Recursive output should mention file2"
@@ -544,15 +544,15 @@ def test_getfacl(client: Client):
     assert "group:" in lines[2], "Third line should be group header"
 
     # Check for base permission entries (user::, group::, other::)
-    assert any(
-        "user::" in line for line in lines
-    ), "Output should contain base user permission entry"
-    assert any(
-        "group::" in line for line in lines
-    ), "Output should contain base group permission entry"
-    assert any(
-        "other::" in line for line in lines
-    ), "Output should contain base other permission entry"
+    assert any("user::" in line for line in lines), (
+        "Output should contain base user permission entry"
+    )
+    assert any("group::" in line for line in lines), (
+        "Output should contain base group permission entry"
+    )
+    assert any("other::" in line for line in lines), (
+        "Output should contain base other permission entry"
+    )
 
     # Test with named user and group ACL entries
     client.create("/testfile_with_named_acl").close()
@@ -576,13 +576,13 @@ def test_getfacl(client: Client):
     # Verify named entries appear (they may or may not be set depending on HDFS config)
     acl_status = client.get_acl_status("/testfile_with_named_acl")
     if any(entry.name for entry in acl_status.entries if entry.type == "user"):
-        assert (
-            "user:alice" in output or "user:bob" in output
-        ), "Named user ACL entries should appear in output"
+        assert "user:alice" in output or "user:bob" in output, (
+            "Named user ACL entries should appear in output"
+        )
     if any(entry.name for entry in acl_status.entries if entry.type == "group"):
-        assert (
-            "group:developers" in output or "group:testers" in output
-        ), "Named group ACL entries should appear in output"
+        assert "group:developers" in output or "group:testers" in output, (
+            "Named group ACL entries should appear in output"
+        )
 
     # Test with default ACL entries
     client.mkdirs("/testdir_with_default_acl")
@@ -600,9 +600,9 @@ def test_getfacl(client: Client):
     has_default_entries = any(entry.scope == "default" for entry in acl_status.entries)
     if has_default_entries:
         # Default entries should be prefixed with "default:"
-        assert any(
-            "default:" in line for line in output.split("\n")
-        ), "Output should contain default ACL entries"
+        assert any("default:" in line for line in output.split("\n")), (
+            "Output should contain default ACL entries"
+        )
 
     # Test output format consistency across multiple files
     output = capture_stdout(lambda: cli_main(["getfacl", "-R", "/testdir"]))
@@ -613,9 +613,9 @@ def test_getfacl(client: Client):
     # Each file should have corresponding owner and group lines
     owner_count = len([line for line in output_lines if "# owner:" in line])
     group_count = len([line for line in output_lines if "# group:" in line])
-    assert (
-        file_count == owner_count == group_count
-    ), "Each file should have owner and group headers"
+    assert file_count == owner_count == group_count, (
+        "Each file should have owner and group headers"
+    )
 
     # Verify base permissions appear for each file
     user_perm_count = len([line for line in output_lines if "user::" in line])
