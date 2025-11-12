@@ -624,3 +624,166 @@ def test_getfacl(client: Client):
     assert file_count <= user_perm_count, "Each file should have user base permission"
     assert file_count <= group_perm_count, "Each file should have group base permission"
     assert file_count <= other_perm_count, "Each file should have other base permission"
+
+
+def test_setfacl(client: Client):
+    """Test setfacl command with various scenarios"""
+    # Test error handling for non-existent file
+    with pytest.raises(FileNotFoundError):
+        cli_main(["setfacl", "-m", "user:testuser:rwx", "/nonexistent"])
+
+    # Create a test file
+    client.create("/testfile").close()
+
+    # Test modify (-m) flag
+    cli_main(["setfacl", "-m", "user:alice:rwx", "/testfile"])
+    acl_status = client.get_acl_status("/testfile")
+    assert any(
+        entry.name == "alice" and entry.type == "user" and entry.permissions == "rwx"
+        for entry in acl_status.entries
+    ), "Named user ACL entry should be set"
+
+    # Test remove (-x) flag
+    cli_main(["setfacl", "-x", "user:alice:rwx", "/testfile"])
+    acl_status = client.get_acl_status("/testfile")
+    assert not any(
+        entry.name == "alice" and entry.type == "user"
+        for entry in acl_status.entries
+    ), "Named user ACL entry should be removed"
+
+    # Test with multiple ACL entries
+    cli_main(
+        [
+            "setfacl",
+            "-m",
+            "user:alice:rwx,user:bob:r-x,group:developers:r--",
+            "/testfile",
+        ]
+    )
+    acl_status = client.get_acl_status("/testfile")
+    assert any(
+        entry.name == "alice" and entry.type == "user" and entry.permissions == "rwx"
+        for entry in acl_status.entries
+    ), "Alice's ACL entry should be set"
+    assert any(
+        entry.name == "bob" and entry.type == "user" and entry.permissions == "r-x"
+        for entry in acl_status.entries
+    ), "Bob's ACL entry should be set"
+    assert any(
+        entry.name == "developers" and entry.type == "group" and entry.permissions == "r--"
+        for entry in acl_status.entries
+    ), "Developers' ACL entry should be set"
+
+    # Test set (--set) flag
+    cli_main(
+        [
+            "setfacl",
+            "--set",
+            "user::rwx,group::r--,other::---,user:alice:r--,group:testers:rwx",
+            "/testfile",
+        ]
+    )
+    acl_status = client.get_acl_status("/testfile")
+    # After --set, only the base entries and the new entries should exist
+    assert any(
+        entry.name == "alice" and entry.type == "user" and entry.permissions == "r--"
+        for entry in acl_status.entries
+    ), "Alice's ACL entry should be set to r--"
+    assert any(
+        entry.name == "testers" and entry.type == "group" and entry.permissions == "rwx"
+        for entry in acl_status.entries
+    ), "Testers' ACL entry should be set"
+    # Bob and developers should be removed after --set
+    assert not any(
+        entry.name == "bob" and entry.type == "user"
+        for entry in acl_status.entries
+    ), "Bob's ACL entry should be removed after --set"
+    assert not any(
+        entry.name == "developers" and entry.type == "group"
+        for entry in acl_status.entries
+    ), "Developers' ACL entry should be removed after --set"
+
+    # Test remove-all (-b) flag
+    client.create("/testfile_remove_all").close()
+    cli_main(["setfacl", "-m", "user:alice:rwx", "/testfile_remove_all"])
+    cli_main(["setfacl", "-b", "/testfile_remove_all"])
+    acl_status = client.get_acl_status("/testfile_remove_all")
+    # Should only have base entries (user, group, other) after -b
+    assert all(
+        entry.name is None
+        for entry in acl_status.entries
+        if entry.scope == "access"
+    ), "Only base ACL entries should remain after -b"
+
+    # Test with directory and default ACLs
+    client.mkdirs("/testdir")
+    cli_main(
+        [
+            "setfacl",
+            "-m",
+            "default:user:alice:r--,default:group:testers:rwx",
+            "/testdir",
+        ]
+    )
+    acl_status = client.get_acl_status("/testdir")
+    assert any(
+        entry.name == "alice"
+        and entry.type == "user"
+        and entry.scope == "default"
+        and entry.permissions == "r--"
+        for entry in acl_status.entries
+    ), "Default user ACL entry should be set"
+    assert any(
+        entry.name == "testers"
+        and entry.type == "group"
+        and entry.scope == "default"
+        and entry.permissions == "rwx"
+        for entry in acl_status.entries
+    ), "Default group ACL entry should be set"
+
+    # Test remove-default (-k) flag
+    cli_main(["setfacl", "-k", "/testdir"])
+    acl_status = client.get_acl_status("/testdir")
+    assert not any(
+        entry.scope == "default" for entry in acl_status.entries
+    ), "All default ACL entries should be removed after -k"
+
+    # Test recursive flag
+    client.mkdirs("/testdir_recursive")
+    client.mkdirs("/testdir_recursive/subdir")
+    client.create("/testdir_recursive/file1").close()
+    client.create("/testdir_recursive/subdir/file2").close()
+
+    cli_main(
+        [
+            "setfacl",
+            "-R",
+            "-m",
+            "user:alice:rwx",
+            "/testdir_recursive",
+        ]
+    )
+
+    # For recursive, we need to check files that were updated
+    acl_status = client.get_acl_status("/testdir_recursive/file1")
+    assert any(
+        entry.name == "alice" and entry.type == "user" and entry.permissions == "rwx"
+        for entry in acl_status.entries
+    ), "ACL should be set on file1 recursively"
+
+    acl_status = client.get_acl_status("/testdir_recursive/subdir/file2")
+    assert any(
+        entry.name == "alice" and entry.type == "user" and entry.permissions == "rwx"
+        for entry in acl_status.entries
+    ), "ACL should be set on file2 recursively"
+
+    # Test invalid ACL spec
+    with pytest.raises(ValueError):
+        cli_main(["setfacl", "-m", "invalid:alice:rwx", "/testfile"])
+
+    with pytest.raises(ValueError):
+        cli_main(["setfacl", "-m", "user:alice:xyz", "/testfile"])
+
+    with pytest.raises(ValueError):
+        cli_main(["setfacl", "-m", "user:alice", "/testfile"])
+
