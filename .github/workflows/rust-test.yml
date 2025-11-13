@@ -40,6 +40,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
       - name: build and lint with clippy
         run: cargo clippy --all-targets --features integration-test,benchmark -- -D warnings
 
