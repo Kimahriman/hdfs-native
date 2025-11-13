@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 from urllib.parse import urlparse
 
-from hdfs_native import Client
+from hdfs_native import AclEntry, AclStatus, Client
 from hdfs_native._internal import FileStatus, WriteOptions
 
 __all__ = ["main"]
@@ -353,6 +353,157 @@ def get(args: Namespace):
                 f.result()
 
 
+def _permission_to_string(permission: str) -> str:
+    """Convert permission string to rwx format"""
+    return permission
+
+
+def _format_acl_entry(entry) -> str:
+    """Format an ACL entry for display"""
+    type_name = entry.type
+    permissions = _permission_to_string(entry.permissions)
+
+    if entry.name:
+        return f"{type_name}:{entry.name}:{permissions}"
+    else:
+        return f"{type_name}::{permissions}"
+
+
+def _print_acl_status(acl_status: AclStatus, full_path: str) -> None:
+    """Print ACL status for a single file"""
+    print(f"# file: {full_path}")
+    print(f"# owner: {acl_status.owner}")
+    print(f"# group: {acl_status.group}")
+
+    permission_string = stat.filemode(acl_status.permission)
+    user_acl_entries = sorted(
+        [
+            entry
+            for entry in acl_status.entries
+            if entry.type == "user"
+            and entry.name is not None
+            and entry.scope == "access"
+        ],
+        key=lambda e: e.name or "",
+    )
+    group_acl_entries = sorted(
+        [
+            entry
+            for entry in acl_status.entries
+            if entry.type == "group"
+            and entry.name is not None
+            and entry.scope == "access"
+        ],
+        key=lambda e: e.name or "",
+    )
+
+    user_default_acl_entries = sorted(
+        [
+            entry
+            for entry in acl_status.entries
+            if entry.type == "user" and entry.scope == "default"
+        ],
+        key=lambda e: e.name or "",
+    )
+    group_default_acl_entries = sorted(
+        [
+            entry
+            for entry in acl_status.entries
+            if entry.type == "group" and entry.scope == "default"
+        ],
+        key=lambda e: e.name or "",
+    )
+    mask_default_acl_entries = [
+        entry
+        for entry in acl_status.entries
+        if entry.type == "mask" and entry.scope == "default"
+    ]
+
+    other_default_acl_entries = [
+        entry
+        for entry in acl_status.entries
+        if entry.type == "other" and entry.scope == "default"
+    ]
+
+    # Print base user permission
+    print(f"user::{permission_string[1:4]}")
+    for entry in user_acl_entries:
+        print(_format_acl_entry(entry))
+
+    # Print base group permission
+    print(f"group::{permission_string[4:7]}")
+    for entry in group_acl_entries:
+        print(_format_acl_entry(entry))
+
+    print(f"other::{permission_string[7:10]}")
+
+    # Print default ACL entries if any exist
+    for user_default in user_default_acl_entries:
+        entry_str = _format_acl_entry(user_default)
+        print(f"default:{entry_str}")
+
+    for group_default in group_default_acl_entries:
+        entry_str = _format_acl_entry(group_default)
+        print(f"default:{entry_str}")
+
+    for mask_default in mask_default_acl_entries:
+        entry_str = _format_acl_entry(mask_default)
+        print(f"default:{entry_str}")
+
+    for other_default in other_default_acl_entries:
+        entry_str = _format_acl_entry(other_default)
+        print(f"default:{entry_str}")
+
+
+def getfacl(args: Namespace):
+    for url in args.path:
+        client = _client_for_url(url)
+
+        # Glob expand the path
+        for path in _glob_path(client, _path_for_url(url)):
+            prefix = _prefix_for_url(url)
+
+            if args.recursive:
+                # For recursive, list all files under this path and get their ACLs
+                for status in client.list_status(path, recursive=True):
+                    file_full_path = prefix + status.path
+                    acl_status = client.get_acl_status(status.path)
+                    _print_acl_status(acl_status, file_full_path)
+                    print("")
+            else:
+                # For non-recursive, just get the path and its ACL
+                full_path = prefix + path
+                acl_status = client.get_acl_status(path)
+                _print_acl_status(acl_status, full_path)
+
+
+def _apply_setfacl_operation(
+    client: Client,
+    path: str,
+    operation: str,
+    entries: Optional[List[AclEntry]],
+) -> None:
+    """Apply the specified setfacl operation to a path"""
+    if operation == "remove_all":
+        # Remove all but base ACL entries
+        client.remove_acl(path)
+    elif operation == "remove_default":
+        # Remove default ACL
+        client.remove_default_acl(path)
+    elif operation == "modify":
+        # Modify ACL (add new entries, keep existing)
+        assert entries is not None
+        client.modify_acl_entries(path, entries)
+    elif operation == "remove":
+        # Remove specified ACL entries
+        assert entries is not None
+        client.remove_acl_entries(path, entries)
+    elif operation == "set":
+        # Set ACL (replace all entries)
+        assert entries is not None
+        client.set_acl(path, entries)
+
+
 def ls(args: Namespace):
     def parse_status(status: FileStatus, prefix: str) -> Dict[str, Union[int, str]]:
         file_time = status.modification_time
@@ -573,6 +724,138 @@ def rmdir(args: Namespace):
             client.delete(path)
 
 
+def _parse_acl_spec(acl_spec: str) -> List[AclEntry]:
+    """
+    Parse an ACL specification string into a list of AclEntry objects.
+
+    Supported formats:
+    - user:testuser:rwx
+    - group:testgroup:r-x
+    - default:user:testuser:r-x
+    - default:group:testgroup:rwx
+    - default:other::r-x
+    - user::rwx (for unnamed entries)
+    - group::rwx
+    - other::rwx
+    """
+    entries = []
+
+    for entry_spec in acl_spec.split(","):
+        entry_spec = entry_spec.strip()
+        if not entry_spec:
+            continue
+
+        parts = entry_spec.split(":")
+
+        # Check if this is a default entry
+        scope = "access"
+        if len(parts) > 0 and parts[0] == "default":
+            scope = "default"
+            parts = parts[1:]
+
+        if len(parts) < 2:
+            raise ValueError(f"Invalid ACL entry format: {entry_spec}")
+
+        entry_type = parts[0]
+
+        # Validate entry type
+        valid_types = ("user", "group", "mask", "other")
+        if entry_type not in valid_types:
+            raise ValueError(
+                f"Invalid ACL entry type: {entry_type}. Must be one of {valid_types}"
+            )
+
+        # Parse name and permissions
+        if len(parts) == 2:
+            # Format: type:permissions (e.g., "user:rwx" or "other::rwx")
+            name = None
+            permissions = parts[1]
+        elif len(parts) == 3:
+            # Format: type:name:permissions (e.g., "user:testuser:rwx")
+            name = parts[1] if parts[1] else None
+            permissions = parts[2]
+        else:
+            raise ValueError(f"Invalid ACL entry format: {entry_spec}")
+
+        # Validate permissions format
+        valid_perms = ("---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx")
+        if permissions not in valid_perms:
+            raise ValueError(
+                f"Invalid permissions: {permissions}. Must be in format like 'rwx', 'r-x', etc."
+            )
+
+        entries.append(
+            AclEntry(
+                type=entry_type,  # type: ignore
+                scope=scope,  # type: ignore
+                permissions=permissions,  # type: ignore
+                name=name,
+            )
+        )
+
+    return entries
+
+
+def setfacl(args: Namespace):
+    """Set ACLs on files or directories"""
+
+    # Determine which operation is being performed
+    if args.remove_all:
+        op = "remove_all"
+    elif args.remove_default:
+        op = "remove_default"
+    elif args.modify:
+        op = "modify"
+    elif args.remove:
+        op = "remove"
+    elif args.set:
+        op = "set"
+    else:
+        raise ValueError("Must specify one of: -b, -k, -m, -x, or --set")
+
+    # Parse the positional arguments
+    # For -m, -x, --set: first arg is acl_spec, rest are paths
+    # For -b, -k: all args are paths
+    entries = None
+    if op in ("modify", "remove", "set"):
+        if len(args.args) < 2:
+            raise ValueError(
+                "ACL specification and at least one path are required for this operation"
+            )
+        acl_spec = args.args[0]
+        entries = _parse_acl_spec(acl_spec)
+        paths = args.args[1:]
+    else:
+        if len(args.args) < 1:
+            raise ValueError("At least one path is required")
+        paths = args.args
+
+    # Process each path
+    for path_spec in paths:
+        # Parse URL
+        client = _client_for_url(path_spec)
+
+        # Glob expand the path
+        for path in _glob_path(client, _path_for_url(path_spec)):
+            if args.recursive:
+                # For recursive, apply to all files under this path
+                for status in client.list_status(path, recursive=True):
+                    _apply_setfacl_operation(
+                        client,
+                        status.path,
+                        op,
+                        entries,
+                    )
+            else:
+                # For non-recursive, just apply to the path
+                _apply_setfacl_operation(
+                    client,
+                    path,
+                    op,
+                    entries,
+                )
+
+
 def touch(args: Namespace):
     timestamp = None
     if args.timestamp:
@@ -745,6 +1028,82 @@ def main(in_args: Optional[Sequence[str]] = None):
         help="Local destination to write to. Defaults to current directory.",
     )
     get_parser.set_defaults(func=get)
+
+    getfacl_parser = subparsers.add_parser(
+        "getfacl",
+        help="Displays the Access Control Lists (ACLs) of files and directories",
+        description="""Displays the Access Control Lists (ACLs) of files and directories.
+        If a directory has a default ACL, then getfacl also displays the default ACL.""",
+        add_help=False,
+    )
+    getfacl_parser.add_argument(
+        "-R",
+        "--recursive",
+        action="store_true",
+        help="List the ACLs of all files and directories recursively",
+    )
+    getfacl_parser.add_argument("path", nargs="+", help="File or directory to list")
+    getfacl_parser.set_defaults(func=getfacl)
+
+    setfacl_parser = subparsers.add_parser(
+        "setfacl",
+        help="Sets Access Control Lists (ACLs) of files and directories",
+        description="""Sets Access Control Lists (ACLs) of files and directories.
+        Options:
+        -b: Remove all but the base ACL entries
+        -k: Remove the default ACL
+        -m: Modify ACL (add new entries, keep existing)
+        -x: Remove specified ACL entries
+        --set: Replace all ACL entries""",
+        add_help=False,
+    )
+    setfacl_parser.add_argument(
+        "-R",
+        "--recursive",
+        action="store_true",
+        help="Apply operations to all files and directories recursively",
+    )
+
+    # Create a mutually exclusive group for the operations
+    setfacl_ops = setfacl_parser.add_mutually_exclusive_group(required=True)
+    setfacl_ops.add_argument(
+        "-b",
+        "--remove-all",
+        action="store_true",
+        help="Remove all but the base ACL entries",
+    )
+    setfacl_ops.add_argument(
+        "-k",
+        "--remove-default",
+        action="store_true",
+        help="Remove the default ACL",
+    )
+    setfacl_ops.add_argument(
+        "-m",
+        "--modify",
+        action="store_true",
+        help="Modify ACL. New entries are added to the ACL, and existing entries are retained.",
+    )
+    setfacl_ops.add_argument(
+        "-x",
+        "--remove",
+        action="store_true",
+        help="Remove specified ACL entries. Other ACL entries are retained.",
+    )
+    setfacl_ops.add_argument(
+        "--set",
+        dest="set",
+        action="store_true",
+        help="Fully replace the ACL, discarding all existing entries.",
+    )
+
+    # We use a custom nargs pattern to handle both cases where acl_spec is present and absent
+    setfacl_parser.add_argument(
+        "args",
+        nargs="+",
+        help="For -m/-x/--set: <acl_spec> <path> [path ...]. For -b/-k: <path> [path ...]",
+    )
+    setfacl_parser.set_defaults(func=setfacl)
 
     ls_parser = subparsers.add_parser(
         "ls",
