@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::{error::Result, HdfsError};
+use crate::{HdfsError, error::Result};
 use regex::{Regex, RegexBuilder};
 
 /// A small tuple wrapper holding a pattern string and a character offset.
@@ -380,7 +380,7 @@ impl GlobPattern {
 
 #[cfg(test)]
 mod test {
-    use crate::glob::{expand_glob, left_most_bracket_with_slash, GlobPattern, StringWithOffset};
+    use crate::glob::{GlobPattern, StringWithOffset, expand_glob, left_most_bracket_with_slash};
 
     #[test]
     fn test_expand_glob() {

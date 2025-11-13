@@ -6,8 +6,8 @@ mod test {
     use crate::common::assert_bufs_equal;
     use bytes::{BufMut, BytesMut};
     use hdfs_native::{
-        minidfs::{DfsFeatures, MiniDfs},
         Client, Result, WriteOptions,
+        minidfs::{DfsFeatures, MiniDfs},
     };
     use serial_test::serial;
     use std::collections::HashSet;

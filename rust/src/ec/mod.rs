@@ -1,7 +1,7 @@
 pub mod gf256;
 mod matrix;
 
-use crate::{proto::hdfs, HdfsError, Result};
+use crate::{HdfsError, Result, proto::hdfs};
 use bytes::Bytes;
 
 use self::gf256::Coder;
@@ -74,7 +74,7 @@ impl EcSchema {
                 codec => {
                     return Err(HdfsError::UnsupportedErasureCodingPolicy(format!(
                         "codec: {codec}"
-                    )))
+                    )));
                 }
             }
         }

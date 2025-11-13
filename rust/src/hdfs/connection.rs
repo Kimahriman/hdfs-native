@@ -1,13 +1,13 @@
 use std::collections::{HashMap, VecDeque};
 use std::default::Default;
 use std::io::ErrorKind;
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use chrono::{prelude::*, TimeDelta};
-use crc::{Crc, Table, CRC_32_CKSUM, CRC_32_ISCSI};
+use chrono::{TimeDelta, prelude::*};
+use crc::{CRC_32_CKSUM, CRC_32_ISCSI, Crc, Table};
 use log::{debug, warn};
 use once_cell::sync::Lazy;
 use prost::Message;
@@ -18,12 +18,12 @@ use tokio::{io::AsyncWriteExt, net::TcpStream, task::JoinHandle};
 use uuid::Uuid;
 
 use crate::common::config::Configuration;
-use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
 use crate::proto::common::TokenProto;
+use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
 use crate::proto::hdfs::{DataEncryptionKeyProto, DatanodeIdProto};
 use crate::proto::{common, hdfs};
 use crate::security::sasl::{
-    negotiate_sasl_session, SaslDatanodeConnection, SaslDatanodeReader, SaslDatanodeWriter,
+    SaslDatanodeConnection, SaslDatanodeReader, SaslDatanodeWriter, negotiate_sasl_session,
 };
 use crate::security::sasl::{SaslReader, SaslWriter};
 use crate::security::user::UserInfo;

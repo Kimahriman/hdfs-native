@@ -2,8 +2,8 @@
 mod test {
 
     use bytes::{Buf, BufMut, Bytes, BytesMut};
-    use hdfs_native::file::FileReader;
     use hdfs_native::WriteOptions;
+    use hdfs_native::file::FileReader;
     use serial_test::serial;
     use std::collections::HashSet;
     use std::io::{self, BufWriter, Write};
@@ -12,8 +12,8 @@ mod test {
     use which::which;
 
     use hdfs_native::minidfs::{DfsFeatures, MiniDfs};
-    use hdfs_native::test::{EcFaultInjection, EC_FAULT_INJECTOR};
-    use hdfs_native::{client::Client, Result};
+    use hdfs_native::test::{EC_FAULT_INJECTOR, EcFaultInjection};
+    use hdfs_native::{Result, client::Client};
 
     const CELL_SIZE: usize = 1024 * 1024;
 

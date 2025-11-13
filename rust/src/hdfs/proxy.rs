@@ -1,6 +1,6 @@
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
 };
 
 use bytes::Bytes;
@@ -10,10 +10,10 @@ use tokio::runtime::Handle;
 use url::Url;
 
 use crate::{
+    HdfsError, Result,
     common::config::Configuration,
     hdfs::connection::{AlignmentContext, RpcConnection},
     proto::{common::HaServiceStateProto, hdfs},
-    HdfsError, Result,
 };
 
 // RPC exceptions that should be tried
@@ -100,17 +100,19 @@ impl NameServiceProxy {
             "No host for name service".to_string(),
         ))?;
 
-        let (context_enabled, find_observer) = match config.get_proxy_for_nameservice(host)
-        {
+        let (context_enabled, find_observer) = match config.get_proxy_for_nameservice(host) {
             Some("org.apache.hadoop.hdfs.server.namenode.ha.ObserverReadProxyProvider") => {
                 (true, true)
             }
-            Some("org.apache.hadoop.hdfs.server.namenode.ha.RouterObserverReadConfiguredFailoverProxyProvider") => {
-                (true, false)
-            }
-            Some("org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider") | None => (false, false),
+            Some(
+                "org.apache.hadoop.hdfs.server.namenode.ha.RouterObserverReadConfiguredFailoverProxyProvider",
+            ) => (true, false),
+            Some("org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider")
+            | None => (false, false),
             Some(provider) => {
-                warn!("Unsupported proxy provider {provider}, falling back to ConfiguredFailoverProxyProvider behavior");
+                warn!(
+                    "Unsupported proxy provider {provider}, falling back to ConfiguredFailoverProxyProvider behavior"
+                );
                 (false, false)
             }
         };
@@ -210,10 +212,9 @@ impl NameServiceProxy {
                 Ok(response) => {
                     if let Ok(ha_state) =
                         hdfs::HaServiceStateResponseProto::decode_length_delimited(response)
+                        && matches!(ha_state.state(), HaServiceStateProto::Observer)
                     {
-                        if matches!(ha_state.state(), HaServiceStateProto::Observer) {
-                            return Some(i);
-                        }
+                        return Some(i);
                     }
                 }
                 Err(e) => {
@@ -244,10 +245,10 @@ impl NameServiceProxy {
             .await;
 
         #[cfg(feature = "integration-test")]
-        if result.is_ok() {
-            if let Some(v) = crate::test::PROXY_CALLS.lock().unwrap().as_mut() {
-                v.push((method_name, true));
-            }
+        if result.is_ok()
+            && let Some(v) = crate::test::PROXY_CALLS.lock().unwrap().as_mut()
+        {
+            v.push((method_name, true));
         }
 
         if result.is_err() {

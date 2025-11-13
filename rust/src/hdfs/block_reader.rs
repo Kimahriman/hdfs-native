@@ -5,8 +5,8 @@ use std::{
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures::{
-    stream::{self, BoxStream},
     Stream, StreamExt,
+    stream::{self, BoxStream},
 };
 use log::{debug, warn};
 use tokio::{
@@ -16,9 +16,10 @@ use tokio::{
 };
 
 use crate::{
+    HdfsError, Result,
     common::config::Configuration,
     ec::EcSchema,
-    hdfs::connection::{DatanodeConnection, Op, DATANODE_CACHE},
+    hdfs::connection::{DATANODE_CACHE, DatanodeConnection, Op},
     proto::{
         common,
         hdfs::{
@@ -26,7 +27,6 @@ use crate::{
             ReadOpChecksumInfoProto,
         },
     },
-    HdfsError, Result,
 };
 
 use super::protocol::NamenodeProtocol;
@@ -563,12 +563,12 @@ impl StripedBlockStream {
         let index = self.cell_readers.len();
 
         #[cfg(feature = "integration-test")]
-        if let Some(fault_injection) = crate::test::EC_FAULT_INJECTOR.lock().unwrap().as_ref() {
-            if fault_injection.fail_blocks.contains(&index) {
-                debug!("Failing block read for {}", index);
-                self.cell_readers.push(None);
-                return Ok(false);
-            }
+        if let Some(fault_injection) = crate::test::EC_FAULT_INJECTOR.lock().unwrap().as_ref()
+            && fault_injection.fail_blocks.contains(&index)
+        {
+            debug!("Failing block read for {}", index);
+            self.cell_readers.push(None);
+            return Ok(false);
         }
 
         let max_block_offset = self

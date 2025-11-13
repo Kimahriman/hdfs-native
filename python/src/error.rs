@@ -1,5 +1,5 @@
 use hdfs_native::HdfsError;
-use pyo3::{exceptions::*, PyErr};
+use pyo3::{PyErr, exceptions::*};
 
 pub struct PythonHdfsError(HdfsError);
 

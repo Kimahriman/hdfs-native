@@ -3,14 +3,14 @@ mod common;
 
 #[cfg(feature = "integration-test")]
 mod test {
-    use crate::common::{assert_bufs_equal, TEST_FILE_INTS};
+    use crate::common::{TEST_FILE_INTS, assert_bufs_equal};
     use bytes::{BufMut, BytesMut};
     use hdfs_native::{
+        Client, Result, WriteOptions,
         acl::AclEntry,
         client::{ClientBuilder, FileStatus},
         minidfs::{DfsFeatures, MiniDfs},
         test::PROXY_CALLS,
-        Client, Result, WriteOptions,
     };
     use serial_test::serial;
     use std::collections::HashSet;
@@ -253,19 +253,23 @@ mod test {
 
     async fn test_dirs(client: &Client) -> Result<()> {
         client.mkdirs("/testdir", 0o755, false).await?;
-        assert!(client
-            .list_status("/testdir", false)
-            .await
-            .is_ok_and(|s| s.is_empty()));
+        assert!(
+            client
+                .list_status("/testdir", false)
+                .await
+                .is_ok_and(|s| s.is_empty())
+        );
 
         client.delete("/testdir", false).await?;
         assert!(client.list_status("/testdir", false).await.is_err());
 
         client.mkdirs("/testdir1/testdir2", 0o755, true).await?;
-        assert!(client
-            .list_status("/testdir1", false)
-            .await
-            .is_ok_and(|s| s.len() == 1));
+        assert!(
+            client
+                .list_status("/testdir1", false)
+                .await
+                .is_ok_and(|s| s.len() == 1)
+        );
 
         // Deleting non-empty dir without recursive fails
         assert!(client.delete("/testdir1", false).await.is_err());
@@ -619,9 +623,11 @@ mod test {
 
         let calls = PROXY_CALLS.lock().unwrap().take().unwrap();
 
-        assert!(calls
-            .into_iter()
-            .any(|(name, observer)| name == "getFileInfo" && observer));
+        assert!(
+            calls
+                .into_iter()
+                .any(|(name, observer)| name == "getFileInfo" && observer)
+        );
 
         client.delete("/test", true).await?;
 

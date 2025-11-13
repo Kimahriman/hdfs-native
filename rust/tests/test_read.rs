@@ -6,8 +6,8 @@ mod test {
     use crate::common::TEST_FILE_INTS;
     use bytes::{Buf, BytesMut};
     use hdfs_native::{
-        minidfs::{DfsFeatures, MiniDfs},
         Client, Result, WriteOptions,
+        minidfs::{DfsFeatures, MiniDfs},
     };
     use serial_test::serial;
     use std::collections::HashSet;

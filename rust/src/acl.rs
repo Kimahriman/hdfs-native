@@ -1,8 +1,8 @@
 use std::fmt::Display;
 
 use crate::proto::hdfs::{
-    acl_entry_proto::{AclEntryScopeProto, AclEntryTypeProto, FsActionProto},
     AclEntryProto, AclStatusProto,
+    acl_entry_proto::{AclEntryScopeProto, AclEntryTypeProto, FsActionProto},
 };
 
 #[derive(Clone, Debug, PartialEq)]

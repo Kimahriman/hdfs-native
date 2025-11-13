@@ -1,4 +1,4 @@
-use std::sync::{atomic::AtomicBool, Mutex};
+use std::sync::{Mutex, atomic::AtomicBool};
 
 pub static DATANODE_CONNECT_FAULT_INJECTOR: AtomicBool = AtomicBool::new(false);
 pub static DATANODE_READ_FAULT_INJECTOR: AtomicBool = AtomicBool::new(false);

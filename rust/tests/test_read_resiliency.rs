@@ -9,9 +9,9 @@ mod test {
     use bytes::Buf;
     use futures::StreamExt;
     use hdfs_native::{
+        Client, Result, WriteOptions,
         minidfs::MiniDfs,
         test::{DATANODE_CONNECT_FAULT_INJECTOR, DATANODE_READ_FAULT_INJECTOR},
-        Client, Result, WriteOptions,
     };
     use serial_test::serial;
 

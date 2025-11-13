@@ -303,7 +303,7 @@ impl EntityResolver {
                     "failed to get metadata of entity file {}: {}",
                     full_path.display(),
                     e
-                ))
+                ));
             }
         };
         let entity_file_size = entity_file_metadata.len();
@@ -322,8 +322,7 @@ impl EntityResolver {
         if entity_file_allocated_size + entity_file_size > self.allocated_size_limit {
             return Err(format!(
                 "entity resolver has no more memory (allocated {} bytes, entity file size {} bytes)",
-                entity_file_allocated_size,
-                entity_file_size,
+                entity_file_allocated_size, entity_file_size,
             ));
         }
 
@@ -361,12 +360,12 @@ impl EntityResolver {
                 }
                 Component::Normal(p) => full_path.push(p),
                 Component::RootDir => {
-                    return Err("absolute paths are not allowed in entity URIs".to_string())
+                    return Err("absolute paths are not allowed in entity URIs".to_string());
                 }
                 Component::Prefix(p) => {
                     return Err(format!(
                         "absolute paths (with prefix {p:?}) are not allowed in entity URIs"
-                    ))
+                    ));
                 }
             }
         }
@@ -385,11 +384,11 @@ mod test {
     use crate::common::config::DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN;
 
     use super::{
-        Configuration, EntityResolver, DFS_CLIENT_FAILOVER_RESOLVE_NEEDED,
+        Configuration, DFS_CLIENT_FAILOVER_RESOLVE_NEEDED,
         DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_BEST_EFFORT_KEY,
         DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY,
-        DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_POLICY_KEY, HA_NAMENODES_PREFIX,
-        HA_NAMENODE_RPC_ADDRESS_PREFIX, VIEWFS_MOUNTTABLE_PREFIX,
+        DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_POLICY_KEY, EntityResolver,
+        HA_NAMENODE_RPC_ADDRESS_PREFIX, HA_NAMENODES_PREFIX, VIEWFS_MOUNTTABLE_PREFIX,
     };
 
     #[test]

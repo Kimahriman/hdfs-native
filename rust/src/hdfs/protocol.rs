@@ -9,12 +9,12 @@ use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+use crate::Result;
 use crate::acl::AclEntry;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::{
     self, DataEncryptionKeyProto, FsServerDefaultsProto, GetDataEncryptionKeyResponseProto,
 };
-use crate::Result;
 
 const LEASE_RENEWAL_INTERVAL_SECS: u64 = 30;
 

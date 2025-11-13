@@ -69,7 +69,7 @@ static LIBGSSAPI: Lazy<Option<bindings::GSSAPI>> = Lazy::new(|| {
             #[cfg(target_os = "macos")]
             let message = "Try installing via \"brew install krb5\"";
             #[cfg(target_os = "linux")]
-                let message = "On Debian based systems, try \"apt-get install libgssapi-krb5-2\". On RHEL based systems, try \"yum install krb5-libs\"";
+            let message = "On Debian based systems, try \"apt-get install libgssapi-krb5-2\". On RHEL based systems, try \"yum install krb5-libs\"";
             #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             let message = "Loading Kerberos libraries are not supported on this system";
             log::warn!("Failed to libgssapi_krb5.\n{}.\n{:?}", message, e);
@@ -448,10 +448,10 @@ impl SaslSession for GssapiSession {
             GssapiState::Pending(mut ctx) => {
                 let mut ret = Vec::<u8>::new();
                 let (out_token, complete) = ctx.step(token)?;
-                if let Some(token) = out_token {
-                    if !token.is_empty() {
-                        ret = token.to_vec();
-                    }
+                if let Some(token) = out_token
+                    && !token.is_empty()
+                {
+                    ret = token.to_vec();
                 }
                 if !complete {
                     self.state = GssapiState::Pending(ctx);
