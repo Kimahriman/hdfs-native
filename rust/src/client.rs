@@ -916,11 +916,13 @@ impl DirListingIterator {
     }
 
     pub async fn next(&mut self) -> Option<Result<FileStatus>> {
-        if self.partial_listing.is_empty() && self.remaining > 0
-            && let Err(error) = self.get_next_batch().await {
-                self.remaining = 0;
-                return Some(Err(error));
-            }
+        if self.partial_listing.is_empty()
+            && self.remaining > 0
+            && let Err(error) = self.get_next_batch().await
+        {
+            self.remaining = 0;
+            return Some(Err(error));
+        }
         if let Some(next) = self.partial_listing.pop_front() {
             Some(Ok(FileStatus::from(next, &self.path)))
         } else {
