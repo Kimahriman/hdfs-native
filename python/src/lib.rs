@@ -89,7 +89,7 @@ impl PyFileStatusIter {
         // Kinda dumb, but lets us release the GIL while getting the next value
         let inner = Arc::clone(&slf.inner);
         let rt = Arc::clone(&slf.rt);
-        if let Some(result) = slf.py().allow_threads(|| rt.block_on(inner.next())) {
+        if let Some(result) = slf.py().detach(|| rt.block_on(inner.next())) {
             Ok(Some(PyFileStatus::from(result?)))
         } else {
             Ok(None)
@@ -240,7 +240,7 @@ impl PyFileReadStream {
         let rt = Arc::clone(&slf.rt);
         if let Some(result) = slf
             .py()
-            .allow_threads(|| rt.block_on(inner.lock().unwrap().next()))
+            .detach(|| rt.block_on(inner.lock().unwrap().next()))
         {
             Ok(Some(Cow::from(result?.to_vec())))
         } else {
@@ -276,14 +276,14 @@ impl RawFileReader {
             len as usize
         };
         Ok(Cow::from(
-            py.allow_threads(|| self.rt.block_on(self.inner.read(read_len)))?
+            py.detach(|| self.rt.block_on(self.inner.read(read_len)))?
                 .to_vec(),
         ))
     }
 
     pub fn read_range(&self, offset: usize, len: usize, py: Python) -> PyHdfsResult<Cow<'_, [u8]>> {
         Ok(Cow::from(
-            py.allow_threads(|| self.rt.block_on(self.inner.read_range(offset, len)))?
+            py.detach(|| self.rt.block_on(self.inner.read_range(offset, len)))?
                 .to_vec(),
         ))
     }
@@ -385,11 +385,11 @@ struct RawFileWriter {
 #[pymethods]
 impl RawFileWriter {
     pub fn write(&mut self, buf: Vec<u8>, py: Python) -> PyHdfsResult<usize> {
-        Ok(py.allow_threads(|| self.rt.block_on(self.inner.write(Bytes::from(buf))))?)
+        Ok(py.detach(|| self.rt.block_on(self.inner.write(Bytes::from(buf))))?)
     }
 
     pub fn close(&mut self, py: Python) -> PyHdfsResult<()> {
-        Ok(py.allow_threads(|| self.rt.block_on(self.inner.close()))?)
+        Ok(py.detach(|| self.rt.block_on(self.inner.close()))?)
     }
 }
 
@@ -427,7 +427,7 @@ impl RawClient {
     }
 
     pub fn get_file_info(&self, path: &str, py: Python) -> PyHdfsResult<PyFileStatus> {
-        Ok(py.allow_threads(|| {
+        Ok(py.detach(|| {
             self.rt
                 .block_on(self.inner.get_file_info(path))
                 .map(PyFileStatus::from)
@@ -443,7 +443,7 @@ impl RawClient {
     }
 
     pub fn glob_status(&self, pattern: String, py: Python) -> PyHdfsResult<Vec<PyFileStatus>> {
-        py.allow_threads(|| {
+        py.detach(|| {
             self.rt
                 .block_on(self.inner.glob_status(pattern.as_ref()))
                 .map_err(PythonHdfsError::from)
@@ -452,7 +452,7 @@ impl RawClient {
     }
 
     pub fn read(&self, path: &str, py: Python) -> PyHdfsResult<RawFileReader> {
-        let file_reader = py.allow_threads(|| self.rt.block_on(self.inner.read(path)))?;
+        let file_reader = py.detach(|| self.rt.block_on(self.inner.read(path)))?;
 
         Ok(RawFileReader {
             inner: file_reader,
@@ -466,7 +466,7 @@ impl RawClient {
         write_options: PyWriteOptions,
         py: Python,
     ) -> PyHdfsResult<RawFileWriter> {
-        let file_writer = py.allow_threads(|| {
+        let file_writer = py.detach(|| {
             self.rt
                 .block_on(self.inner.create(src, WriteOptions::from(write_options)))
         })?;
@@ -478,7 +478,7 @@ impl RawClient {
     }
 
     pub fn append(&self, src: &str, py: Python) -> PyHdfsResult<RawFileWriter> {
-        let file_writer = py.allow_threads(|| self.rt.block_on(self.inner.append(src)))?;
+        let file_writer = py.detach(|| self.rt.block_on(self.inner.append(src)))?;
 
         Ok(RawFileWriter {
             inner: file_writer,
@@ -493,22 +493,22 @@ impl RawClient {
         create_parent: bool,
         py: Python,
     ) -> PyHdfsResult<()> {
-        Ok(py.allow_threads(|| {
+        Ok(py.detach(|| {
             self.rt
                 .block_on(self.inner.mkdirs(path, permission, create_parent))
         })?)
     }
 
     pub fn rename(&self, src: &str, dst: &str, overwrite: bool, py: Python) -> PyHdfsResult<()> {
-        Ok(py.allow_threads(|| self.rt.block_on(self.inner.rename(src, dst, overwrite)))?)
+        Ok(py.detach(|| self.rt.block_on(self.inner.rename(src, dst, overwrite)))?)
     }
 
     pub fn delete(&self, path: &str, recursive: bool, py: Python) -> PyHdfsResult<bool> {
-        Ok(py.allow_threads(|| self.rt.block_on(self.inner.delete(path, recursive)))?)
+        Ok(py.detach(|| self.rt.block_on(self.inner.delete(path, recursive)))?)
     }
 
     pub fn set_times(&self, path: &str, mtime: u64, atime: u64, py: Python) -> PyHdfsResult<()> {
-        Ok(py.allow_threads(|| self.rt.block_on(self.inner.set_times(path, mtime, atime)))?)
+        Ok(py.detach(|| self.rt.block_on(self.inner.set_times(path, mtime, atime)))?)
     }
 
     #[pyo3(signature = (path, owner=None, group=None))]
@@ -519,18 +519,18 @@ impl RawClient {
         group: Option<&str>,
         py: Python,
     ) -> PyHdfsResult<()> {
-        Ok(py.allow_threads(|| self.rt.block_on(self.inner.set_owner(path, owner, group)))?)
+        Ok(py.detach(|| self.rt.block_on(self.inner.set_owner(path, owner, group)))?)
     }
 
     pub fn set_permission(&self, path: &str, permission: u32, py: Python) -> PyHdfsResult<()> {
-        Ok(py.allow_threads(|| {
+        Ok(py.detach(|| {
             self.rt
                 .block_on(self.inner.set_permission(path, permission))
         })?)
     }
 
     pub fn set_replication(&self, path: &str, replication: u32, py: Python) -> PyHdfsResult<bool> {
-        Ok(py.allow_threads(|| {
+        Ok(py.detach(|| {
             self.rt
                 .block_on(self.inner.set_replication(path, replication))
         })?)
@@ -538,7 +538,7 @@ impl RawClient {
 
     pub fn get_content_summary(&self, path: &str, py: Python) -> PyHdfsResult<PyContentSummary> {
         Ok(py
-            .allow_threads(|| self.rt.block_on(self.inner.get_content_summary(path)))?
+            .detach(|| self.rt.block_on(self.inner.get_content_summary(path)))?
             .into())
     }
 
@@ -548,7 +548,7 @@ impl RawClient {
         acl_spec: Vec<PyAclEntry>,
         py: Python,
     ) -> PyHdfsResult<()> {
-        Ok(py.allow_threads(|| {
+        Ok(py.detach(|| {
             self.rt.block_on(
                 self.inner
                     .modify_acl_entries(path, acl_spec.into_iter().collect()),
@@ -562,7 +562,7 @@ impl RawClient {
         acl_spec: Vec<PyAclEntry>,
         py: Python,
     ) -> PyHdfsResult<()> {
-        Ok(py.allow_threads(|| {
+        Ok(py.detach(|| {
             self.rt.block_on(
                 self.inner
                     .remove_acl_entries(path, acl_spec.into_iter().collect()),
@@ -571,15 +571,15 @@ impl RawClient {
     }
 
     pub fn remove_default_acl(&self, path: &str, py: Python) -> PyHdfsResult<()> {
-        Ok(py.allow_threads(|| self.rt.block_on(self.inner.remove_default_acl(path)))?)
+        Ok(py.detach(|| self.rt.block_on(self.inner.remove_default_acl(path)))?)
     }
 
     pub fn remove_acl(&self, path: &str, py: Python) -> PyHdfsResult<()> {
-        Ok(py.allow_threads(|| self.rt.block_on(self.inner.remove_acl(path)))?)
+        Ok(py.detach(|| self.rt.block_on(self.inner.remove_acl(path)))?)
     }
 
     pub fn set_acl(&self, path: &str, acl_spec: Vec<PyAclEntry>, py: Python) -> PyHdfsResult<()> {
-        Ok(py.allow_threads(|| {
+        Ok(py.detach(|| {
             self.rt
                 .block_on(self.inner.set_acl(path, acl_spec.into_iter().collect()))
         })?)
@@ -587,7 +587,7 @@ impl RawClient {
 
     pub fn get_acl_status(&self, path: &str, py: Python) -> PyHdfsResult<PyAclStatus> {
         Ok(py
-            .allow_threads(|| self.rt.block_on(self.inner.get_acl_status(path)))?
+            .detach(|| self.rt.block_on(self.inner.get_acl_status(path)))?
             .into())
     }
 }
