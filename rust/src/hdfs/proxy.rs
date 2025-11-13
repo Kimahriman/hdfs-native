@@ -212,9 +212,10 @@ impl NameServiceProxy {
                 Ok(response) => {
                     if let Ok(ha_state) =
                         hdfs::HaServiceStateResponseProto::decode_length_delimited(response)
-                        && matches!(ha_state.state(), HaServiceStateProto::Observer) {
-                            return Some(i);
-                        }
+                        && matches!(ha_state.state(), HaServiceStateProto::Observer)
+                    {
+                        return Some(i);
+                    }
                 }
                 Err(e) => {
                     debug!("Couldn't get HA service status: {e:?}");
@@ -244,10 +245,10 @@ impl NameServiceProxy {
             .await;
 
         #[cfg(feature = "integration-test")]
-        if result.is_ok() {
-            if let Some(v) = crate::test::PROXY_CALLS.lock().unwrap().as_mut() {
-                v.push((method_name, true));
-            }
+        if result.is_ok()
+            && let Some(v) = crate::test::PROXY_CALLS.lock().unwrap().as_mut()
+        {
+            v.push((method_name, true));
         }
 
         if result.is_err() {

@@ -563,12 +563,12 @@ impl StripedBlockStream {
         let index = self.cell_readers.len();
 
         #[cfg(feature = "integration-test")]
-        if let Some(fault_injection) = crate::test::EC_FAULT_INJECTOR.lock().unwrap().as_ref() {
-            if fault_injection.fail_blocks.contains(&index) {
-                debug!("Failing block read for {}", index);
-                self.cell_readers.push(None);
-                return Ok(false);
-            }
+        if let Some(fault_injection) = crate::test::EC_FAULT_INJECTOR.lock().unwrap().as_ref()
+            && fault_injection.fail_blocks.contains(&index)
+        {
+            debug!("Failing block read for {}", index);
+            self.cell_readers.push(None);
+            return Ok(false);
         }
 
         let max_block_offset = self
