@@ -20,7 +20,8 @@ This project provides native HDFS (Hadoop Distributed File System) bindings and 
 - Run Rust integration tests with cargo test --features integration-test. This requires Java and Maven to be installed.
 
 ### Python
-- Build Python wheels with `maturin build` (see `python/README.md` for details).
+- Use the Python venv at `python/.venv` for building and running tests.
+- Build Python wheels with `maturin build` (see `python/README.md` for details). Include `-E devel` to install development tools.
 - Run Python tests with `pytest` in the `python/` directory.
 
 ## Agents and Automation
