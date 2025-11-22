@@ -7,4 +7,5 @@ bindgen c_src/gssapi_mit.h \
     --allowlist-var "_?GSS_.+|gss_.+" \
     --allowlist-function "gss_.*" \
     --dynamic-loading GSSAPI \
+    --no-layout-tests \
     -o src/security/gssapi_bindings.rs

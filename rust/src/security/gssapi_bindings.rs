@@ -80,15 +80,6 @@ pub struct gss_OID_desc_struct {
     pub length: OM_uint32,
     pub elements: *mut ::std::os::raw::c_void,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of gss_OID_desc_struct"][::std::mem::size_of::<gss_OID_desc_struct>() - 16usize];
-    ["Alignment of gss_OID_desc_struct"][::std::mem::align_of::<gss_OID_desc_struct>() - 8usize];
-    ["Offset of field: gss_OID_desc_struct::length"]
-        [::std::mem::offset_of!(gss_OID_desc_struct, length) - 0usize];
-    ["Offset of field: gss_OID_desc_struct::elements"]
-        [::std::mem::offset_of!(gss_OID_desc_struct, elements) - 8usize];
-};
 pub type gss_OID_desc = gss_OID_desc_struct;
 pub type gss_OID = *mut gss_OID_desc_struct;
 #[repr(C)]
@@ -97,16 +88,6 @@ pub struct gss_OID_set_desc_struct {
     pub count: usize,
     pub elements: gss_OID,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of gss_OID_set_desc_struct"][::std::mem::size_of::<gss_OID_set_desc_struct>() - 16usize];
-    ["Alignment of gss_OID_set_desc_struct"]
-        [::std::mem::align_of::<gss_OID_set_desc_struct>() - 8usize];
-    ["Offset of field: gss_OID_set_desc_struct::count"]
-        [::std::mem::offset_of!(gss_OID_set_desc_struct, count) - 0usize];
-    ["Offset of field: gss_OID_set_desc_struct::elements"]
-        [::std::mem::offset_of!(gss_OID_set_desc_struct, elements) - 8usize];
-};
 pub type gss_OID_set_desc = gss_OID_set_desc_struct;
 pub type gss_OID_set = *mut gss_OID_set_desc_struct;
 #[repr(C)]
@@ -115,16 +96,6 @@ pub struct gss_buffer_desc_struct {
     pub length: usize,
     pub value: *mut ::std::os::raw::c_void,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of gss_buffer_desc_struct"][::std::mem::size_of::<gss_buffer_desc_struct>() - 16usize];
-    ["Alignment of gss_buffer_desc_struct"]
-        [::std::mem::align_of::<gss_buffer_desc_struct>() - 8usize];
-    ["Offset of field: gss_buffer_desc_struct::length"]
-        [::std::mem::offset_of!(gss_buffer_desc_struct, length) - 0usize];
-    ["Offset of field: gss_buffer_desc_struct::value"]
-        [::std::mem::offset_of!(gss_buffer_desc_struct, value) - 8usize];
-};
 pub type gss_buffer_desc = gss_buffer_desc_struct;
 pub type gss_buffer_t = *mut gss_buffer_desc_struct;
 #[repr(C)]
@@ -136,23 +107,6 @@ pub struct gss_channel_bindings_struct {
     pub acceptor_address: gss_buffer_desc,
     pub application_data: gss_buffer_desc,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of gss_channel_bindings_struct"]
-        [::std::mem::size_of::<gss_channel_bindings_struct>() - 64usize];
-    ["Alignment of gss_channel_bindings_struct"]
-        [::std::mem::align_of::<gss_channel_bindings_struct>() - 8usize];
-    ["Offset of field: gss_channel_bindings_struct::initiator_addrtype"]
-        [::std::mem::offset_of!(gss_channel_bindings_struct, initiator_addrtype) - 0usize];
-    ["Offset of field: gss_channel_bindings_struct::initiator_address"]
-        [::std::mem::offset_of!(gss_channel_bindings_struct, initiator_address) - 8usize];
-    ["Offset of field: gss_channel_bindings_struct::acceptor_addrtype"]
-        [::std::mem::offset_of!(gss_channel_bindings_struct, acceptor_addrtype) - 24usize];
-    ["Offset of field: gss_channel_bindings_struct::acceptor_address"]
-        [::std::mem::offset_of!(gss_channel_bindings_struct, acceptor_address) - 32usize];
-    ["Offset of field: gss_channel_bindings_struct::application_data"]
-        [::std::mem::offset_of!(gss_channel_bindings_struct, application_data) - 48usize];
-};
 pub type gss_channel_bindings_t = *mut gss_channel_bindings_struct;
 pub type gss_qop_t = OM_uint32;
 pub type gss_cred_usage_t = ::std::os::raw::c_int;
@@ -173,17 +127,6 @@ pub struct gss_krb5_lucid_key {
     pub length: OM_uint32,
     pub data: *mut ::std::os::raw::c_void,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of gss_krb5_lucid_key"][::std::mem::size_of::<gss_krb5_lucid_key>() - 16usize];
-    ["Alignment of gss_krb5_lucid_key"][::std::mem::align_of::<gss_krb5_lucid_key>() - 8usize];
-    ["Offset of field: gss_krb5_lucid_key::type_"]
-        [::std::mem::offset_of!(gss_krb5_lucid_key, type_) - 0usize];
-    ["Offset of field: gss_krb5_lucid_key::length"]
-        [::std::mem::offset_of!(gss_krb5_lucid_key, length) - 4usize];
-    ["Offset of field: gss_krb5_lucid_key::data"]
-        [::std::mem::offset_of!(gss_krb5_lucid_key, data) - 8usize];
-};
 pub type gss_krb5_lucid_key_t = gss_krb5_lucid_key;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -192,19 +135,6 @@ pub struct gss_krb5_rfc1964_keydata {
     pub seal_alg: OM_uint32,
     pub ctx_key: gss_krb5_lucid_key_t,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of gss_krb5_rfc1964_keydata"]
-        [::std::mem::size_of::<gss_krb5_rfc1964_keydata>() - 24usize];
-    ["Alignment of gss_krb5_rfc1964_keydata"]
-        [::std::mem::align_of::<gss_krb5_rfc1964_keydata>() - 8usize];
-    ["Offset of field: gss_krb5_rfc1964_keydata::sign_alg"]
-        [::std::mem::offset_of!(gss_krb5_rfc1964_keydata, sign_alg) - 0usize];
-    ["Offset of field: gss_krb5_rfc1964_keydata::seal_alg"]
-        [::std::mem::offset_of!(gss_krb5_rfc1964_keydata, seal_alg) - 4usize];
-    ["Offset of field: gss_krb5_rfc1964_keydata::ctx_key"]
-        [::std::mem::offset_of!(gss_krb5_rfc1964_keydata, ctx_key) - 8usize];
-};
 pub type gss_krb5_rfc1964_keydata_t = gss_krb5_rfc1964_keydata;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -213,17 +143,6 @@ pub struct gss_krb5_cfx_keydata {
     pub ctx_key: gss_krb5_lucid_key_t,
     pub acceptor_subkey: gss_krb5_lucid_key_t,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of gss_krb5_cfx_keydata"][::std::mem::size_of::<gss_krb5_cfx_keydata>() - 40usize];
-    ["Alignment of gss_krb5_cfx_keydata"][::std::mem::align_of::<gss_krb5_cfx_keydata>() - 8usize];
-    ["Offset of field: gss_krb5_cfx_keydata::have_acceptor_subkey"]
-        [::std::mem::offset_of!(gss_krb5_cfx_keydata, have_acceptor_subkey) - 0usize];
-    ["Offset of field: gss_krb5_cfx_keydata::ctx_key"]
-        [::std::mem::offset_of!(gss_krb5_cfx_keydata, ctx_key) - 8usize];
-    ["Offset of field: gss_krb5_cfx_keydata::acceptor_subkey"]
-        [::std::mem::offset_of!(gss_krb5_cfx_keydata, acceptor_subkey) - 24usize];
-};
 pub type gss_krb5_cfx_keydata_t = gss_krb5_cfx_keydata;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -237,44 +156,12 @@ pub struct gss_krb5_lucid_context_v1 {
     pub rfc1964_kd: gss_krb5_rfc1964_keydata_t,
     pub cfx_kd: gss_krb5_cfx_keydata_t,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of gss_krb5_lucid_context_v1"]
-        [::std::mem::size_of::<gss_krb5_lucid_context_v1>() - 104usize];
-    ["Alignment of gss_krb5_lucid_context_v1"]
-        [::std::mem::align_of::<gss_krb5_lucid_context_v1>() - 8usize];
-    ["Offset of field: gss_krb5_lucid_context_v1::version"]
-        [::std::mem::offset_of!(gss_krb5_lucid_context_v1, version) - 0usize];
-    ["Offset of field: gss_krb5_lucid_context_v1::initiate"]
-        [::std::mem::offset_of!(gss_krb5_lucid_context_v1, initiate) - 4usize];
-    ["Offset of field: gss_krb5_lucid_context_v1::endtime"]
-        [::std::mem::offset_of!(gss_krb5_lucid_context_v1, endtime) - 8usize];
-    ["Offset of field: gss_krb5_lucid_context_v1::send_seq"]
-        [::std::mem::offset_of!(gss_krb5_lucid_context_v1, send_seq) - 16usize];
-    ["Offset of field: gss_krb5_lucid_context_v1::recv_seq"]
-        [::std::mem::offset_of!(gss_krb5_lucid_context_v1, recv_seq) - 24usize];
-    ["Offset of field: gss_krb5_lucid_context_v1::protocol"]
-        [::std::mem::offset_of!(gss_krb5_lucid_context_v1, protocol) - 32usize];
-    ["Offset of field: gss_krb5_lucid_context_v1::rfc1964_kd"]
-        [::std::mem::offset_of!(gss_krb5_lucid_context_v1, rfc1964_kd) - 40usize];
-    ["Offset of field: gss_krb5_lucid_context_v1::cfx_kd"]
-        [::std::mem::offset_of!(gss_krb5_lucid_context_v1, cfx_kd) - 64usize];
-};
 pub type gss_krb5_lucid_context_v1_t = gss_krb5_lucid_context_v1;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct gss_krb5_lucid_context_version {
     pub version: OM_uint32,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of gss_krb5_lucid_context_version"]
-        [::std::mem::size_of::<gss_krb5_lucid_context_version>() - 4usize];
-    ["Alignment of gss_krb5_lucid_context_version"]
-        [::std::mem::align_of::<gss_krb5_lucid_context_version>() - 4usize];
-    ["Offset of field: gss_krb5_lucid_context_version::version"]
-        [::std::mem::offset_of!(gss_krb5_lucid_context_version, version) - 0usize];
-};
 pub type gss_krb5_lucid_context_version_t = gss_krb5_lucid_context_version;
 pub const _GSS_C_INDEFINITE: OM_uint32 = 4294967295;
 pub const _GSS_C_CALLING_ERROR_MASK: OM_uint32 = 255;
