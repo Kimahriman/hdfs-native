@@ -399,6 +399,15 @@ mod test {
         let statuses = client.glob_status("/dir/{nested/file*,file*}").await?;
         assert_eq!(statuses.len(), 3);
 
+        let statuses = client.glob_status("/*/nonexistent/*").await?;
+        assert_eq!(statuses.len(), 0);
+
+        let statuses = client.glob_status("/dir/nested/*/nested").await?;
+        assert_eq!(statuses.len(), 0);
+
+        let statuses = client.glob_status("/dir/*/file2/nested").await?;
+        assert_eq!(statuses.len(), 0);
+
         client.delete("/dir", true).await?;
 
         Ok(())

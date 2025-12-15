@@ -785,7 +785,11 @@ impl Client {
                 for cand in candidates.into_iter() {
                     if glob_pat.has_wildcard() {
                         // List the directory represented by cand.path
-                        let listing = self.list_status(&cand.path, false).await?;
+                        let listing = match self.list_status(&cand.path, false).await {
+                            Ok(listing) => listing,
+                            Err(HdfsError::FileNotFound(_)) => continue,
+                            Err(e) => return Err(e),
+                        };
                         if listing.len() == 1 && listing[0].path == cand.path {
                             // listing corresponds to the candidate itself (file), skip
                             continue;
@@ -820,11 +824,17 @@ impl Client {
                         }
                         next_path.push_str(&unescaped);
 
-                        if let Ok(status) = self.get_file_info(&next_path).await {
-                            new_candidates.push(Candidate {
-                                path: status.path.clone(),
-                                status: Some(status),
-                            });
+                        match self.get_file_info(&next_path).await {
+                            Ok(status) => {
+                                if is_last || status.isdir {
+                                    new_candidates.push(Candidate {
+                                        path: status.path.clone(),
+                                        status: Some(status),
+                                    });
+                                }
+                            }
+                            Err(HdfsError::FileNotFound(_)) => continue,
+                            Err(e) => return Err(e),
                         }
                     }
                 }
