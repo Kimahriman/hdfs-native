@@ -851,6 +851,8 @@ pub(crate) struct StripedBlockWriter {
     bytes_written: usize,
     capacity: usize,
     status: hdfs::HdfsFileStatusProto,
+    data_units: usize,
+    failed_indices: Vec<usize>,
 }
 
 impl StripedBlockWriter {
@@ -876,6 +878,8 @@ impl StripedBlockWriter {
             bytes_written: 0,
             capacity: ec_schema.data_units * status.blocksize() as usize,
             status: status.clone(),
+            data_units: ec_schema.data_units,
+            failed_indices: Vec::new(),
         }
     }
 
@@ -885,6 +889,8 @@ impl StripedBlockWriter {
 
     async fn write_cells(&mut self) -> Result<()> {
         let mut write_futures = vec![];
+        let mut writer_indices = vec![];
+
         for (index, (data, writer)) in self
             .cell_buffer
             .encode()
@@ -920,11 +926,17 @@ impl StripedBlockWriter {
             }
 
             let mut data = data.clone();
+            writer_indices.push(index);
             write_futures.push(async move { writer.as_mut().unwrap().write(&mut data).await })
         }
 
-        for write in join_all(write_futures).await {
-            write?;
+        for (write_idx, write) in join_all(write_futures).await.into_iter().enumerate() {
+            if write.is_err() {
+                let index = writer_indices[write_idx];
+                if !self.failed_indices.contains(&index) {
+                    self.failed_indices.push(index);
+                }
+            }
         }
 
         Ok(())
@@ -952,14 +964,34 @@ impl StripedBlockWriter {
             self.write_cells().await?;
         }
 
-        let close_futures = self
-            .block_writers
-            .into_iter()
-            .filter_map(|mut writer| writer.take())
-            .map(|writer| async move { writer.close().await });
+        let total_blocks = self.block_writers.len();
+        let mut close_futures = vec![];
+        let mut writer_indices = vec![];
 
-        for close_result in join_all(close_futures).await {
-            close_result?;
+        for (index, writer) in self.block_writers.into_iter().enumerate() {
+            if let Some(writer) = writer {
+                writer_indices.push(index);
+                close_futures.push(async move { writer.close().await });
+            }
+        }
+
+        for (close_idx, close_result) in join_all(close_futures).await.into_iter().enumerate() {
+            if close_result.is_err() {
+                let index = writer_indices[close_idx];
+                if !self.failed_indices.contains(&index) {
+                    self.failed_indices.push(index);
+                }
+            }
+        }
+
+        // Check if enough blocks succeeded. For EC to work, at least data_units blocks must succeed.
+        // Any combination of data and parity blocks that totals at least data_units is sufficient.
+        let successful_blocks = total_blocks - self.failed_indices.len();
+        if successful_blocks < self.data_units {
+            return Err(HdfsError::DataTransferError(format!(
+                "Insufficient blocks succeeded during write: {} succeeded but {} required",
+                successful_blocks, self.data_units
+            )));
         }
 
         let mut extended_block = self.block.b;
