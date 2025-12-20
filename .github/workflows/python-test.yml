@@ -73,7 +73,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: 3.13
+          python-version: 3.14
 
       - name: Create virtualenv
         run: |
@@ -85,11 +85,11 @@ jobs:
           sccache: 'true'
           container: 'off'
           working-directory: ./python
-          args: --extras docs
 
       - name: Build docs
         run: |
           source .venv/bin/activate
+          uv sync --group docs
           sphinx-build -M html docs/source/ docs/build/
 
   build:
