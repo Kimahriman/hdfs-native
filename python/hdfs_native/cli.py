@@ -182,7 +182,10 @@ def _human_size(num: int):
 
 def _client_completer(prefix: str, **kwargs) -> list[str]:
     client = _client_for_url(prefix)
-    return [status.path for status in client.glob_status(f"{prefix}*")]
+    path_prefix = _prefix_for_url(prefix)
+
+    glob_results = client.glob_status(f"{_path_for_url(prefix)}*")
+    return [f"{path_prefix}{status.path}" for status in glob_results]
 
 
 def cat(args: Namespace):
