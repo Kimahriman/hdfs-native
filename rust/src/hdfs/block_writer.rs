@@ -988,9 +988,16 @@ impl StripedBlockWriter {
         let mut succeeded_blocks = 0usize;
 
         for (index, writer) in self.block_writers.into_iter().enumerate() {
-            if let Some(Ok(writer)) = writer {
-                writer_indices.push(index);
-                close_futures.push(async move { writer.close().await });
+            match writer {
+                Some(Ok(writer)) => {
+                    writer_indices.push(index);
+                    close_futures.push(async move { writer.close().await });
+                }
+                Some(Err(_)) => {}
+                None => {
+                    // If no data was written to a block, treat it as successful
+                    succeeded_blocks += 1;
+                }
             }
         }
 
