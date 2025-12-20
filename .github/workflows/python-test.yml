@@ -42,6 +42,10 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+      
+      - name: Run lints
+        run: |
+          uv sync
 
       - uses: PyO3/maturin-action@v1
         with:
@@ -52,7 +56,6 @@ jobs:
 
       - name: Run lints
         run: |
-          uv sync
           uv run ty check
           uv run ruff check .
           uv run ruff format . --check --diff
@@ -74,6 +77,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
+      - name: Install project
+        run: |
+          uv sync --group docs
+
       - uses: PyO3/maturin-action@v1
         with:
           command: develop
@@ -83,7 +90,6 @@ jobs:
 
       - name: Build docs
         run: |
-          uv sync --group docs
           uv run sphinx-build -M html docs/source/ docs/build/
 
   build:
