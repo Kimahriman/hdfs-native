@@ -3,8 +3,7 @@ import os
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Dict, Iterator, List, Optional
 
-# For some reason mypy doesn't think this exists
-from typing_extensions import Buffer  # type: ignore
+from typing_extensions import Buffer
 
 from ._internal import (
     AclEntry,

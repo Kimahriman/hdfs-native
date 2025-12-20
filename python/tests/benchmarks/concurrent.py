@@ -35,7 +35,7 @@ def test_benchmark_threading_async(
             await (await async_client.create(path)).close()
             return await async_client.delete(path)
 
-        async with asyncio.TaskGroup() as tg:
+        async with asyncio.TaskGroup() as tg:  # ty:ignore[unresolved-attribute]
             for i in range(1000):
                 tg.create_task(func(f"/bench{i}"))
 
