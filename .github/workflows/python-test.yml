@@ -77,19 +77,9 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Install project
-        run: |
-          uv sync --group docs
-
-      - uses: PyO3/maturin-action@v1
-        with:
-          command: develop
-          sccache: 'true'
-          container: 'off'
-          working-directory: ./python
-
       - name: Build docs
         run: |
+          uv sync --group docs
           uv run sphinx-build -M html docs/source/ docs/build/
 
   build:
