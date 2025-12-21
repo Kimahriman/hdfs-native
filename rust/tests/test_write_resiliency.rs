@@ -335,6 +335,34 @@ mod test {
         let reader = client.read(file).await?;
         check_file_content(&reader, data.clone()).await?;
 
+        // Test three failures which should cause a write failure
+        let file = "/ec-3-2/striped_testfile5";
+        let mut writer = client.create(file, WriteOptions::default()).await?;
+
+        WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
+        writer.write(data.slice(..bytes_to_write / 2)).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!WRITE_CONNECTION_FAULT_INJECTOR.load(Ordering::SeqCst));
+
+        WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
+        writer.write(data.slice(..bytes_to_write / 2)).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!WRITE_CONNECTION_FAULT_INJECTOR.load(Ordering::SeqCst));
+
+        // Third write. It won't fail yet because the sending of the data is asynchronous.
+        // The failure will happen when the client tries to send the next block.
+        WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
+        writer.write(data.slice(..bytes_to_write / 2)).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!WRITE_CONNECTION_FAULT_INJECTOR.load(Ordering::SeqCst));
+
+        assert!(
+            writer
+                .write(data.slice(..bytes_to_write / 2))
+                .await
+                .is_err()
+        );
+
         Ok(())
     }
 }
