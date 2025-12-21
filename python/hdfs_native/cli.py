@@ -1,5 +1,4 @@
 # PYTHON_ARGCOMPLETE_OK
-
 import functools
 import glob
 import os
@@ -1391,7 +1390,15 @@ def main(in_args: Optional[Sequence[str]] = None):
 
     autocomplete(parser)
     args = parser.parse_args(in_args)
-    args.func(args)
+
+    # Catch broken pipes in case the output is being piped to a command that exits early
+    try:
+        args.func(args)
+    except BrokenPipeError:
+        # Python flushes standard streams on exit; redirect remaining output
+        # to devnull to avoid another BrokenPipeError at shutdown
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
 
 
 if __name__ == "__main__":
