@@ -16,7 +16,7 @@ def test_config(minidfs: str):
 
 class TestFsspecBase(ABC):
     @abstractmethod
-    def file_system(self, url: str) -> BaseFileSystem:
+    def file_system(self, minidfs: str) -> BaseFileSystem:
         pass
 
     @pytest.fixture(scope="class")

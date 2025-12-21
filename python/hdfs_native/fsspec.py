@@ -133,7 +133,7 @@ class BaseFileSystem(AbstractFileSystem):
 
         return self.mkdir(path, create_parents=True)
 
-    def mv(self, path1: str, path2: str, **kwargs):
+    def mv(self, path1: str, path2: str, **kwargs):  # ty:ignore[invalid-method-override]
         self.client.rename(
             self._strip_protocol(path1),
             self._strip_protocol(path2),
@@ -149,7 +149,7 @@ class BaseFileSystem(AbstractFileSystem):
                 self.mv(tmp_fname, path2)
             except BaseException:  # noqa
                 with suppress(FileNotFoundError):
-                    self.fs.delete_file(tmp_fname)
+                    self.rm(tmp_fname)
                 raise
 
     def rmdir(self, path: str) -> None:
@@ -175,7 +175,7 @@ class BaseFileSystem(AbstractFileSystem):
         replication: Optional[int] = None,
         block_size: Optional[int] = None,
         **_kwargs,
-    ):
+    ):  # ty:ignore[invalid-method-override]
         path = self._strip_protocol(path)
         if mode == "rb":
             reader = self.client.read(path)

@@ -1,8 +1,7 @@
 from collections.abc import AsyncIterator
 from typing import Dict, Iterator, List, Literal, Optional
 
-# For some reason mypy doesn't think this exists
-from typing_extensions import Buffer  # type: ignore
+from typing_extensions import Buffer
 
 class FileStatus:
     path: str

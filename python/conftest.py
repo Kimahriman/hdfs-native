@@ -29,6 +29,8 @@ def minidfs():
         bufsize=0,
     )
 
+    assert child.stdout is not None
+
     output = child.stdout.readline().strip()
     assert output == "Ready!", output
 

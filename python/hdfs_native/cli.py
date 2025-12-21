@@ -1,3 +1,5 @@
+# PYTHON_ARGCOMPLETE_OK
+
 import functools
 import glob
 import os
@@ -11,6 +13,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 from urllib.parse import urlparse
+
+from argcomplete import autocomplete
 
 from hdfs_native import AclEntry, AclStatus, Client
 from hdfs_native._internal import FileStatus, WriteOptions
@@ -176,12 +180,20 @@ def _human_size(num: int):
     return f"{adjusted:.1f}Y"
 
 
+def _client_completer(prefix: str, **kwargs) -> list[str]:
+    client = _client_for_url(prefix)
+    path_prefix = _prefix_for_url(prefix)
+
+    glob_results = client.glob_status(f"{_path_for_url(prefix)}*")
+    return [f"{path_prefix}{status.path}" for status in glob_results]
+
+
 def cat(args: Namespace):
     for src in args.src:
         client = _client_for_url(src)
         for path in _glob_path(client, _path_for_url(src)):
             with client.read(path) as file:
-                while chunk := file.read(1024 * 1024):
+                for chunk in file.read_range_stream(0, len(file)):
                     sys.stdout.buffer.write(chunk)
 
     sys.stdout.buffer.flush()
@@ -909,7 +921,11 @@ def main(in_args: Optional[Sequence[str]] = None):
         description="Print the contents of a file to stdout",
         add_help=False,
     )
-    cat_parser.add_argument("src", nargs="+", help="File pattern to print")
+    cat_parser.add_argument(
+        "src",
+        nargs="+",
+        help="File pattern to print",
+    ).completer = _client_completer  # type: ignore
     cat_parser.set_defaults(func=cat)
 
     chmod_parser = subparsers.add_parser(
@@ -928,7 +944,11 @@ def main(in_args: Optional[Sequence[str]] = None):
         "octalmode",
         help="The mode to set the permission to in octal format",
     )
-    chmod_parser.add_argument("path", nargs="+", help="File pattern to update")
+    chmod_parser.add_argument(
+        "path",
+        nargs="+",
+        help="File pattern to update",
+    ).completer = _client_completer  # type: ignore
     chmod_parser.set_defaults(func=chmod)
 
     chown_parser = subparsers.add_parser(
@@ -948,7 +968,11 @@ def main(in_args: Optional[Sequence[str]] = None):
         metavar="[owner[:group] | :group]",
         help="Owner and group to set for the file",
     )
-    chown_parser.add_argument("path", nargs="+", help="File pattern to modify")
+    chown_parser.add_argument(
+        "path",
+        nargs="+",
+        help="File pattern to modify",
+    ).completer = _client_completer  # type: ignore
     chown_parser.set_defaults(func=chown)
 
     du_parser = subparsers.add_parser(
@@ -985,7 +1009,10 @@ def main(in_args: Optional[Sequence[str]] = None):
         default=False,
         help="Include a header line",
     )
-    du_parser.add_argument("path", nargs="+")
+    du_parser.add_argument(
+        "path",
+        nargs="+",
+    ).completer = _client_completer  # type: ignore
     du_parser.set_defaults(func=du)
 
     get_parser = subparsers.add_parser(
@@ -1021,7 +1048,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         "src",
         nargs="+",
         help="Source patterns to copy",
-    )
+    ).completer = _client_completer  # type: ignore
     get_parser.add_argument(
         "localdst",
         nargs="?",
@@ -1042,7 +1069,11 @@ def main(in_args: Optional[Sequence[str]] = None):
         action="store_true",
         help="List the ACLs of all files and directories recursively",
     )
-    getfacl_parser.add_argument("path", nargs="+", help="File or directory to list")
+    getfacl_parser.add_argument(
+        "path",
+        nargs="+",
+        help="File or directory to list",
+    ).completer = _client_completer  # type: ignore
     getfacl_parser.set_defaults(func=getfacl)
 
     setfacl_parser = subparsers.add_parser(
@@ -1102,7 +1133,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         "args",
         nargs="+",
         help="For -m/-x/--set: <acl_spec> <path> [path ...]. For -b/-k: <path> [path ...]",
-    )
+    ).completer = _client_completer  # type: ignore
     setfacl_parser.set_defaults(func=setfacl)
 
     ls_parser = subparsers.add_parser(
@@ -1161,7 +1192,11 @@ def main(in_args: Optional[Sequence[str]] = None):
         default=False,
         help="Use the last access time instead of modification time for display and sorting",
     )
-    ls_parser.add_argument("path", nargs="+", help="Path to display contents of")
+    ls_parser.add_argument(
+        "path",
+        nargs="+",
+        help="Path to display contents of",
+    ).completer = _client_completer  # type: ignore
     ls_parser.set_defaults(func=ls)
 
     mkdir_parser = subparsers.add_parser(
@@ -1174,7 +1209,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         "path",
         nargs="+",
         help="Path for the directory to create",
-    )
+    ).completer = _client_completer  # type: ignore
     mkdir_parser.add_argument(
         "-p",
         "--parent",
@@ -1190,8 +1225,15 @@ def main(in_args: Optional[Sequence[str]] = None):
         If multiple src are provided, dst must be a directory""",
         add_help=False,
     )
-    mv_parser.add_argument("src", nargs="+", help="Files or directories to move")
-    mv_parser.add_argument("dst", help="Target destination of file or directory")
+    mv_parser.add_argument(
+        "src",
+        nargs="+",
+        help="Files or directories to move",
+    ).completer = _client_completer  # type: ignore
+    mv_parser.add_argument(
+        "dst",
+        help="Target destination of file or directory",
+    ).completer = _client_completer  # type: ignore
     mv_parser.set_defaults(func=mv)
 
     put_parser = subparsers.add_parser(
@@ -1238,7 +1280,7 @@ def main(in_args: Optional[Sequence[str]] = None):
     put_parser.add_argument(
         "dst",
         help="Local destination to write to",
-    )
+    ).completer = _client_completer  # type: ignore
     put_parser.set_defaults(func=put)
 
     rm_parser = subparsers.add_parser(
@@ -1273,7 +1315,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         "src",
         nargs="+",
         help="File patterns to delete",
-    )
+    ).completer = _client_completer  # type: ignore
     rm_parser.set_defaults(func=rm)
 
     rmdir_parser = subparsers.add_parser(
@@ -1286,7 +1328,7 @@ def main(in_args: Optional[Sequence[str]] = None):
         "dir",
         nargs="+",
         help="Source patterns to copy",
-    )
+    ).completer = _client_completer  # type: ignore
     rmdir_parser.set_defaults(func=rmdir)
 
     touch_parser = subparsers.add_parser(
@@ -1327,7 +1369,7 @@ def main(in_args: Optional[Sequence[str]] = None):
     touch_parser.add_argument(
         "path",
         nargs="+",
-    )
+    ).completer = _client_completer  # type: ignore
     touch_parser.set_defaults(func=touch)
 
     def show_help(args: Namespace):
@@ -1347,6 +1389,7 @@ def main(in_args: Optional[Sequence[str]] = None):
     )
     help_parser.set_defaults(func=show_help)
 
+    autocomplete(parser)
     args = parser.parse_args(in_args)
     args.func(args)
 

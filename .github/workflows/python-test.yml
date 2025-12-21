@@ -40,9 +40,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Create virtualenv
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+      
+      - name: Run lints
         run: |
-          python3 -m venv .venv
+          uv sync
 
       - uses: PyO3/maturin-action@v1
         with:
@@ -50,19 +53,16 @@ jobs:
           sccache: 'true'
           container: 'off'
           working-directory: ./python
-          args: --extras devel
 
       - name: Run lints
         run: |
-          source .venv/bin/activate
-          mypy
-          ruff check .
-          ruff format . --check --diff
+          uv run ty check
+          uv run ruff check .
+          uv run ruff format . --check --diff
 
       - name: Run tests
         run: |
-          source .venv/bin/activate
-          pytest
+          uv run pytest
 
   docs:
     runs-on: ubuntu-latest
@@ -72,24 +72,15 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: 3.13
+          python-version: 3.14
 
-      - name: Create virtualenv
-        run: |
-          python3 -m venv .venv
-
-      - uses: PyO3/maturin-action@v1
-        with:
-          command: develop
-          sccache: 'true'
-          container: 'off'
-          working-directory: ./python
-          args: --extras docs
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
 
       - name: Build docs
         run: |
-          source .venv/bin/activate
-          sphinx-build -M html docs/source/ docs/build/
+          uv sync --group docs
+          uv run sphinx-build -M html docs/source/ docs/build/
 
   build:
     runs-on: ubuntu-latest
