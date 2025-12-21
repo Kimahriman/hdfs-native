@@ -250,4 +250,119 @@ mod test {
         }
         Ok(())
     }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_striped_write_failures() -> Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let dfs_features = HashSet::from([DfsFeatures::HA, DfsFeatures::EC]);
+        let _dfs = MiniDfs::with_features(&dfs_features);
+        let client = Client::default();
+
+        // A full stripe is 3 MiB, so write two full stripes to test two failures
+        let bytes_to_write = 6usize * 1024 * 1024;
+
+        let mut data = BytesMut::with_capacity(bytes_to_write);
+        for i in 0..(bytes_to_write / 4) {
+            data.put_i32(i as i32);
+        }
+        let data = data.freeze();
+
+        // Test connection failure before writing data with erasure coding
+        let file = "/ec-3-2/striped_testfile1";
+        let mut writer = client.create(file, WriteOptions::default()).await?;
+
+        WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
+
+        writer.write(data.clone()).await?;
+        writer.close().await?;
+
+        let reader = client.read(file).await?;
+        check_file_content(&reader, data.clone()).await?;
+
+        // Test two connection failures after data has been written
+        let file = "/ec-3-2/striped_testfile2";
+        let mut writer = client.create(file, WriteOptions::default()).await?;
+
+        WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
+
+        writer.write(data.slice(..bytes_to_write / 2)).await?;
+
+        // Give a little time for the packets to send
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert!(!WRITE_CONNECTION_FAULT_INJECTOR.load(Ordering::SeqCst));
+        WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
+
+        writer.write(data.slice(bytes_to_write / 2..)).await?;
+        writer.close().await?;
+
+        // Give a little time for the packets to send
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert!(!WRITE_CONNECTION_FAULT_INJECTOR.load(Ordering::SeqCst));
+
+        let reader = client.read(file).await?;
+        check_file_content(&reader, data.clone()).await?;
+
+        // Test failure in from ack status
+        let file = "/ec-3-2/striped_testfile3";
+        let mut writer = client.create(file, WriteOptions::default()).await?;
+
+        *WRITE_REPLY_FAULT_INJECTOR.lock().unwrap() = Some(2);
+
+        writer.write(data.clone()).await?;
+        writer.close().await?;
+
+        let reader = client.read(file).await?;
+        check_file_content(&reader, data.clone()).await?;
+
+        // Test failure in from ack status after some data has been written
+        let file = "/ec-3-2/striped_testfile4";
+        let mut writer = client.create(file, WriteOptions::default()).await?;
+
+        writer.write(data.slice(..bytes_to_write / 2)).await?;
+
+        // Give a little time for the packets to send
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        *WRITE_REPLY_FAULT_INJECTOR.lock().unwrap() = Some(2);
+
+        writer.write(data.slice(bytes_to_write / 2..)).await?;
+        writer.close().await?;
+
+        let reader = client.read(file).await?;
+        check_file_content(&reader, data.clone()).await?;
+
+        // Test three failures which should cause a write failure
+        let file = "/ec-3-2/striped_testfile5";
+        let mut writer = client.create(file, WriteOptions::default()).await?;
+
+        WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
+        writer.write(data.slice(..bytes_to_write / 2)).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!WRITE_CONNECTION_FAULT_INJECTOR.load(Ordering::SeqCst));
+
+        WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
+        writer.write(data.slice(..bytes_to_write / 2)).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!WRITE_CONNECTION_FAULT_INJECTOR.load(Ordering::SeqCst));
+
+        // Third write. It won't fail yet because the sending of the data is asynchronous.
+        // The failure will happen when the client tries to send the next block.
+        WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
+        writer.write(data.slice(..bytes_to_write / 2)).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!WRITE_CONNECTION_FAULT_INJECTOR.load(Ordering::SeqCst));
+
+        assert!(
+            writer
+                .write(data.slice(..bytes_to_write / 2))
+                .await
+                .is_err()
+        );
+
+        Ok(())
+    }
 }

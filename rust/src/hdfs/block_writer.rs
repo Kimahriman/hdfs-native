@@ -846,11 +846,12 @@ pub(crate) struct StripedBlockWriter {
     server_defaults: hdfs::FsServerDefaultsProto,
     config: Arc<Configuration>,
     handle: Handle,
-    block_writers: Vec<Option<ReplicatedBlockWriter>>,
+    block_writers: Vec<Option<Result<ReplicatedBlockWriter>>>,
     cell_buffer: CellBuffer,
     bytes_written: usize,
     capacity: usize,
     status: hdfs::HdfsFileStatusProto,
+    data_units: usize,
 }
 
 impl StripedBlockWriter {
@@ -876,6 +877,7 @@ impl StripedBlockWriter {
             bytes_written: 0,
             capacity: ec_schema.data_units * status.blocksize() as usize,
             status: status.clone(),
+            data_units: ec_schema.data_units,
         }
     }
 
@@ -883,8 +885,14 @@ impl StripedBlockWriter {
         self.capacity - self.bytes_written
     }
 
+    fn is_full(&self) -> bool {
+        self.bytes_remaining() == 0
+    }
+
     async fn write_cells(&mut self) -> Result<()> {
         let mut write_futures = vec![];
+        let mut writer_indices = vec![];
+
         for (index, (data, writer)) in self
             .cell_buffer
             .encode()
@@ -915,16 +923,39 @@ impl StripedBlockWriter {
                         self.handle.clone(),
                         &self.status,
                     )
-                    .await?,
+                    .await,
                 )
             }
 
+            if writer.as_ref().unwrap().is_err() {
+                continue;
+            }
+
             let mut data = data.clone();
-            write_futures.push(async move { writer.as_mut().unwrap().write(&mut data).await })
+            writer_indices.push(index);
+
+            // We know at this point writer is Some(Ok(_))
+            let block_writer = writer.as_mut().unwrap().as_mut().unwrap();
+            write_futures.push(async move { block_writer.write(&mut data).await })
         }
 
-        for write in join_all(write_futures).await {
-            write?;
+        for (write_idx, write) in join_all(write_futures).await.into_iter().enumerate() {
+            if let Err(e) = write {
+                let index = writer_indices[write_idx];
+                warn!("Write failed for block index {}: {:?}", index, e);
+                self.block_writers[index] = Some(Err(e));
+            }
+        }
+
+        let failed_writers = self
+            .block_writers
+            .iter()
+            .filter(|writer| writer.as_ref().is_some_and(|w| w.is_err()))
+            .count();
+        if failed_writers > (self.block_writers.len() - self.data_units) {
+            return Err(HdfsError::DataTransferError(
+                "Insufficient blocks succeeded during write".to_string(),
+            ));
         }
 
         Ok(())
@@ -952,26 +983,42 @@ impl StripedBlockWriter {
             self.write_cells().await?;
         }
 
-        let close_futures = self
-            .block_writers
-            .into_iter()
-            .filter_map(|mut writer| writer.take())
-            .map(|writer| async move { writer.close().await });
+        let mut close_futures = vec![];
+        let mut writer_indices = vec![];
+        let mut succeeded_blocks = 0usize;
 
-        for close_result in join_all(close_futures).await {
-            close_result?;
+        for (index, writer) in self.block_writers.into_iter().enumerate() {
+            match writer {
+                Some(Ok(writer)) => {
+                    writer_indices.push(index);
+                    close_futures.push(async move { writer.close().await });
+                }
+                Some(Err(_)) => {}
+                None => {
+                    // If no data was written to a block, treat it as successful
+                    succeeded_blocks += 1;
+                }
+            }
         }
 
+        for (close_idx, close_result) in join_all(close_futures).await.into_iter().enumerate() {
+            if let Err(e) = close_result {
+                let index = writer_indices[close_idx];
+                warn!("Write failed for block index {}: {:?}", index, e);
+            } else {
+                succeeded_blocks += 1;
+            }
+        }
+
+        if succeeded_blocks < self.data_units {
+            return Err(HdfsError::DataTransferError(
+                "Insufficient blocks succeeded during write".to_string(),
+            ));
+        }
         let mut extended_block = self.block.b;
 
         extended_block.num_bytes = Some(self.bytes_written as u64);
 
         Ok(extended_block)
-    }
-
-    fn is_full(&self) -> bool {
-        self.block_writers
-            .iter()
-            .all(|writer| writer.as_ref().is_some_and(|w| w.is_full()))
     }
 }

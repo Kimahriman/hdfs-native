@@ -264,7 +264,6 @@ impl FileWriter {
 
     pub async fn write(&mut self, mut buf: Bytes) -> Result<usize> {
         let bytes_to_write = buf.len();
-        // Create a shallow copy of the bytes instance to mutate and track what's been read
         while !buf.is_empty() {
             let block_writer = self.get_block_writer().await?;
 
