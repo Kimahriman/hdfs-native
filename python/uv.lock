@@ -207,7 +207,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "argcomplete", specifier = ">=3.6.3" },
+    { name = "argcomplete", specifier = ">=3.0.0" },
     { name = "fsspec" },
     { name = "typing-extensions" },
 ]
