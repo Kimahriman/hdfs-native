@@ -10,7 +10,7 @@ from argparse import ArgumentParser, Namespace
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple, Union
 from urllib.parse import urlparse
 
 from argcomplete import autocomplete
@@ -179,12 +179,16 @@ def _human_size(num: int):
     return f"{adjusted:.1f}Y"
 
 
-def _client_completer(prefix: str, **kwargs) -> list[str]:
+def _client_completer(prefix: str, **kwargs) -> Iterator[str]:
     client = _client_for_url(prefix)
     path_prefix = _prefix_for_url(prefix)
 
     glob_results = client.glob_status(f"{_path_for_url(prefix)}*")
-    return [f"{path_prefix}{status.path}" for status in glob_results]
+    for status in glob_results:
+        if status.isdir:
+            yield f"{path_prefix}{status.path}/"
+        else:
+            yield f"{path_prefix}{status.path}"
 
 
 def cat(args: Namespace):
@@ -908,8 +912,7 @@ def touch(args: Namespace):
 
 def main(in_args: Optional[Sequence[str]] = None):
     parser = ArgumentParser(
-        description="""Command line utility for interacting with HDFS using hdfs-native.
-        Globs are not currently supported, all file paths are treated as exact paths."""
+        description="""Command line utility for interacting with HDFS using hdfs-native."""
     )
 
     subparsers = parser.add_subparsers(title="Subcommands", required=True)
