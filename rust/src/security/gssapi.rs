@@ -209,6 +209,60 @@ impl Drop for GssName {
     }
 }
 
+struct GssCred {
+    cred: bindings::gss_cred_id_t,
+}
+
+impl GssCred {
+    fn acquire_default() -> crate::Result<Self> {
+        let mut minor = 0;
+        let mut cred = ptr::null_mut();
+        let major = unsafe {
+            libgssapi()?.gss_acquire_cred(
+                &mut minor,
+                ptr::null_mut(),
+                bindings::_GSS_C_INDEFINITE,
+                ptr::null_mut(),
+                bindings::GSS_C_INITIATE as bindings::gss_cred_usage_t,
+                &mut cred,
+                ptr::null_mut(),
+                ptr::null_mut(),
+            )
+        };
+        check_gss_ok(major, minor)?;
+        Ok(Self { cred })
+    }
+
+    fn name(&self) -> crate::Result<GssName> {
+        let mut minor = 0;
+        let mut name = ptr::null_mut::<bindings::gss_name_struct>();
+        let major = unsafe {
+            libgssapi()?.gss_inquire_cred(
+                &mut minor,
+                self.cred,
+                &mut name as *mut bindings::gss_name_t,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+            )
+        };
+        check_gss_ok(major, minor)?;
+        Ok(GssName { name })
+    }
+}
+
+impl Drop for GssCred {
+    fn drop(&mut self) {
+        if !self.cred.is_null() {
+            let mut minor = bindings::GSS_S_COMPLETE;
+            let major = unsafe { libgssapi().unwrap().gss_release_cred(&mut minor, &mut self.cred) };
+            if let Err(e) = check_gss_ok(major, minor) {
+                warn!("Failed to release GSSAPI credential: {:?}", e);
+            }
+        }
+    }
+}
+
 struct GssClientCtx {
     ctx: bindings::gss_ctx_id_t,
     target: GssName,
@@ -439,6 +493,12 @@ impl GssapiSession {
         let target = GssName::with_target(&targ_name)?;
         let state = GssapiState::Pending(GssClientCtx::new(target));
         Ok(Self { state })
+    }
+
+    pub(crate) fn get_default_principal() -> crate::Result<String> {
+        let cred = GssCred::acquire_default()?;
+        let name = cred.name()?;
+        name.display_name()
     }
 }
 

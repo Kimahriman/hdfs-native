@@ -14,6 +14,7 @@ use crate::file::{FileReader, FileWriter};
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
+use crate::security::user::User;
 
 use crate::glob::{GlobPattern, expand_glob, get_path_components, unescape_component};
 use crate::proto::hdfs::{ContentSummaryProto, HdfsFileStatusProto};
@@ -118,16 +119,44 @@ impl MountLink {
 struct MountTable {
     mounts: Vec<MountLink>,
     fallback: MountLink,
+    home_dir: String,
 }
 
 impl MountTable {
     fn resolve(&self, src: &str) -> (&MountLink, String) {
+        let path = if src.starts_with('/') {
+            src.to_string()
+        } else {
+            format!("{}/{}", self.home_dir, src)
+        };
+
         for link in self.mounts.iter() {
-            if let Some(resolved) = link.resolve(src) {
+            if let Some(resolved) = link.resolve(&path) {
                 return (link, resolved);
             }
         }
-        (&self.fallback, self.fallback.resolve(src).unwrap())
+        (&self.fallback, self.fallback.resolve(&path).unwrap())
+    }
+}
+
+fn build_home_dir(
+    scheme: &str,
+    host: Option<&str>,
+    config: &Configuration,
+    username: &str,
+) -> String {
+    let prefix = match scheme {
+        "hdfs" => config.get("dfs.user.home.dir.prefix"),
+        "viewfs" => host.and_then(|host| config.get(&format!("fs.viewfs.mounttable.{host}.homedir"))),
+        _ => None,
+    }
+    .unwrap_or("/user");
+
+    let prefix = prefix.trim_end_matches('/');
+    if prefix.is_empty() {
+        format!("/{username}")
+    } else {
+        format!("{prefix}/{username}")
     }
 }
 
@@ -334,6 +363,19 @@ impl Client {
 
         let rt_holder = RuntimeHolder::new(rt);
 
+        let user_info = User::get_user_info();
+        let username = user_info
+            .effective_user
+            .as_deref()
+            .or(user_info.real_user.as_deref())
+            .expect("User info must include a username");
+        let home_dir = build_home_dir(
+            resolved_url.scheme(),
+            resolved_url.host_str(),
+            config.as_ref(),
+            username,
+        );
+
         let mount_table = match url.scheme() {
             "hdfs" => {
                 let proxy = NameServiceProxy::new(
@@ -346,6 +388,7 @@ impl Client {
                 MountTable {
                     mounts: Vec::new(),
                     fallback: MountLink::new("/", "/", protocol),
+                    home_dir,
                 }
             }
             "viewfs" => Self::build_mount_table(
@@ -353,6 +396,7 @@ impl Client {
                 resolved_url.host_str().expect("URL must have a host"),
                 Arc::clone(&config),
                 rt_holder.get_handle(),
+                home_dir,
             )?,
             _ => {
                 return Err(HdfsError::InvalidArgument(
@@ -372,6 +416,7 @@ impl Client {
         host: &str,
         config: Arc<Configuration>,
         handle: Handle,
+        home_dir: String,
     ) -> Result<MountTable> {
         let mut mounts: Vec<MountLink> = Vec::new();
         let mut fallback: Option<MountLink> = None;
@@ -408,7 +453,11 @@ impl Client {
             mounts.sort_by_key(|m| m.viewfs_path.chars().filter(|c| *c == '/').count());
             mounts.reverse();
 
-            Ok(MountTable { mounts, fallback })
+            Ok(MountTable {
+                mounts,
+                fallback,
+                home_dir,
+            })
         } else {
             Err(HdfsError::InvalidArgument(
                 "No viewfs fallback mount found".to_string(),
@@ -1180,6 +1229,7 @@ mod test {
         let mount_table = MountTable {
             mounts: vec![link1, link2, link3],
             fallback,
+            home_dir: "/user/test".to_string(),
         };
 
         // Exact mount path resolves to the exact HDFS path
@@ -1204,6 +1254,39 @@ mod test {
         let (link, resolved) = mount_table.resolve("/mount3/nested/file");
         assert_eq!(link.viewfs_path, "/mount3/nested");
         assert_eq!(resolved, "/path3/file");
+
+        let (link, resolved) = mount_table.resolve("file");
+        assert_eq!(link.viewfs_path, "");
+        assert_eq!(resolved, "/path4/user/test/file");
+
+        let (link, resolved) = mount_table.resolve("dir/subdir");
+        assert_eq!(link.viewfs_path, "");
+        assert_eq!(resolved, "/path4/user/test/dir/subdir");
+
+        let mount_table = MountTable {
+            mounts: vec![
+                MountLink::new(
+                    "/mount1",
+                    "/path1/nested",
+                    create_protocol("hdfs://127.0.0.1:9000"),
+                ),
+                MountLink::new(
+                    "/mount2",
+                    "/path2",
+                    create_protocol("hdfs://127.0.0.1:9001"),
+                ),
+            ],
+            fallback: MountLink::new("/", "/path4", create_protocol("hdfs://127.0.0.1:9003")),
+            home_dir: "/mount1/user".to_string(),
+        };
+
+        let (link, resolved) = mount_table.resolve("file");
+        assert_eq!(link.viewfs_path, "/mount1");
+        assert_eq!(resolved, "/path1/nested/user/file");
+
+        let (link, resolved) = mount_table.resolve("dir/subdir");
+        assert_eq!(link.viewfs_path, "/mount1");
+        assert_eq!(resolved, "/path1/nested/user/dir/subdir");
     }
 
     #[test]

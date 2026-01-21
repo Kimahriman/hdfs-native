@@ -198,7 +198,6 @@ fn select_method(
                     auth.server_id().to_string(),
                     token,
                 );
-                // let session = GSASLSession::new(auth.protocol(), auth.server_id(), token)?;
 
                 return Ok((auth.clone(), Some(Box::new(session))));
             }
