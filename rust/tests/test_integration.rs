@@ -195,6 +195,7 @@ mod test {
         test_rename(&client).await?;
         test_dirs(&client).await?;
         test_read_write(&client).await?;
+        test_relative_paths(&client).await?;
         // We use writing to create files, so do this after
         test_recursive_listing(&client).await?;
         test_glob(&client).await?;
@@ -331,6 +332,29 @@ mod test {
         client.mkdirs("/testdir", 0o755, true).await?;
         assert!(client.read("/testdir").await.is_err());
         client.delete("/testdir", true).await?;
+
+        Ok(())
+    }
+
+    async fn test_relative_paths(client: &Client) -> Result<()> {
+        let write_options = WriteOptions::default().overwrite(true);
+        let rel_path = "relative_dir/relative_file";
+
+        let mut writer = client.create(rel_path, &write_options).await?;
+        writer.close().await?;
+
+        let statuses = client.list_status("/", true).await?;
+        let status = statuses
+            .iter()
+            .find(|s| s.path.ends_with(&format!("/{rel_path}")))
+            .expect("relative path file should exist");
+        let expected_path = format!("/user/{}/{}", status.owner, rel_path);
+        assert_eq!(status.path, expected_path);
+
+        let status = client.get_file_info(&expected_path).await?;
+        assert_eq!(status.path, expected_path);
+
+        client.delete("/user", true).await?;
 
         Ok(())
     }
