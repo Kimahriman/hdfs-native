@@ -147,7 +147,9 @@ fn build_home_dir(
 ) -> String {
     let prefix = match scheme {
         "hdfs" => config.get("dfs.user.home.dir.prefix"),
-        "viewfs" => host.and_then(|host| config.get(&format!("fs.viewfs.mounttable.{host}.homedir"))),
+        "viewfs" => {
+            host.and_then(|host| config.get(&format!("fs.viewfs.mounttable.{host}.homedir")))
+        }
         _ => None,
     }
     .unwrap_or("/user");

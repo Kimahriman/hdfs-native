@@ -255,7 +255,11 @@ impl Drop for GssCred {
     fn drop(&mut self) {
         if !self.cred.is_null() {
             let mut minor = bindings::GSS_S_COMPLETE;
-            let major = unsafe { libgssapi().unwrap().gss_release_cred(&mut minor, &mut self.cred) };
+            let major = unsafe {
+                libgssapi()
+                    .unwrap()
+                    .gss_release_cred(&mut minor, &mut self.cred)
+            };
             if let Err(e) = check_gss_ok(major, minor) {
                 warn!("Failed to release GSSAPI credential: {:?}", e);
             }
