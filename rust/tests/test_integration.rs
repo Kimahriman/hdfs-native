@@ -14,6 +14,7 @@ mod test {
     };
     use serial_test::serial;
     use std::collections::HashSet;
+    use whoami::username;
 
     #[tokio::test]
     #[serial]
@@ -181,6 +182,9 @@ mod test {
     pub async fn test_with_features(features: &HashSet<DfsFeatures>) -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
+        let kerberos_enabled =
+            features.contains(&DfsFeatures::Security) && !features.contains(&DfsFeatures::Token);
+
         let _dfs = MiniDfs::with_features(features);
         let client = ClientBuilder::new().build().unwrap();
 
@@ -195,7 +199,7 @@ mod test {
         test_rename(&client).await?;
         test_dirs(&client).await?;
         test_read_write(&client).await?;
-        test_relative_paths(&client).await?;
+        test_relative_paths(&client, kerberos_enabled).await?;
         // We use writing to create files, so do this after
         test_recursive_listing(&client).await?;
         test_glob(&client).await?;
@@ -336,7 +340,15 @@ mod test {
         Ok(())
     }
 
-    async fn test_relative_paths(client: &Client) -> Result<()> {
+    async fn test_relative_paths(client: &Client, kerberos_enabled: bool) -> Result<()> {
+        // If kerberos is enabled, the user will be hdfs, otherwise it will be the local
+        // system user
+        let user = if kerberos_enabled {
+            "hdfs".to_string()
+        } else {
+            username()
+        };
+
         let write_options = WriteOptions::default().overwrite(true);
         let rel_path = "relative_dir/relative_file";
 
@@ -348,7 +360,7 @@ mod test {
             .iter()
             .find(|s| s.path.ends_with(&format!("/{rel_path}")))
             .expect("relative path file should exist");
-        let expected_path = format!("/user/{}/{}", status.owner, rel_path);
+        let expected_path = format!("/user/{}/{}", user, rel_path);
         assert_eq!(status.path, expected_path);
 
         let status = client.get_file_info(&expected_path).await?;

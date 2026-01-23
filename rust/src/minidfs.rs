@@ -95,8 +95,7 @@ impl MiniDfs {
 
         if features.contains(&DfsFeatures::Security) {
             let krb_conf = output.next().unwrap().unwrap();
-            let kdestroy_exec = which("kdestroy").expect("Failed to find kdestroy executable");
-            Command::new(kdestroy_exec).spawn().unwrap().wait().unwrap();
+            Self::kdestroy();
 
             if !PathBuf::from("target/test/hdfs.keytab").exists() {
                 panic!("Failed to find keytab");
@@ -147,6 +146,17 @@ impl MiniDfs {
             url: url.to_string(),
         }
     }
+
+    fn kdestroy() {
+        let kdestroy_exec = which("kdestroy").expect("Failed to find kdestroy executable");
+        Command::new(kdestroy_exec)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+            .wait()
+            .unwrap();
+    }
 }
 
 impl Default for MiniDfs {
@@ -162,5 +172,7 @@ impl Drop for MiniDfs {
         stdin.write_all(b"\n").unwrap();
         self.process.kill().unwrap();
         self.process.wait().unwrap();
+
+        Self::kdestroy();
     }
 }
