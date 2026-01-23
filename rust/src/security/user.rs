@@ -17,6 +17,7 @@ use crate::proto::common::TokenProto;
 use crate::proto::hdfs::AccessModeProto;
 use crate::proto::hdfs::BlockTokenSecretProto;
 use crate::proto::hdfs::StorageTypeProto;
+use crate::security::gssapi::GssapiSession;
 
 const HADOOP_USER_NAME: &str = "HADOOP_USER_NAME";
 const HADOOP_PROXY_USER: &str = "HADOOP_PROXY_USER";
@@ -379,6 +380,14 @@ impl User {
             real_user: None,
             effective_user: Some(effective_user),
         }
+    }
+
+    pub(crate) fn get_user_info() -> UserInfo {
+        if let Ok(principal) = GssapiSession::get_default_principal() {
+            return User::get_user_info_from_principal(&principal);
+        }
+
+        User::get_simple_user()
     }
 
     pub(crate) fn get_user_from_principal(principal: &str) -> String {

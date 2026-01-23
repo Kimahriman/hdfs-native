@@ -198,7 +198,6 @@ fn select_method(
                     auth.server_id().to_string(),
                     token,
                 );
-                // let session = GSASLSession::new(auth.protocol(), auth.server_id(), token)?;
 
                 return Ok((auth.clone(), Some(Box::new(session))));
             }
@@ -261,7 +260,7 @@ impl SaslReader {
     }
 
     pub(crate) async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
-        if self.session.is_some() {
+        if let Some(session) = self.session.clone() {
             let read_len = buf.len();
             let mut bytes_remaining = read_len;
             while bytes_remaining > 0 {
@@ -271,14 +270,7 @@ impl SaslReader {
                         todo!();
                     }
 
-                    // let mut writer = BytesMut::with_capacity(response.token().len()).writer();
-                    let decoded = self
-                        .session
-                        .as_ref()
-                        .unwrap()
-                        .lock()
-                        .unwrap()
-                        .decode(response.token())?;
+                    let decoded = session.lock().unwrap().decode(response.token())?;
                     self.buffer = Bytes::from(decoded)
                 }
                 let copy_len = usize::min(bytes_remaining, self.buffer.remaining());
@@ -340,17 +332,13 @@ impl SaslWriter {
     }
 
     pub(crate) async fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
-        if self.session.is_some() {
+        if let Some(session) = &self.session {
             let mut rpc_sasl = RpcSaslProto {
                 state: SaslState::Wrap as i32,
                 ..Default::default()
             };
 
-            // let mut writer = Vec::with_capacity(buf.len()).writer();
-            let encoded = self
-                .session
-                .as_ref()
-                .unwrap()
+            let encoded = session
                 .lock()
                 .unwrap()
                 .encode(buf)
