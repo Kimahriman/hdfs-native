@@ -229,7 +229,8 @@ impl IORuntime {
 #[derive(Default)]
 pub struct ClientBuilder {
     url: Option<String>,
-    config: HashMap<String, String>,
+    config: Option<HashMap<String, String>>,
+    config_dir: Option<String>,
     runtime: Option<IORuntime>,
 }
 
@@ -245,15 +246,23 @@ impl ClientBuilder {
         self
     }
 
-    /// Set configs to use for the client. The provided configs will override any found in the default config files loaded
+    /// Set configs to use for the client. The provided configs will override any found in the config files loaded
     pub fn with_config(
         mut self,
         config: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
     ) -> Self {
-        self.config = config
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect();
+        self.config = Some(
+            config
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
+        );
+        self
+    }
+
+    /// Set the configration directory path to read from. The provided path will override the one provided by environment variable.
+    pub fn with_config_dir(mut self, config_dir: impl Into<String>) -> Self {
+        self.config_dir = Some(config_dir.into());
         self
     }
 
@@ -266,7 +275,7 @@ impl ClientBuilder {
 
     /// Create the [Client] instance from the provided settings
     pub fn build(self) -> Result<Client> {
-        let config = Configuration::new_with_config(self.config)?;
+        let config = Configuration::new(self.config_dir, self.config)?;
         let url = if let Some(url) = self.url {
             Url::parse(&url)?
         } else {
@@ -323,18 +332,18 @@ impl Client {
     #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
     pub fn new(url: &str) -> Result<Self> {
         let parsed_url = Url::parse(url)?;
-        Self::build(&parsed_url, Configuration::new()?, None)
+        Self::build(&parsed_url, Configuration::new(None, None)?, None)
     }
 
     #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
     pub fn new_with_config(url: &str, config: HashMap<String, String>) -> Result<Self> {
         let parsed_url = Url::parse(url)?;
-        Self::build(&parsed_url, Configuration::new_with_config(config)?, None)
+        Self::build(&parsed_url, Configuration::new(None, Some(config))?, None)
     }
 
     #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
     pub fn default_with_config(config: HashMap<String, String>) -> Result<Self> {
-        let config = Configuration::new_with_config(config)?;
+        let config = Configuration::new(None, Some(config))?;
         Self::build(&Self::default_fs(&config)?, config, None)
     }
 
@@ -1138,7 +1147,7 @@ mod test {
     fn create_protocol(url: &str) -> Arc<NamenodeProtocol> {
         let proxy = NameServiceProxy::new(
             &Url::parse(url).unwrap(),
-            Arc::new(Configuration::new().unwrap()),
+            Arc::new(Configuration::new(None, None).unwrap()),
             RT.handle().clone(),
         )
         .unwrap();
