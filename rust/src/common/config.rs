@@ -38,28 +38,26 @@ const DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_BEST_EFFORT_KEY: &str =
     "dfs.client.block.write.replace-datanode-on-failure.best-effort";
 
 #[derive(Debug, Clone)]
-pub struct Configuration {
+pub(crate) struct Configuration {
     map: HashMap<String, String>,
 }
 
 impl Configuration {
-    pub fn new(
+    pub(crate) fn new(
         conf_dir: Option<String>,
         conf_map: Option<HashMap<String, String>>,
     ) -> Result<Self> {
-        let mut configration = Configuration {
-            map: HashMap::new(),
-        };
+        let mut map = HashMap::new();
 
         if let Some(conf_dir) = Self::parse_conf_dir(conf_dir) {
-            configration.map = Self::parse_conf(conf_dir)?;
+            map = Self::parse_conf(conf_dir)?;
         }
 
         if let Some(conf_map) = conf_map {
-            configration.map.extend(conf_map);
+            map.extend(conf_map);
         }
 
-        Ok(configration)
+        Ok(Configuration { map })
     }
 
     /// Get a value from the config, returning None if the key wasn't defined.

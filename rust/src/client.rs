@@ -190,16 +190,41 @@ impl IORuntime {
     }
 }
 
-/// Builds a new [Client] instance. By default, configs will be loaded from the default config directories with the following precedence:
+/// Builds a new [Client] instance. Configs will be loaded with the following precedence:
+///
+/// - If method `ClientBuilder::with_config_dir` is invoked, configs will be loaded from `${config_dir}/{core,hdfs}-site.xml`
 /// - If the `HADOOP_CONF_DIR` environment variable is defined, configs will be loaded from `${HADOOP_CONF_DIR}/{core,hdfs}-site.xml`
 /// - If the `HADOOP_HOME` environment variable is defined, configs will be loaded from `${HADOOP_HOME}/etc/hadoop/{core,hdfs}-site.xml`
-/// - Otherwise no default configs are defined
+/// - Otherwise no configs are defined
+///
+/// Finally, configs set by `with_config` will override the configs loaded above.
 ///
 /// If no URL is defined, the `fs.defaultFS` config must be defined and is used as the URL.
 ///
 /// # Examples
 ///
+/// Create a new client with given config directory
+///
+/// ```rust,no_run
+/// # use hdfs_native::ClientBuilder;
+/// let client = ClientBuilder::new()
+///     .with_config_dir("/opt/hadoop/etc/hadoop")
+///     .build()
+///     .unwrap();
+/// ```
+///
+/// Create a new client with the environment variable
+///
+/// ```rust,no_run
+/// # use hdfs_native::ClientBuilder;
+/// unsafe { std::env::set_var("HADOOP_CONF_DIR", "/opt/hadoop/etc/hadoop") };
+/// let client = ClientBuilder::new()
+///     .build()
+///     .unwrap();
+/// ```
+///
 /// Create a new client using the fs.defaultFS config
+///
 /// ```rust
 /// # use hdfs_native::ClientBuilder;
 /// let client = ClientBuilder::new()
@@ -209,6 +234,7 @@ impl IORuntime {
 /// ```
 ///
 /// Create a new client connecting to a specific URL:
+///
 /// ```rust
 /// # use hdfs_native::ClientBuilder;
 /// let client = ClientBuilder::new()
@@ -218,6 +244,7 @@ impl IORuntime {
 /// ```
 ///
 /// Create a new client using a dedicated tokio runtime for spawned tasks and IO operations
+///
 /// ```rust
 /// # use hdfs_native::ClientBuilder;
 /// let client = ClientBuilder::new()
@@ -1318,5 +1345,16 @@ mod test {
                 .build()
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn test_set_conf_dir() {
+        assert!(
+            ClientBuilder::new()
+                .with_url("hdfs://127.0.0.1:9000")
+                .with_config_dir("target/test")
+                .build()
+                .is_ok()
+        )
     }
 }
