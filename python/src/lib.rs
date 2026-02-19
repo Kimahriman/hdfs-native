@@ -413,8 +413,12 @@ struct RawClient {
 #[pymethods]
 impl RawClient {
     #[new]
-    #[pyo3(signature = (url, config))]
-    pub fn new(url: Option<&str>, config: Option<HashMap<String, String>>) -> PyResult<Self> {
+    #[pyo3(signature = (url, config, config_dir))]
+    pub fn new(
+        url: Option<&str>,
+        config: Option<HashMap<String, String>>,
+        config_dir: Option<&str>,
+    ) -> PyResult<Self> {
         // Initialize logging, ignore errors if this is called multiple times
         let _ = env_logger::try_init();
 
@@ -424,6 +428,10 @@ impl RawClient {
 
         if let Some(url) = url {
             builder = builder.with_url(url);
+        }
+
+        if let Some(config_dir) = config_dir {
+            builder = builder.with_config_dir(config_dir);
         }
 
         let inner = builder.build().map_err(PythonHdfsError::from)?;
@@ -722,8 +730,12 @@ struct AsyncRawClient {
 #[pymethods]
 impl AsyncRawClient {
     #[new]
-    #[pyo3(signature = (url, config))]
-    pub fn new(url: Option<&str>, config: Option<HashMap<String, String>>) -> PyResult<Self> {
+    #[pyo3(signature = (url, config, config_dir))]
+    pub fn new(
+        url: Option<&str>,
+        config: Option<HashMap<String, String>>,
+        config_dir: Option<&str>,
+    ) -> PyResult<Self> {
         // Initialize logging, ignore errors if this is called multiple times
         let _ = env_logger::try_init();
 
@@ -733,6 +745,10 @@ impl AsyncRawClient {
 
         if let Some(url) = url {
             builder = builder.with_url(url);
+        }
+
+        if let Some(config_dir) = config_dir {
+            builder = builder.with_config_dir(config_dir);
         }
 
         let inner = builder.build().map_err(PythonHdfsError::from)?;
