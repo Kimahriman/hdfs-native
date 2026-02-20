@@ -38,34 +38,26 @@ const DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_BEST_EFFORT_KEY: &str =
     "dfs.client.block.write.replace-datanode-on-failure.best-effort";
 
 #[derive(Debug, Clone)]
-pub struct Configuration {
+pub(crate) struct Configuration {
     map: HashMap<String, String>,
 }
 
 impl Configuration {
-    pub fn new() -> Result<Self> {
-        let mut map: HashMap<String, String> = HashMap::new();
+    pub(crate) fn new(
+        conf_dir: Option<String>,
+        conf_map: Option<HashMap<String, String>>,
+    ) -> Result<Self> {
+        let mut map = HashMap::new();
 
-        if let Some(conf_dir) = Self::get_conf_dir() {
-            for file in ["core-site.xml", "hdfs-site.xml"] {
-                let config_path = conf_dir.join(file);
-                if config_path.as_path().exists() {
-                    Self::read_from_file(config_path.as_path())?
-                        .into_iter()
-                        .for_each(|(key, value)| {
-                            map.insert(key, value);
-                        })
-                }
-            }
+        if let Some(conf_dir) = Self::parse_conf_dir(conf_dir) {
+            map = Self::parse_conf(conf_dir)?;
+        }
+
+        if let Some(conf_map) = conf_map {
+            map.extend(conf_map);
         }
 
         Ok(Configuration { map })
-    }
-
-    pub fn new_with_config(conf_map: HashMap<String, String>) -> Result<Self> {
-        let mut conf = Self::new()?;
-        conf.map.extend(conf_map);
-        Ok(conf)
     }
 
     /// Get a value from the config, returning None if the key wasn't defined.
@@ -241,7 +233,11 @@ impl Configuration {
         Ok(pairs.collect())
     }
 
-    fn get_conf_dir() -> Option<PathBuf> {
+    fn parse_conf_dir(conf_dir: Option<String>) -> Option<PathBuf> {
+        if let Some(conf_dir) = conf_dir {
+            return Some(PathBuf::from(conf_dir));
+        }
+
         match env::var(HADOOP_CONF_DIR) {
             Ok(dir) => Some(PathBuf::from(dir)),
             Err(_) => match env::var(HADOOP_HOME) {
@@ -249,6 +245,23 @@ impl Configuration {
                 Err(_) => None,
             },
         }
+    }
+
+    fn parse_conf(conf_dir: PathBuf) -> Result<HashMap<String, String>> {
+        let mut map: HashMap<String, String> = HashMap::new();
+
+        for file in ["core-site.xml", "hdfs-site.xml"] {
+            let config_path = conf_dir.join(file);
+            if config_path.as_path().exists() {
+                Self::read_from_file(config_path.as_path())?
+                    .into_iter()
+                    .for_each(|(key, value)| {
+                        map.insert(key, value);
+                    })
+            }
+        }
+
+        Ok(map)
     }
 }
 

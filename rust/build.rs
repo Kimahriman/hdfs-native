@@ -3,7 +3,9 @@ use std::io::Result;
 fn main() -> Result<()> {
     #[cfg(feature = "generate-protobuf")]
     {
-        std::env::set_var("PROTOC", protobuf_src::protoc());
+        unsafe {
+            std::env::set_var("PROTOC", protobuf_src::protoc());
+        }
 
         prost_build::compile_protos(
             &[
