@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures::stream::BoxStream;
 use futures::{StreamExt, stream};
@@ -18,6 +19,11 @@ use crate::security::user::User;
 
 use crate::glob::{GlobPattern, expand_glob, get_path_components, unescape_component};
 use crate::proto::hdfs::{ContentSummaryProto, HdfsFileStatusProto};
+
+const TRASH_INTERVAL_KEY: &str = "fs.trash.interval";
+const TRASH_ROOT_DIR: &str = ".Trash";
+const TRASH_CURRENT_DIR: &str = "Current";
+const TRASH_DIR_PERMISSION: u32 = 0o700;
 
 #[derive(Clone)]
 pub struct WriteOptions {
@@ -316,6 +322,11 @@ pub struct Client {
     rt_holder: RuntimeHolder,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TrashConfig {
+    enabled: bool,
+}
+
 impl Client {
     /// Creates a new HDFS Client. The URL must include the protocol and host, and optionally a port.
     /// If a port is included, the host is treated as a single NameNode. If no port is included, the
@@ -464,6 +475,142 @@ impl Client {
             Err(HdfsError::InvalidArgument(
                 "No viewfs fallback mount found".to_string(),
             ))
+        }
+    }
+
+    fn normalize_path(path: &str) -> String {
+        let mut normalized = if path.is_empty() {
+            "/".to_string()
+        } else {
+            path.to_string()
+        };
+        if !normalized.starts_with('/') {
+            normalized.insert(0, '/');
+        }
+        while normalized.len() > 1 && normalized.ends_with('/') {
+            normalized.pop();
+        }
+        normalized
+    }
+
+    fn join_paths(base: &str, suffix: &str) -> String {
+        if suffix.is_empty() {
+            return base.to_string();
+        }
+        let trimmed_base = if base.is_empty() { "/" } else { base };
+        let suffix = suffix.trim_start_matches('/');
+        if trimmed_base == "/" {
+            format!("/{suffix}")
+        } else {
+            format!("{}/{}", trimmed_base.trim_end_matches('/'), suffix)
+        }
+    }
+
+    fn is_prefix_path(parent: &str, child: &str) -> bool {
+        if parent == "/" {
+            return true;
+        }
+        child == parent || child.starts_with(&format!("{parent}/"))
+    }
+
+    fn current_time_millis() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    fn absolute_path(&self, path: &str) -> String {
+        if path.starts_with('/') {
+            Self::normalize_path(path)
+        } else {
+            let home = self.mount_table.home_dir.trim_end_matches('/');
+            Self::normalize_path(&format!("{home}/{path}"))
+        }
+    }
+
+    fn trash_root_path(&self) -> String {
+        let home = Self::normalize_path(&self.mount_table.home_dir);
+        Self::join_paths(&home, TRASH_ROOT_DIR)
+    }
+
+    fn parse_trash_interval(&self, key: &str) -> Result<u64> {
+        let Some(raw) = self.config.get(key) else {
+            return Ok(0);
+        };
+        let mut minutes: f64 = raw.parse().map_err(|_| {
+            HdfsError::InvalidArgument(format!("Invalid {key} value: {raw}"))
+        })?;
+        if minutes < 0.0 {
+            minutes = 0.0;
+        }
+        Ok((minutes * 60_000.0).round() as u64)
+    }
+
+    fn trash_config(&self) -> Result<TrashConfig> {
+        let deletion_interval_ms = self.parse_trash_interval(TRASH_INTERVAL_KEY)?;
+        let enabled = deletion_interval_ms > 0;
+
+        Ok(TrashConfig { enabled })
+    }
+
+    fn split_parent_name(path: &str) -> Result<(String, String)> {
+        let normalized = Self::normalize_path(path);
+        if normalized == "/" {
+            return Err(HdfsError::InvalidArgument(
+                "Cannot move the root directory to trash".to_string(),
+            ));
+        }
+        let (parent, name) = normalized
+            .rsplit_once('/')
+            .expect("Normalized path always contains '/'");
+        let parent = if parent.is_empty() {
+            "/".to_string()
+        } else {
+            parent.to_string()
+        };
+        Ok((parent, name.to_string()))
+    }
+
+    async fn path_has_non_dir_ancestor(&self, path: &str) -> Result<bool> {
+        let normalized = Self::normalize_path(path);
+        let mut current = "/".to_string();
+        for component in normalized.trim_start_matches('/').split('/') {
+            if component.is_empty() {
+                continue;
+            }
+            current = Self::join_paths(&current, component);
+            match self.get_file_info(&current).await {
+                Ok(status) => {
+                    if !status.isdir {
+                        return Ok(true);
+                    }
+                }
+                Err(HdfsError::FileNotFound(_)) => return Ok(false),
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(false)
+    }
+
+    async fn ensure_unique_trash_path(&self, path: String) -> Result<String> {
+        let base = path.clone();
+        let mut attempt = 0u32;
+        let mut candidate = path;
+        loop {
+            match self.get_file_info(&candidate).await {
+                Ok(_) => {
+                    let suffix = if attempt == 0 {
+                        Self::current_time_millis().to_string()
+                    } else {
+                        format!("{}-{}", Self::current_time_millis(), attempt)
+                    };
+                    candidate = format!("{base}-{suffix}");
+                    attempt = attempt.saturating_add(1);
+                }
+                Err(HdfsError::FileNotFound(_)) => return Ok(candidate),
+                Err(err) => return Err(err),
+            }
         }
     }
 
@@ -655,6 +802,83 @@ impl Client {
             .delete(&resolved_path, recursive)
             .await
             .map(|r| r.result)
+    }
+
+    /// Moves a file or directory at `path` into the user's trash. Returns `Ok(true)` if moved,
+    /// `Ok(false)` if trash is disabled or the path is already under trash.
+    pub async fn move_to_trash(&self, path: &str) -> Result<bool> {
+        if path.is_empty() {
+            return Err(HdfsError::InvalidPath("Empty path".to_string()));
+        }
+
+        let trash_config = self.trash_config()?;
+        if !trash_config.enabled {
+            return Ok(false);
+        }
+
+        let src_abs = self.absolute_path(path);
+        let trash_root = self.trash_root_path();
+
+        if Self::is_prefix_path(&trash_root, &src_abs) {
+            return Ok(false);
+        }
+        if Self::is_prefix_path(&src_abs, &trash_root) {
+            return Err(HdfsError::InvalidArgument(
+                "Cannot move to trash because it contains the trash".to_string(),
+            ));
+        }
+
+        let _ = self.get_file_info(&src_abs).await?;
+
+        let (src_parent, src_name) = Self::split_parent_name(&src_abs)?;
+        let trash_current = Self::join_paths(&trash_root, TRASH_CURRENT_DIR);
+        let src_parent_rel = src_parent.trim_start_matches('/');
+        let mut base_trash_path = if src_parent_rel.is_empty() {
+            trash_current.clone()
+        } else {
+            Self::join_paths(&trash_current, src_parent_rel)
+        };
+        let mut trash_path = Self::join_paths(&base_trash_path, &src_name);
+
+        for attempt in 0..2 {
+            let mut mkdirs_error: Option<HdfsError> = None;
+            loop {
+                match self
+                    .mkdirs(&base_trash_path, TRASH_DIR_PERMISSION, true)
+                    .await
+                {
+                    Ok(()) => break,
+                    Err(err) => {
+                        if self.path_has_non_dir_ancestor(&base_trash_path).await? {
+                            let timestamp = Self::current_time_millis();
+                            base_trash_path = format!("{base_trash_path}-{timestamp}");
+                            trash_path = Self::join_paths(&base_trash_path, &src_name);
+                            continue;
+                        }
+                        mkdirs_error = Some(err);
+                        break;
+                    }
+                }
+            }
+
+            if let Some(err) = mkdirs_error {
+                if attempt == 0 {
+                    continue;
+                }
+                return Err(err);
+            }
+
+            let unique_trash_path = self.ensure_unique_trash_path(trash_path.clone()).await?;
+            match self.rename(&src_abs, &unique_trash_path, false).await {
+                Ok(()) => return Ok(true),
+                Err(err) if attempt == 0 => continue,
+                Err(err) => return Err(err),
+            }
+        }
+
+        Err(HdfsError::OperationFailed(
+            "Failed to move to trash after retry".to_string(),
+        ))
     }
 
     /// Sets the modified and access times for a file. Times should be in milliseconds from the epoch.

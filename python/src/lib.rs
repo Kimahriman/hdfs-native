@@ -518,6 +518,10 @@ impl RawClient {
         Ok(py.detach(|| self.rt.block_on(self.inner.delete(path, recursive)))?)
     }
 
+    pub fn move_to_trash(&self, path: &str, py: Python) -> PyHdfsResult<bool> {
+        Ok(py.detach(|| self.rt.block_on(self.inner.move_to_trash(path)))?)
+    }
+
     pub fn set_times(&self, path: &str, mtime: u64, atime: u64, py: Python) -> PyHdfsResult<()> {
         Ok(py.detach(|| self.rt.block_on(self.inner.set_times(path, mtime, atime)))?)
     }
@@ -805,6 +809,10 @@ impl AsyncRawClient {
 
     pub async fn delete(&self, path: String, recursive: bool) -> PyHdfsResult<bool> {
         Ok(self.inner.delete(&path, recursive).await?)
+    }
+
+    pub async fn move_to_trash(&self, path: String) -> PyHdfsResult<bool> {
+        Ok(self.inner.move_to_trash(&path).await?)
     }
 
     pub async fn set_times(&self, path: String, mtime: u64, atime: u64) -> PyHdfsResult<()> {
