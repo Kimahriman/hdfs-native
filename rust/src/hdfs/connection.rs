@@ -333,13 +333,24 @@ impl RpcListener {
     async fn start(&mut self) {
         loop {
             if let Err(error) = self.read_response().await {
-                match error {
-                    HdfsError::IOError(e) if e.kind() == ErrorKind::UnexpectedEof => break,
-                    _ => panic!("{error:?}"),
+                match &error {
+                    HdfsError::IOError(e) if e.kind() == ErrorKind::UnexpectedEof => {}
+                    e => {
+                        warn!("RPC listener error: {:?}", e);
+                    }
                 }
+                break;
             }
         }
         self.alive = false;
+
+        let mut call_map = self.call_map.lock().unwrap();
+        for (_, call) in call_map.drain() {
+            let _ = call.send(Err(HdfsError::IOError(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "RPC listener disconnected",
+            ))));
+        }
     }
 
     async fn read_response(&mut self) -> Result<()> {

@@ -75,7 +75,12 @@ impl ProxyConnection {
                 .call(method_name, message)
                 .await?
         };
-        receiver.await.unwrap()
+        receiver.await.map_err(|_| {
+            HdfsError::IOError(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "RPC listener disconnected",
+            ))
+        })?
     }
 }
 
