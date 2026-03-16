@@ -51,36 +51,49 @@ impl ProxyConnection {
     }
 
     async fn call(&self, method_name: &str, message: &[u8]) -> Result<Bytes> {
-        let receiver = {
-            let mut connection = self.inner.lock().await;
-            match &mut *connection {
-                Some(c) if c.is_alive() => (),
-                c => {
-                    *c = Some(
-                        RpcConnection::connect(
-                            &self.url,
-                            self.alignment_context.clone(),
-                            self.nameservice.as_deref(),
-                            &self.config,
-                            &self.handle,
-                        )
-                        .await?,
-                    );
+        for attempt in 0..2 {
+            let receiver = {
+                let mut connection = self.inner.lock().await;
+                match &mut *connection {
+                    Some(c) if c.is_alive() => (),
+                    c => {
+                        *c = Some(
+                            RpcConnection::connect(
+                                &self.url,
+                                self.alignment_context.clone(),
+                                self.nameservice.as_deref(),
+                                &self.config,
+                                &self.handle,
+                            )
+                            .await?,
+                        );
+                    }
                 }
-            }
 
-            connection
-                .as_ref()
-                .unwrap()
-                .call(method_name, message)
-                .await?
-        };
-        receiver.await.map_err(|_| {
-            HdfsError::IOError(std::io::Error::new(
-                std::io::ErrorKind::ConnectionAborted,
-                "RPC listener disconnected",
-            ))
-        })?
+                connection
+                    .as_ref()
+                    .unwrap()
+                    .call(method_name, message)
+                    .await?
+            };
+            let result = receiver.await.map_err(|_| {
+                HdfsError::IOError(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "RPC listener disconnected",
+                ))
+            })?;
+
+            match result {
+                Ok(bytes) => return Ok(bytes),
+                Err(HdfsError::IOError(ref e)) if attempt == 0 => {
+                    warn!("IO error on RPC call, retrying: {:?}", e);
+                    *self.inner.lock().await = None;
+                    continue;
+                }
+                err => return err,
+            }
+        }
+        unreachable!()
     }
 }
 
