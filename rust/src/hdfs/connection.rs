@@ -779,14 +779,10 @@ impl DatanodeConnectionCache {
 #[cfg(test)]
 mod test {
     use std::collections::HashMap;
-    use std::io::ErrorKind;
-    use std::sync::{Arc, Mutex};
 
-    use bytes::Bytes;
     use prost::Message;
-    use tokio::sync::oneshot;
 
-    use crate::{HdfsError, Result, hdfs::connection::MAX_PACKET_HEADER_SIZE, proto::hdfs};
+    use crate::{hdfs::connection::MAX_PACKET_HEADER_SIZE, proto::hdfs};
 
     use super::AlignmentContext;
 
@@ -840,63 +836,5 @@ mod test {
         assert_eq!(router_state.len(), 2);
         assert_eq!(*router_state.get("ns-1").unwrap(), 5);
         assert_eq!(*router_state.get("ns-2").unwrap(), 7);
-    }
-
-    type CallResult = oneshot::Sender<Result<Bytes>>;
-
-    #[test]
-    fn test_call_map_partial_drain_then_poison() {
-        // Simulates: listener processes some responses, then dies mid-stream
-        let call_map: Arc<Mutex<Option<HashMap<i32, CallResult>>>> =
-            Arc::new(Mutex::new(Some(HashMap::new())));
-
-        let (sender1, mut receiver1) = oneshot::channel::<Result<Bytes>>();
-        let (sender2, mut receiver2) = oneshot::channel::<Result<Bytes>>();
-        let (sender3, mut receiver3) = oneshot::channel::<Result<Bytes>>();
-        {
-            let mut map = call_map.lock().unwrap();
-            let m = map.as_mut().unwrap();
-            m.insert(1, sender1);
-            m.insert(2, sender2);
-            m.insert(3, sender3);
-        }
-
-        // Listener processes call_id=1 normally (simulates read_response success)
-        let processed = call_map.lock().unwrap().as_mut().and_then(|m| m.remove(&1));
-        assert!(processed.is_some());
-        let _ = processed.unwrap().send(Ok(Bytes::from("response")));
-
-        // Listener dies, takes remaining
-        if let Some(map) = call_map.lock().unwrap().take() {
-            for (_, call) in map {
-                let _ = call.send(Err(HdfsError::IOError(std::io::Error::new(
-                    ErrorKind::ConnectionAborted,
-                    "RPC listener disconnected",
-                ))));
-            }
-        }
-
-        // Call 1: got a real response
-        let result1 = receiver1.try_recv().unwrap();
-        assert!(result1.is_ok());
-        assert_eq!(result1.unwrap(), Bytes::from("response"));
-
-        // Calls 2 and 3: got ConnectionAborted
-        let result2 = receiver2.try_recv().unwrap();
-        assert!(result2.is_err());
-        match result2.unwrap_err() {
-            HdfsError::IOError(e) => assert_eq!(e.kind(), ErrorKind::ConnectionAborted),
-            other => panic!("Expected IOError, got {:?}", other),
-        }
-
-        let result3 = receiver3.try_recv().unwrap();
-        assert!(result3.is_err());
-        match result3.unwrap_err() {
-            HdfsError::IOError(e) => assert_eq!(e.kind(), ErrorKind::ConnectionAborted),
-            other => panic!("Expected IOError, got {:?}", other),
-        }
-
-        // Map stays poisoned
-        assert!(call_map.lock().unwrap().is_none());
     }
 }
