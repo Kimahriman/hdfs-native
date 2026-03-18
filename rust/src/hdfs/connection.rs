@@ -119,7 +119,7 @@ pub(crate) struct RpcConnection {
     user_info: UserInfo,
     next_call_id: AtomicI32,
     alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
-    call_map: Arc<Mutex<HashMap<i32, CallResult>>>,
+    call_map: Arc<Mutex<Option<HashMap<i32, CallResult>>>>,
     sender: mpsc::Sender<Vec<u8>>,
     listener: Option<JoinHandle<()>>,
 }
@@ -134,7 +134,7 @@ impl RpcConnection {
     ) -> Result<Self> {
         let client_id = Uuid::new_v4().to_bytes_le().to_vec();
         let next_call_id = AtomicI32::new(0);
-        let call_map = Arc::new(Mutex::new(HashMap::new()));
+        let call_map = Arc::new(Mutex::new(Some(HashMap::new())));
 
         let mut stream = connect(url, handle).await?;
         stream.write_all("hrpc".as_bytes()).await?;
@@ -300,7 +300,20 @@ impl RpcConnection {
 
         let (sender, receiver) = oneshot::channel::<Result<Bytes>>();
 
-        self.call_map.lock().unwrap().insert(call_id, sender);
+        {
+            let mut map = self.call_map.lock().unwrap();
+            match map.as_mut() {
+                Some(m) => {
+                    m.insert(call_id, sender);
+                }
+                None => {
+                    return Err(HdfsError::IOError(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionAborted,
+                        "RPC listener disconnected",
+                    )));
+                }
+            }
+        }
 
         self.write_messages(&[&conn_header_buf, &header_buf, message])
             .await?;
@@ -310,7 +323,7 @@ impl RpcConnection {
 }
 
 struct RpcListener {
-    call_map: Arc<Mutex<HashMap<i32, CallResult>>>,
+    call_map: Arc<Mutex<Option<HashMap<i32, CallResult>>>>,
     reader: SaslReader,
     alive: bool,
     alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
@@ -318,7 +331,7 @@ struct RpcListener {
 
 impl RpcListener {
     fn new(
-        call_map: Arc<Mutex<HashMap<i32, CallResult>>>,
+        call_map: Arc<Mutex<Option<HashMap<i32, CallResult>>>>,
         reader: SaslReader,
         alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
     ) -> Self {
@@ -344,12 +357,13 @@ impl RpcListener {
         }
         self.alive = false;
 
-        let mut call_map = self.call_map.lock().unwrap();
-        for (_, call) in call_map.drain() {
-            let _ = call.send(Err(HdfsError::IOError(std::io::Error::new(
-                std::io::ErrorKind::ConnectionAborted,
-                "RPC listener disconnected",
-            ))));
+        if let Some(map) = self.call_map.lock().unwrap().take() {
+            for (_, call) in map {
+                let _ = call.send(Err(HdfsError::IOError(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "RPC listener disconnected",
+                ))));
+            }
         }
     }
 
@@ -370,7 +384,12 @@ impl RpcListener {
 
         let call_id = rpc_response.call_id as i32;
 
-        let call = self.call_map.lock().unwrap().remove(&call_id);
+        let call = self
+            .call_map
+            .lock()
+            .unwrap()
+            .as_mut()
+            .and_then(|m| m.remove(&call_id));
 
         if let Some(call) = call {
             match rpc_response.status() {
