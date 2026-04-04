@@ -7,12 +7,16 @@ use std::{
 };
 use which::which;
 
+const HADOOP_SASL_MECHANISM: &str = "HADOOP_SASL_MECHANISM";
+
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub enum DfsFeatures {
     Security,
     Token,
     Integrity,
     Privacy,
+    ScramSha256,
+    ScramSha512,
     AES,
     DataTransferEncryption,
     HA,
@@ -30,6 +34,8 @@ impl DfsFeatures {
             DfsFeatures::Privacy => "privacy",
             DfsFeatures::Security => "security",
             DfsFeatures::Integrity => "integrity",
+            DfsFeatures::ScramSha256 => "scram_sha256",
+            DfsFeatures::ScramSha512 => "scram_sha512",
             DfsFeatures::AES => "aes",
             DfsFeatures::DataTransferEncryption => "data_transfer_encryption",
             DfsFeatures::Token => "token",
@@ -43,6 +49,8 @@ impl DfsFeatures {
             "ha" => Some(DfsFeatures::HA),
             "privacy" => Some(DfsFeatures::Privacy),
             "security" => Some(DfsFeatures::Security),
+            "scram_sha256" => Some(DfsFeatures::ScramSha256),
+            "scram_sha512" => Some(DfsFeatures::ScramSha512),
             "token" => Some(DfsFeatures::Token),
             _ => None,
         }
@@ -57,13 +65,21 @@ pub struct MiniDfs {
 impl MiniDfs {
     pub fn with_features(features: &HashSet<DfsFeatures>) -> Self {
         let mvn_exec = which("mvn").expect("Failed to find mvn executable");
+        let hadoop_sasl_mechanism = if features.contains(&DfsFeatures::ScramSha256) {
+            Some("SCRAM-SHA-256")
+        } else if features.contains(&DfsFeatures::ScramSha512) {
+            Some("SCRAM-SHA-512")
+        } else {
+            None
+        };
 
         let mut feature_args: Vec<&str> = Vec::new();
         for feature in features.iter() {
             feature_args.push(feature.as_str());
         }
 
-        let mut child = Command::new(mvn_exec)
+        let mut command = Command::new(mvn_exec);
+        command
             .args([
                 "-f",
                 concat!(env!("OUT_DIR"), "/minidfs"),
@@ -74,9 +90,12 @@ impl MiniDfs {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+            .stderr(Stdio::null());
+        if let Some(mechanism) = hadoop_sasl_mechanism {
+            command.env(HADOOP_SASL_MECHANISM, mechanism);
+        }
+
+        let mut child = command.spawn().unwrap();
 
         let mut output = BufReader::new(child.stdout.take().unwrap()).lines();
 
@@ -91,7 +110,9 @@ impl MiniDfs {
         }
 
         // Make sure this doesn't care over from a token test to a non-token test
-        unsafe { env::remove_var("HADOOP_TOKEN_FILE_LOCATION") };
+        unsafe {
+            env::remove_var("HADOOP_TOKEN_FILE_LOCATION");
+        };
 
         if features.contains(&DfsFeatures::Security) {
             let krb_conf = output.next().unwrap().unwrap();

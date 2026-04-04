@@ -38,6 +38,7 @@ prost-types = "0.14"
 rand = "0.9"
 regex = "1"
 roxmltree = "0.21.1"
+sha2 = "0.10"
 socket2 = "0.6"
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "io-util", "macros", "sync", "time"] }

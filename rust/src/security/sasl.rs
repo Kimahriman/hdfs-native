@@ -29,6 +29,7 @@ use crate::security::digest::DigestSaslSession;
 use crate::{HdfsError, Result};
 
 use super::gssapi::GssapiSession;
+use super::scram::{ScramSha256SaslSession, ScramSha512SaslSession};
 use super::user::{User, UserInfo};
 
 type Aes128Ctr = ctr::Ctr128BE<aes::Aes128>;
@@ -183,16 +184,17 @@ fn select_method(
     for auth in auths.iter() {
         match (
             AuthMethod::parse(&auth.method),
+            auth.mechanism.as_ref(),
             user.get_token(HDFS_DELEGATION_TOKEN, service),
         ) {
-            (Some(AuthMethod::Simple), _) => {
+            (Some(AuthMethod::Simple), _, _) => {
                 return Ok((auth.clone(), None));
             }
-            (Some(AuthMethod::Kerberos), _) => {
+            (Some(AuthMethod::Kerberos), _, _) => {
                 let session = GssapiSession::new(auth.protocol(), auth.server_id())?;
                 return Ok((auth.clone(), Some(Box::new(session))));
             }
-            (Some(AuthMethod::Token), Some(token)) => {
+            (Some(AuthMethod::Token), "DIGEST-MD5", Some(token)) => {
                 let session = DigestSaslSession::from_token(
                     auth.protocol().to_string(),
                     auth.server_id().to_string(),
@@ -200,6 +202,19 @@ fn select_method(
                 );
 
                 return Ok((auth.clone(), Some(Box::new(session))));
+            }
+            (Some(AuthMethod::Token), "SCRAM-SHA-256", Some(token)) => {
+                let session = ScramSha256SaslSession::from_token(token);
+
+                return Ok((auth.clone(), Some(Box::new(session))));
+            }
+            (Some(AuthMethod::Token), "SCRAM-SHA-512", Some(token)) => {
+                let session = ScramSha512SaslSession::from_token(token);
+
+                return Ok((auth.clone(), Some(Box::new(session))));
+            }
+            (Some(AuthMethod::Token), mechanism, Some(_)) => {
+                log::warn!("Ignoring unsupported TOKEN SASL mechanism: {mechanism}");
             }
             _ => (),
         }

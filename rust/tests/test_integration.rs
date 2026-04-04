@@ -13,7 +13,7 @@ mod test {
         test::PROXY_CALLS,
     };
     use serial_test::serial;
-    use std::collections::HashSet;
+    use std::{collections::HashSet, env};
     use whoami::username;
 
     #[tokio::test]
@@ -28,6 +28,30 @@ mod test {
         test_with_features(&HashSet::from([DfsFeatures::Security]))
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_security_scram_sha256() {
+        test_with_features(&HashSet::from([
+            DfsFeatures::Security,
+            DfsFeatures::Token,
+            DfsFeatures::ScramSha256,
+        ]))
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_security_scram_sha512() {
+        test_with_features(&HashSet::from([
+            DfsFeatures::Security,
+            DfsFeatures::Token,
+            DfsFeatures::ScramSha512,
+        ]))
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -186,7 +210,7 @@ mod test {
             features.contains(&DfsFeatures::Security) && !features.contains(&DfsFeatures::Token);
 
         let _dfs = MiniDfs::with_features(features);
-        let client = ClientBuilder::new().build().unwrap();
+        let client = ClientBuilder::new().build()?;
 
         let mut file = client.create("/testfile", WriteOptions::default()).await?;
         for i in 0..TEST_FILE_INTS as i32 {

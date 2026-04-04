@@ -5,8 +5,13 @@ import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.Set;
+
+import javax.security.sasl.Sasl;
+import javax.security.sasl.SaslServerFactory;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -35,6 +40,16 @@ import static org.apache.hadoop.hdfs.client.HdfsClientConfigKeys.*;
 public class Main {
 
     public static void main(String args[]) throws Exception {
+        final Enumeration<SaslServerFactory> factories =
+        Sasl.getSaslServerFactories();
+        while (factories.hasMoreElements()) {
+            SaslServerFactory factory = factories.nextElement();
+            System.err.println(factory);
+            for (String mech : factory.getMechanismNames(null)) {
+                System.err.println(mech);
+            }
+        }
+
         Set<String> flags = new HashSet<>();
         for (String arg : args) {
             flags.add(arg);
