@@ -382,12 +382,27 @@ impl User {
         }
     }
 
+    /// set effective user according to environment variable
     pub(crate) fn get_user_info() -> UserInfo {
         if let Ok(principal) = GssapiSession::get_default_principal() {
             return User::get_user_info_from_principal(&principal);
         }
 
         User::get_simple_user()
+    }
+
+    /// user given effective user instead of getting it from environment variable
+    pub(crate) fn get_user_info_with_effective_user(effective_user: String) -> UserInfo {
+        let real_user = if let Ok(principal) = GssapiSession::get_default_principal() {
+            Some(User::get_user_from_principal(&principal))
+        } else {
+            None
+        };
+
+        UserInfo {
+            real_user,
+            effective_user: Some(effective_user),
+        }
     }
 
     pub(crate) fn get_user_from_principal(principal: &str) -> String {
