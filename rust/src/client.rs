@@ -418,10 +418,7 @@ impl Client {
 
         let rt_holder = RuntimeHolder::new(rt);
 
-        let user_info = match user {
-            Some(effective_user) => User::get_user_info_with_effective_user(effective_user),
-            None => User::get_user_info(),
-        };
+        let user_info = User::get_user_info(user.clone(), config.security_enabled());
         let username = user_info
             .effective_user
             .as_deref()
@@ -440,6 +437,7 @@ impl Client {
                     &resolved_url,
                     Arc::clone(&config),
                     rt_holder.get_handle(),
+                    user.clone(),
                 )?;
                 let protocol = Arc::new(NamenodeProtocol::new(proxy, rt_holder.get_handle()));
 
@@ -454,6 +452,7 @@ impl Client {
                 resolved_url.host_str().expect("URL must have a host"),
                 Arc::clone(&config),
                 rt_holder.get_handle(),
+                user.clone(),
                 home_dir,
             )?,
             _ => {
@@ -474,6 +473,7 @@ impl Client {
         host: &str,
         config: Arc<Configuration>,
         handle: Handle,
+        effective_user: Option<String>,
         home_dir: String,
     ) -> Result<MountTable> {
         let mut mounts: Vec<MountLink> = Vec::new();
@@ -491,7 +491,12 @@ impl Client {
                     "Only hdfs mounts are supported for viewfs".to_string(),
                 ));
             }
-            let proxy = NameServiceProxy::new(&url, Arc::clone(&config), handle.clone())?;
+            let proxy = NameServiceProxy::new(
+                &url,
+                Arc::clone(&config),
+                handle.clone(),
+                effective_user.clone(),
+            )?;
             let protocol = Arc::new(NamenodeProtocol::new(proxy, handle.clone()));
 
             if let Some(prefix) = viewfs_path {
@@ -1196,6 +1201,7 @@ mod test {
             &Url::parse(url).unwrap(),
             Arc::new(Configuration::new(None, None).unwrap()),
             RT.handle().clone(),
+            None,
         )
         .unwrap();
         Arc::new(NamenodeProtocol::new(proxy, RT.handle().clone()))
@@ -1365,6 +1371,18 @@ mod test {
                 .build()
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn test_with_user_sets_relative_path_home_dir() {
+        let client = ClientBuilder::new()
+            .with_url("hdfs://127.0.0.1:9000")
+            .with_user("alice")
+            .build()
+            .unwrap();
+
+        let (_, resolved) = client.mount_table.resolve("file");
+        assert_eq!(resolved, "/user/alice/file");
     }
 
     #[test]

@@ -28,6 +28,7 @@ struct ProxyConnection {
     inner: Arc<tokio::sync::Mutex<Option<RpcConnection>>>,
     alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
     nameservice: Option<String>,
+    effective_user: Option<String>,
     config: Arc<Configuration>,
     handle: Handle,
 }
@@ -37,6 +38,7 @@ impl ProxyConnection {
         url: String,
         alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
         nameservice: Option<String>,
+        effective_user: Option<String>,
         config: Arc<Configuration>,
         handle: Handle,
     ) -> Self {
@@ -45,6 +47,7 @@ impl ProxyConnection {
             inner: Arc::new(tokio::sync::Mutex::new(None)),
             alignment_context,
             nameservice,
+            effective_user,
             config,
             handle,
         }
@@ -62,6 +65,7 @@ impl ProxyConnection {
                                 &self.url,
                                 self.alignment_context.clone(),
                                 self.nameservice.as_deref(),
+                                self.effective_user.clone(),
                                 &self.config,
                                 &self.handle,
                             )
@@ -113,6 +117,7 @@ impl NameServiceProxy {
         nameservice: &Url,
         config: Arc<Configuration>,
         handle: Handle,
+        effective_user: Option<String>,
     ) -> Result<Self> {
         let host = nameservice.host_str().ok_or(HdfsError::InvalidArgument(
             "No host for name service".to_string(),
@@ -147,6 +152,7 @@ impl NameServiceProxy {
                 url,
                 alignment_context,
                 None,
+                effective_user,
                 Arc::clone(&config),
                 handle,
             )]
@@ -160,6 +166,7 @@ impl NameServiceProxy {
                         url,
                         alignment_context.clone(),
                         Some(host.to_string()),
+                        effective_user.clone(),
                         Arc::clone(&config),
                         handle.clone(),
                     )
