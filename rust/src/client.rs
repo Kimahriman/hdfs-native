@@ -20,7 +20,6 @@ use crate::security::user::User;
 use crate::glob::{GlobPattern, expand_glob, get_path_components, unescape_component};
 use crate::proto::hdfs::{ContentSummaryProto, HdfsFileStatusProto};
 
-const TRASH_INTERVAL_KEY: &str = "fs.trash.interval";
 const TRASH_ROOT_DIR: &str = ".Trash";
 const TRASH_CURRENT_DIR: &str = "Current";
 const TRASH_DIR_PERMISSION: u32 = 0o700;
@@ -358,11 +357,6 @@ pub struct Client {
     rt_holder: RuntimeHolder,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct TrashConfig {
-    enabled: bool,
-}
-
 impl Client {
     /// Creates a new HDFS Client. The URL must include the protocol and host, and optionally a port.
     /// If a port is included, the host is treated as a single NameNode. If no port is included, the
@@ -570,24 +564,10 @@ impl Client {
         Self::join_paths(&home, TRASH_ROOT_DIR)
     }
 
-    fn parse_trash_interval(&self, key: &str) -> Result<u64> {
-        let Some(raw) = self.config.get(key) else {
-            return Ok(0);
-        };
-        let mut minutes: f64 = raw.parse().map_err(|_| {
-            HdfsError::InvalidArgument(format!("Invalid {key} value: {raw}"))
-        })?;
-        if minutes < 0.0 {
-            minutes = 0.0;
-        }
-        Ok((minutes * 60_000.0).round() as u64)
-    }
-
-    fn trash_config(&self) -> Result<TrashConfig> {
-        let deletion_interval_ms = self.parse_trash_interval(TRASH_INTERVAL_KEY)?;
-        let enabled = deletion_interval_ms > 0;
-
-        Ok(TrashConfig { enabled })
+    async fn trash_enabled(&self, path: &str) -> Result<bool> {
+        let (link, _) = self.mount_table.resolve(path);
+        let server_defaults = link.protocol.get_cached_server_defaults().await?;
+        Ok(server_defaults.trash_interval.unwrap_or_default() > 0)
     }
 
     fn split_parent_name(path: &str) -> Result<(String, String)> {
@@ -608,7 +588,7 @@ impl Client {
         Ok((parent, name.to_string()))
     }
 
-    async fn path_has_non_dir_ancestor(&self, path: &str) -> Result<bool> {
+    async fn non_dir_ancestor(&self, path: &str) -> Result<Option<String>> {
         let normalized = Self::normalize_path(path);
         let mut current = "/".to_string();
         for component in normalized.trim_start_matches('/').split('/') {
@@ -619,30 +599,23 @@ impl Client {
             match self.get_file_info(&current).await {
                 Ok(status) => {
                     if !status.isdir {
-                        return Ok(true);
+                        return Ok(Some(current));
                     }
                 }
-                Err(HdfsError::FileNotFound(_)) => return Ok(false),
+                Err(HdfsError::FileNotFound(_)) => return Ok(None),
                 Err(err) => return Err(err),
             }
         }
-        Ok(false)
+        Ok(None)
     }
 
     async fn ensure_unique_trash_path(&self, path: String) -> Result<String> {
         let base = path.clone();
-        let mut attempt = 0u32;
         let mut candidate = path;
         loop {
             match self.get_file_info(&candidate).await {
                 Ok(_) => {
-                    let suffix = if attempt == 0 {
-                        Self::current_time_millis().to_string()
-                    } else {
-                        format!("{}-{}", Self::current_time_millis(), attempt)
-                    };
-                    candidate = format!("{base}-{suffix}");
-                    attempt = attempt.saturating_add(1);
+                    candidate = format!("{}{}", base, Self::current_time_millis());
                 }
                 Err(HdfsError::FileNotFound(_)) => return Ok(candidate),
                 Err(err) => return Err(err),
@@ -813,14 +786,24 @@ impl Client {
             .map(|_| ())
     }
 
-    /// Renames `src` to `dst`. Returns Ok(()) on success, and Err otherwise.
-    pub async fn rename(&self, src: &str, dst: &str, overwrite: bool) -> Result<()> {
+    async fn rename_internal(
+        &self,
+        src: &str,
+        dst: &str,
+        overwrite: bool,
+        move_to_trash: bool,
+    ) -> Result<()> {
         let (src_link, src_resolved_path) = self.mount_table.resolve(src);
         let (dst_link, dst_resolved_path) = self.mount_table.resolve(dst);
         if src_link.viewfs_path == dst_link.viewfs_path {
             src_link
                 .protocol
-                .rename(&src_resolved_path, &dst_resolved_path, overwrite)
+                .rename(
+                    &src_resolved_path,
+                    &dst_resolved_path,
+                    overwrite,
+                    move_to_trash,
+                )
                 .await
                 .map(|_| ())
         } else {
@@ -828,6 +811,11 @@ impl Client {
                 "Cannot rename across different name services".to_string(),
             ))
         }
+    }
+
+    /// Renames `src` to `dst`. Returns Ok(()) on success, and Err otherwise.
+    pub async fn rename(&self, src: &str, dst: &str, overwrite: bool) -> Result<()> {
+        self.rename_internal(src, dst, overwrite, false).await
     }
 
     /// Deletes the file or directory at `path`. If `recursive` is false and `path` is a non-empty
@@ -842,17 +830,16 @@ impl Client {
 
     /// Moves a file or directory at `path` into the user's trash. Returns `Ok(true)` if moved,
     /// `Ok(false)` if trash is disabled or the path is already under trash.
-    pub async fn move_to_trash(&self, path: &str) -> Result<bool> {
+    pub async fn trash(&self, path: &str) -> Result<bool> {
         if path.is_empty() {
             return Err(HdfsError::InvalidPath("Empty path".to_string()));
         }
 
-        let trash_config = self.trash_config()?;
-        if !trash_config.enabled {
+        let src_abs = self.absolute_path(path);
+        if !self.trash_enabled(&src_abs).await? {
             return Ok(false);
         }
 
-        let src_abs = self.absolute_path(path);
         let trash_root = self.trash_root_path();
 
         if Self::is_prefix_path(&trash_root, &src_abs) {
@@ -885,9 +872,13 @@ impl Client {
                 {
                     Ok(()) => break,
                     Err(err) => {
-                        if self.path_has_non_dir_ancestor(&base_trash_path).await? {
+                        if let Some(ancestor) = self.non_dir_ancestor(&base_trash_path).await? {
                             let timestamp = Self::current_time_millis();
-                            base_trash_path = format!("{base_trash_path}-{timestamp}");
+                            base_trash_path = base_trash_path.replacen(
+                                &ancestor,
+                                &format!("{ancestor}{timestamp}"),
+                                1,
+                            );
                             trash_path = Self::join_paths(&base_trash_path, &src_name);
                             continue;
                         }
@@ -905,9 +896,12 @@ impl Client {
             }
 
             let unique_trash_path = self.ensure_unique_trash_path(trash_path.clone()).await?;
-            match self.rename(&src_abs, &unique_trash_path, false).await {
+            match self
+                .rename_internal(&src_abs, &unique_trash_path, false, true)
+                .await
+            {
                 Ok(()) => return Ok(true),
-                Err(err) if attempt == 0 => continue,
+                Err(_) if attempt == 0 => continue,
                 Err(err) => return Err(err),
             }
         }

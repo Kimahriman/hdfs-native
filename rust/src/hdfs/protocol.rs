@@ -297,11 +297,13 @@ impl NamenodeProtocol {
         src: &str,
         dst: &str,
         overwrite: bool,
+        move_to_trash: bool,
     ) -> Result<hdfs::Rename2ResponseProto> {
         let message = hdfs::Rename2RequestProto {
             src: src.to_string(),
             dst: dst.to_string(),
             overwrite_dest: overwrite,
+            move_to_trash: Some(move_to_trash),
             ..Default::default()
         };
         self.call("rename2", message, true).await

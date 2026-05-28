@@ -19,6 +19,7 @@ pub enum DfsFeatures {
     ViewFS,
     EC,
     RBF,
+    Trash,
 }
 
 impl DfsFeatures {
@@ -34,6 +35,7 @@ impl DfsFeatures {
             DfsFeatures::DataTransferEncryption => "data_transfer_encryption",
             DfsFeatures::Token => "token",
             DfsFeatures::RBF => "rbf",
+            DfsFeatures::Trash => "trash",
         }
     }
 
@@ -44,6 +46,7 @@ impl DfsFeatures {
             "privacy" => Some(DfsFeatures::Privacy),
             "security" => Some(DfsFeatures::Security),
             "token" => Some(DfsFeatures::Token),
+            "trash" => Some(DfsFeatures::Trash),
             _ => None,
         }
     }
