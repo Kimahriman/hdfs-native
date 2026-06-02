@@ -7,6 +7,11 @@ use ::hdfs_native::file::{FileReader, FileWriter};
 use ::hdfs_native::{
     Client,
     client::{FileStatus, ListStatusIterator},
+    sync::{
+        Client as SyncClient, ClientBuilder as SyncClientBuilder,
+        FileReadStream as SyncFileReadStream, FileReader as SyncFileReader,
+        FileWriter as SyncFileWriter, ListStatusIterator as SyncListStatusIterator,
+    },
 };
 use bytes::Bytes;
 use futures::StreamExt;
@@ -14,8 +19,7 @@ use futures::stream::BoxStream;
 use hdfs_native::acl::{AclEntry, AclStatus};
 use hdfs_native::client::{ClientBuilder, ContentSummary};
 use pyo3::exceptions::PyStopAsyncIteration;
-use pyo3::{exceptions::PyRuntimeError, prelude::*};
-use tokio::runtime::Runtime;
+use pyo3::prelude::*;
 
 mod error;
 
@@ -80,8 +84,7 @@ impl PyFileStatus {
 
 #[pyclass(name = "FileStatusIter")]
 struct PyFileStatusIter {
-    inner: Arc<ListStatusIterator>,
-    rt: Arc<Runtime>,
+    inner: Arc<Mutex<SyncListStatusIterator>>,
 }
 
 #[pymethods]
@@ -91,10 +94,8 @@ impl PyFileStatusIter {
     }
 
     fn __next__(slf: PyRefMut<'_, Self>) -> PyHdfsResult<Option<PyFileStatus>> {
-        // Kinda dumb, but lets us release the GIL while getting the next value
         let inner = Arc::clone(&slf.inner);
-        let rt = Arc::clone(&slf.rt);
-        if let Some(result) = slf.py().detach(|| rt.block_on(inner.next())) {
+        if let Some(result) = slf.py().detach(|| inner.lock().unwrap().next()) {
             Ok(Some(PyFileStatus::from(result?)))
         } else {
             Ok(None)
@@ -231,8 +232,7 @@ impl PyAclEntry {
 
 #[pyclass(name = "FileReadStream")]
 struct PyFileReadStream {
-    inner: Arc<Mutex<BoxStream<'static, hdfs_native::Result<Bytes>>>>,
-    rt: Arc<Runtime>,
+    inner: Arc<Mutex<SyncFileReadStream>>,
 }
 
 #[pymethods]
@@ -243,11 +243,7 @@ impl PyFileReadStream {
 
     fn __next__(slf: PyRefMut<'_, Self>) -> PyHdfsResult<Option<Cow<'_, [u8]>>> {
         let inner = Arc::clone(&slf.inner);
-        let rt = Arc::clone(&slf.rt);
-        if let Some(result) = slf
-            .py()
-            .detach(|| rt.block_on(inner.lock().unwrap().next()))
-        {
+        if let Some(result) = slf.py().detach(|| inner.lock().unwrap().next()) {
             Ok(Some(Cow::from(result?.to_vec())))
         } else {
             Ok(None)
@@ -257,8 +253,7 @@ impl PyFileReadStream {
 
 #[pyclass]
 struct RawFileReader {
-    inner: FileReader,
-    rt: Arc<Runtime>,
+    inner: SyncFileReader,
 }
 
 #[pymethods]
@@ -281,26 +276,18 @@ impl RawFileReader {
         } else {
             len as usize
         };
-        Ok(Cow::from(
-            py.detach(|| self.rt.block_on(self.inner.read(read_len)))?
-                .to_vec(),
-        ))
+        Ok(Cow::from(py.detach(|| self.inner.read(read_len))?.to_vec()))
     }
 
     pub fn read_range(&self, offset: usize, len: usize, py: Python) -> PyHdfsResult<Cow<'_, [u8]>> {
         Ok(Cow::from(
-            py.detach(|| self.rt.block_on(self.inner.read_range(offset, len)))?
-                .to_vec(),
+            py.detach(|| self.inner.read_range(offset, len))?.to_vec(),
         ))
     }
 
     pub fn read_range_stream(&self, offset: usize, len: usize) -> PyFileReadStream {
-        let stream = Arc::new(Mutex::new(
-            self.inner.read_range_stream(offset, len).boxed(),
-        ));
         PyFileReadStream {
-            inner: stream,
-            rt: Arc::clone(&self.rt),
+            inner: Arc::new(Mutex::new(self.inner.read_range_stream(offset, len))),
         }
     }
 }
@@ -389,25 +376,23 @@ impl PyWriteOptions {
 
 #[pyclass]
 struct RawFileWriter {
-    inner: FileWriter,
-    rt: Arc<Runtime>,
+    inner: SyncFileWriter,
 }
 
 #[pymethods]
 impl RawFileWriter {
     pub fn write(&mut self, buf: Vec<u8>, py: Python) -> PyHdfsResult<usize> {
-        Ok(py.detach(|| self.rt.block_on(self.inner.write(Bytes::from(buf))))?)
+        Ok(py.detach(|| self.inner.write(Bytes::from(buf)))?)
     }
 
     pub fn close(&mut self, py: Python) -> PyHdfsResult<()> {
-        Ok(py.detach(|| self.rt.block_on(self.inner.close()))?)
+        Ok(py.detach(|| self.inner.close())?)
     }
 }
 
 #[pyclass(name = "RawClient", subclass)]
 struct RawClient {
-    inner: Client,
-    rt: Arc<Runtime>,
+    inner: SyncClient,
 }
 
 #[pymethods]
@@ -424,7 +409,7 @@ impl RawClient {
 
         let config = config.unwrap_or_default();
 
-        let mut builder = ClientBuilder::new().with_config(config);
+        let mut builder = SyncClientBuilder::new().with_config(config);
 
         if let Some(url) = url {
             builder = builder.with_url(url);
@@ -436,47 +421,33 @@ impl RawClient {
 
         let inner = builder.build().map_err(PythonHdfsError::from)?;
 
-        Ok(RawClient {
-            inner,
-            rt: Arc::new(
-                tokio::runtime::Runtime::new()
-                    .map_err(|err| PyRuntimeError::new_err(err.to_string()))?,
-            ),
-        })
+        Ok(RawClient { inner })
     }
 
     pub fn get_file_info(&self, path: &str, py: Python) -> PyHdfsResult<PyFileStatus> {
-        Ok(py.detach(|| {
-            self.rt
-                .block_on(self.inner.get_file_info(path))
-                .map(PyFileStatus::from)
-        })?)
+        Ok(py.detach(|| self.inner.get_file_info(path).map(PyFileStatus::from))?)
     }
 
     pub fn list_status(&self, path: &str, recursive: bool) -> PyFileStatusIter {
         let inner = self.inner.list_status_iter(path, recursive);
         PyFileStatusIter {
-            inner: Arc::new(inner),
-            rt: Arc::clone(&self.rt),
+            inner: Arc::new(Mutex::new(inner)),
         }
     }
 
     pub fn glob_status(&self, pattern: String, py: Python) -> PyHdfsResult<Vec<PyFileStatus>> {
         py.detach(|| {
-            self.rt
-                .block_on(self.inner.glob_status(pattern.as_ref()))
+            self.inner
+                .glob_status(pattern.as_ref())
                 .map_err(PythonHdfsError::from)
                 .map(|statuses| statuses.into_iter().map(PyFileStatus::from).collect())
         })
     }
 
     pub fn read(&self, path: &str, py: Python) -> PyHdfsResult<RawFileReader> {
-        let file_reader = py.detach(|| self.rt.block_on(self.inner.read(path)))?;
+        let file_reader = py.detach(|| self.inner.read(path))?;
 
-        Ok(RawFileReader {
-            inner: file_reader,
-            rt: Arc::clone(&self.rt),
-        })
+        Ok(RawFileReader { inner: file_reader })
     }
 
     pub fn create(
@@ -485,24 +456,16 @@ impl RawClient {
         write_options: PyWriteOptions,
         py: Python,
     ) -> PyHdfsResult<RawFileWriter> {
-        let file_writer = py.detach(|| {
-            self.rt
-                .block_on(self.inner.create(src, WriteOptions::from(write_options)))
-        })?;
+        let file_writer =
+            py.detach(|| self.inner.create(src, WriteOptions::from(write_options)))?;
 
-        Ok(RawFileWriter {
-            inner: file_writer,
-            rt: Arc::clone(&self.rt),
-        })
+        Ok(RawFileWriter { inner: file_writer })
     }
 
     pub fn append(&self, src: &str, py: Python) -> PyHdfsResult<RawFileWriter> {
-        let file_writer = py.detach(|| self.rt.block_on(self.inner.append(src)))?;
+        let file_writer = py.detach(|| self.inner.append(src))?;
 
-        Ok(RawFileWriter {
-            inner: file_writer,
-            rt: Arc::clone(&self.rt),
-        })
+        Ok(RawFileWriter { inner: file_writer })
     }
 
     pub fn mkdirs(
@@ -512,22 +475,19 @@ impl RawClient {
         create_parent: bool,
         py: Python,
     ) -> PyHdfsResult<()> {
-        Ok(py.detach(|| {
-            self.rt
-                .block_on(self.inner.mkdirs(path, permission, create_parent))
-        })?)
+        Ok(py.detach(|| self.inner.mkdirs(path, permission, create_parent))?)
     }
 
     pub fn rename(&self, src: &str, dst: &str, overwrite: bool, py: Python) -> PyHdfsResult<()> {
-        Ok(py.detach(|| self.rt.block_on(self.inner.rename(src, dst, overwrite)))?)
+        Ok(py.detach(|| self.inner.rename(src, dst, overwrite))?)
     }
 
     pub fn delete(&self, path: &str, recursive: bool, py: Python) -> PyHdfsResult<bool> {
-        Ok(py.detach(|| self.rt.block_on(self.inner.delete(path, recursive)))?)
+        Ok(py.detach(|| self.inner.delete(path, recursive))?)
     }
 
     pub fn set_times(&self, path: &str, mtime: u64, atime: u64, py: Python) -> PyHdfsResult<()> {
-        Ok(py.detach(|| self.rt.block_on(self.inner.set_times(path, mtime, atime)))?)
+        Ok(py.detach(|| self.inner.set_times(path, mtime, atime))?)
     }
 
     #[pyo3(signature = (path, owner=None, group=None))]
@@ -538,27 +498,19 @@ impl RawClient {
         group: Option<&str>,
         py: Python,
     ) -> PyHdfsResult<()> {
-        Ok(py.detach(|| self.rt.block_on(self.inner.set_owner(path, owner, group)))?)
+        Ok(py.detach(|| self.inner.set_owner(path, owner, group))?)
     }
 
     pub fn set_permission(&self, path: &str, permission: u32, py: Python) -> PyHdfsResult<()> {
-        Ok(py.detach(|| {
-            self.rt
-                .block_on(self.inner.set_permission(path, permission))
-        })?)
+        Ok(py.detach(|| self.inner.set_permission(path, permission))?)
     }
 
     pub fn set_replication(&self, path: &str, replication: u32, py: Python) -> PyHdfsResult<bool> {
-        Ok(py.detach(|| {
-            self.rt
-                .block_on(self.inner.set_replication(path, replication))
-        })?)
+        Ok(py.detach(|| self.inner.set_replication(path, replication))?)
     }
 
     pub fn get_content_summary(&self, path: &str, py: Python) -> PyHdfsResult<PyContentSummary> {
-        Ok(py
-            .detach(|| self.rt.block_on(self.inner.get_content_summary(path)))?
-            .into())
+        Ok(py.detach(|| self.inner.get_content_summary(path))?.into())
     }
 
     pub fn modify_acl_entries(
@@ -568,10 +520,8 @@ impl RawClient {
         py: Python,
     ) -> PyHdfsResult<()> {
         Ok(py.detach(|| {
-            self.rt.block_on(
-                self.inner
-                    .modify_acl_entries(path, acl_spec.into_iter().collect()),
-            )
+            self.inner
+                .modify_acl_entries(path, acl_spec.into_iter().collect())
         })?)
     }
 
@@ -582,32 +532,25 @@ impl RawClient {
         py: Python,
     ) -> PyHdfsResult<()> {
         Ok(py.detach(|| {
-            self.rt.block_on(
-                self.inner
-                    .remove_acl_entries(path, acl_spec.into_iter().collect()),
-            )
+            self.inner
+                .remove_acl_entries(path, acl_spec.into_iter().collect())
         })?)
     }
 
     pub fn remove_default_acl(&self, path: &str, py: Python) -> PyHdfsResult<()> {
-        Ok(py.detach(|| self.rt.block_on(self.inner.remove_default_acl(path)))?)
+        Ok(py.detach(|| self.inner.remove_default_acl(path))?)
     }
 
     pub fn remove_acl(&self, path: &str, py: Python) -> PyHdfsResult<()> {
-        Ok(py.detach(|| self.rt.block_on(self.inner.remove_acl(path)))?)
+        Ok(py.detach(|| self.inner.remove_acl(path))?)
     }
 
     pub fn set_acl(&self, path: &str, acl_spec: Vec<PyAclEntry>, py: Python) -> PyHdfsResult<()> {
-        Ok(py.detach(|| {
-            self.rt
-                .block_on(self.inner.set_acl(path, acl_spec.into_iter().collect()))
-        })?)
+        Ok(py.detach(|| self.inner.set_acl(path, acl_spec.into_iter().collect()))?)
     }
 
     pub fn get_acl_status(&self, path: &str, py: Python) -> PyHdfsResult<PyAclStatus> {
-        Ok(py
-            .detach(|| self.rt.block_on(self.inner.get_acl_status(path)))?
-            .into())
+        Ok(py.detach(|| self.inner.get_acl_status(path))?.into())
     }
 }
 

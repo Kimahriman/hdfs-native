@@ -37,6 +37,7 @@ pub(crate) mod hdfs;
 pub mod minidfs;
 pub(crate) mod proto;
 pub(crate) mod security;
+pub mod sync;
 
 pub use client::WriteOptions;
 pub use client::{Client, ClientBuilder};

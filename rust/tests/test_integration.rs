@@ -10,10 +10,12 @@ mod test {
         acl::AclEntry,
         client::{ClientBuilder, FileStatus},
         minidfs::{DfsFeatures, MiniDfs},
+        sync::ClientBuilder as SyncClientBuilder,
         test::PROXY_CALLS,
     };
     use serial_test::serial;
     use std::collections::HashSet;
+    use std::io::{Read, Seek, SeekFrom, Write};
     use whoami::username;
 
     #[tokio::test]
@@ -177,6 +179,57 @@ mod test {
     #[serial]
     fn test_no_tokio() {
         futures::executor::block_on(test_with_features(&HashSet::new())).unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn test_basic_sync_client() -> Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let _dfs = MiniDfs::with_features(&HashSet::new());
+        let client = SyncClientBuilder::new().build()?;
+
+        let write_options = WriteOptions::default().overwrite(true);
+        let mut writer = client.create("/syncfile", &write_options)?;
+        writer.write_all(b"hello ").unwrap();
+        writer.close()?;
+
+        assert_eq!(client.get_file_info("/syncfile")?.length, 6);
+
+        let statuses: Vec<FileStatus> = client
+            .list_status_iter("/", false)
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|status| !status.isdir)
+            .collect();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].path, "/syncfile");
+
+        let mut writer = client.append("/syncfile")?;
+        writer.write_all(b"sync").unwrap();
+        writer.close()?;
+
+        let mut reader = client.read("/syncfile")?;
+        assert_eq!(reader.file_length(), 10);
+        let mut prefix = [0; 6];
+        reader.read_exact(&mut prefix).unwrap();
+        assert_eq!(&prefix, b"hello ");
+        assert_eq!(reader.tell(), 6);
+        assert_eq!(Seek::seek(&mut reader, SeekFrom::Start(0)).unwrap(), 0);
+
+        let data = reader.read_range(0, reader.file_length())?;
+        assert_eq!(data.as_ref(), b"hello sync");
+
+        let streamed = reader
+            .read_range_stream(6, 4)
+            .collect::<Result<Vec<_>>>()?
+            .concat();
+        assert_eq!(streamed, b"sync");
+
+        assert!(client.delete("/syncfile", false)?);
+        assert!(client.get_file_info("/syncfile").is_err());
+
+        Ok(())
     }
 
     pub async fn test_with_features(features: &HashSet<DfsFeatures>) -> Result<()> {
