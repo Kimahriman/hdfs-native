@@ -88,8 +88,9 @@ jobs:
           path: wheels
           pattern: wheels-*
           merge-multiple: true
+      - name: Install uv
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        uses: astral-sh/setup-uv@v7
       - name: Publish to PyPI
-        uses: PyO3/maturin-action@v1
-        with:
-          command: upload
-          args: --skip-existing wheels/*
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: uv publish --trusted-publishing always 'wheels/*'
