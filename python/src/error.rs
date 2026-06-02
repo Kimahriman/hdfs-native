@@ -1,5 +1,7 @@
 use hdfs_native::HdfsError;
-use pyo3::{PyErr, exceptions::*};
+use pyo3::{PyErr, create_exception, exceptions::*};
+
+create_exception!(_internal, TrashNotEnabledError, PyException);
 
 pub struct PythonHdfsError(HdfsError);
 
@@ -19,6 +21,7 @@ impl From<PythonHdfsError> for PyErr {
             HdfsError::AlreadyExists(path) => PyFileExistsError::new_err(path),
             HdfsError::FileNotFound(path) => PyFileNotFoundError::new_err(path),
             HdfsError::IsADirectoryError(path) => PyIsADirectoryError::new_err(path),
+            HdfsError::TrashNotEnabled => TrashNotEnabledError::new_err("Trash is not enabled"),
             HdfsError::UnsupportedFeature(feat) => PyNotImplementedError::new_err(feat),
             _ => PyRuntimeError::new_err(format!("{:?}", value.0)),
         }

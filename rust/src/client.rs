@@ -828,22 +828,23 @@ impl Client {
             .map(|r| r.result)
     }
 
-    /// Moves a file or directory at `path` into the user's trash. Returns `Ok(true)` if moved,
-    /// `Ok(false)` if trash is disabled or the path is already under trash.
-    pub async fn trash(&self, path: &str) -> Result<bool> {
+    /// Moves a file or directory at `path` into the user's trash. Returns `Ok(Some(path))` if
+    /// moved, where `path` is the new location in the trash, or `Ok(None)` if the path is already
+    /// under trash.
+    pub async fn trash(&self, path: &str) -> Result<Option<String>> {
         if path.is_empty() {
             return Err(HdfsError::InvalidPath("Empty path".to_string()));
         }
 
         let src_abs = self.absolute_path(path);
         if !self.trash_enabled(&src_abs).await? {
-            return Ok(false);
+            return Err(HdfsError::TrashNotEnabled);
         }
 
         let trash_root = self.trash_root_path();
 
         if Self::is_prefix_path(&trash_root, &src_abs) {
-            return Ok(false);
+            return Ok(None);
         }
         if Self::is_prefix_path(&src_abs, &trash_root) {
             return Err(HdfsError::InvalidArgument(
@@ -900,7 +901,7 @@ impl Client {
                 .rename_internal(&src_abs, &unique_trash_path, false, true)
                 .await
             {
-                Ok(()) => return Ok(true),
+                Ok(()) => return Ok(Some(unique_trash_path)),
                 Err(_) if attempt == 0 => continue,
                 Err(err) => return Err(err),
             }

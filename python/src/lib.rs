@@ -19,7 +19,7 @@ use tokio::runtime::Runtime;
 
 mod error;
 
-use crate::error::PythonHdfsError;
+use crate::error::{PythonHdfsError, TrashNotEnabledError};
 
 type PyHdfsResult<T> = Result<T, PythonHdfsError>;
 
@@ -526,7 +526,7 @@ impl RawClient {
         Ok(py.detach(|| self.rt.block_on(self.inner.delete(path, recursive)))?)
     }
 
-    pub fn trash(&self, path: &str, py: Python) -> PyHdfsResult<bool> {
+    pub fn trash(&self, path: &str, py: Python) -> PyHdfsResult<Option<String>> {
         Ok(py.detach(|| self.rt.block_on(self.inner.trash(path)))?)
     }
 
@@ -827,7 +827,7 @@ impl AsyncRawClient {
         Ok(self.inner.delete(&path, recursive).await?)
     }
 
-    pub async fn trash(&self, path: String) -> PyHdfsResult<bool> {
+    pub async fn trash(&self, path: String) -> PyHdfsResult<Option<String>> {
         Ok(self.inner.trash(&path).await?)
     }
 
@@ -917,5 +917,9 @@ fn _internal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAclStatus>()?;
 
     m.add_class::<AsyncRawClient>()?;
+    m.add(
+        "TrashNotEnabledError",
+        m.py().get_type::<TrashNotEnabledError>(),
+    )?;
     Ok(())
 }
