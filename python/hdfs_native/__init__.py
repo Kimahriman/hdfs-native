@@ -54,7 +54,7 @@ class FileReader(io.RawIOBase):
         # Don't need to do anything special here
         return self
 
-    def __exit__(self, *_args):
+    def __exit__(self, exc_type, exc_val, exc_tb):
         # Future updates could close the file manually here if that would help clean things up
         pass
 
@@ -124,7 +124,7 @@ class FileWriter(io.RawIOBase):
     def __enter__(self) -> "FileWriter":
         return self
 
-    def __exit__(self, *_args):
+    def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
 
