@@ -802,7 +802,7 @@ def _parse_acl_spec(acl_spec: str) -> List[AclEntry]:
         entries.append(
             AclEntry(
                 type=entry_type,  # type: ignore
-                scope=scope,  # type: ignore
+                scope=scope,
                 permissions=permissions,  # type: ignore
                 name=name,
             )
