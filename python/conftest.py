@@ -20,6 +20,7 @@ def minidfs():
             "clean",
             "compile",
             "exec:java",
+            "-Dexec.args=trash",
         ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,

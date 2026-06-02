@@ -554,14 +554,12 @@ def test_put(client: Client):
 
 
 def test_rm(client: Client):
-    with pytest.raises(ValueError):
-        cli_main(["rm", "/testfile"])
-
     with pytest.raises(FileNotFoundError):
         cli_main(["rm", "-s", "/testfile"])
 
     cli_main(["rm", "-f", "-s", "/testfile"])
 
+    # Skipping trash
     client.create("/testfile").close()
     cli_main(["rm", "-s", "/testfile"])
     assert_not_exists(client, "/testfile")
@@ -575,6 +573,19 @@ def test_rm(client: Client):
 
     cli_main(["rm", "-r", "-s", "/testdir"])
     assert_not_exists(client, "/testdir")
+
+    # Moving to trash
+    client.create("/testfile").close()
+    cli_main(["rm", "/testfile"])
+    assert_not_exists(client, "/testfile")
+
+    trash_files = client.glob_status("/user/*/.Trash/Current/testfile")
+    assert len(trash_files) == 1, "File should be moved to trash"
+
+    cli_main(["rm", trash_files[0].path])
+    assert_not_exists(client, trash_files[0].path)
+
+    cli_main(["rm", "-s", "-r", "/user"])
 
 
 def test_rmdir(client: Client):

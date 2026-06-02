@@ -723,7 +723,16 @@ def rm(args: Namespace):
                     if not args.recursive and client.get_file_info(path).isdir:
                         raise IsADirectoryError(path)
                     try:
-                        client.trash(path)
+                        trash_path = client.trash(path)
+                        if trash_path is not None:
+                            print(f"Moved: {path} to trash at: {trash_path}")
+                        else:
+                            # File is already in the trash, so we can delete it permanently
+                            if (
+                                not client.delete(path, args.recursive)
+                                and not args.force
+                            ):
+                                raise FileNotFoundError(f"Failed to delete {path}")
                     except TrashNotEnabledError as err:
                         raise ValueError(
                             "Trash is not enabled. Pass --skip-trash to permanently delete the files."
