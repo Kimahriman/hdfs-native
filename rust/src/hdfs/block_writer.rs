@@ -825,7 +825,7 @@ impl CellBuffer {
 
         let parity_slices = self.coder.encode(&data_slices[..]);
 
-        for (slice, size) in data_slices.iter_mut().zip(original_sizes.into_iter()) {
+        for (slice, size) in data_slices.iter_mut().zip(original_sizes) {
             let _ = slice.split_off(size);
         }
 
