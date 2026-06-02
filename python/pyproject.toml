@@ -52,6 +52,9 @@ viewfs = "hdfs_native.fsspec.ViewfsFileSystem"
 features = ["pyo3/extension-module"]
 module-name = "hdfs_native._internal"
 
+[tool.maturin.generate-ci.github]
+trusted-publishing = true
+
 [tool.pytest.ini_options]
 testpaths = [
     "tests",
