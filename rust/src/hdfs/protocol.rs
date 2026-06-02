@@ -304,7 +304,6 @@ impl NamenodeProtocol {
             dst: dst.to_string(),
             overwrite_dest: overwrite,
             move_to_trash: Some(move_to_trash),
-            ..Default::default()
         };
         self.call("rename2", message, true).await
     }
