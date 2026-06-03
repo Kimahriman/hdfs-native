@@ -487,7 +487,7 @@ impl RawClient {
     }
 
     pub fn trash(&self, path: &str, py: Python) -> PyHdfsResult<Option<String>> {
-        Ok(py.detach(|| self.rt.block_on(self.inner.trash(path)))?)
+        Ok(py.detach(|| self.inner.trash(path))?)
     }
 
     pub fn set_times(&self, path: &str, mtime: u64, atime: u64, py: Python) -> PyHdfsResult<()> {

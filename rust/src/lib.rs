@@ -3,13 +3,15 @@
 //!
 //! # Usage
 //!
-//! Create a client to a single NameNode
+//! ## Async client
+//!
+//! Create an async client to a single NameNode
 //! ```rust
 //! use hdfs_native::ClientBuilder;
 //! let client = ClientBuilder::new().with_url("hdfs://localhost:9000").build().unwrap();
 //! ```
 //!
-//! Create a client for a Name Service
+//! Create an async client for a Name Service
 //! ```rust
 //! use hdfs_native::ClientBuilder;
 //! let client = ClientBuilder::new()
@@ -21,6 +23,25 @@
 //!     ])
 //!     .build()
 //!     .unwrap();
+//! ```
+//!
+//! ## Sync client
+//!
+//! The [`sync`] module provides blocking wrappers around the async client. This is useful for
+//! applications that do not use Tokio directly.
+//!
+//! Create a sync client to a single NameNode
+//! ```rust
+//! use hdfs_native::sync::ClientBuilder;
+//! let client = ClientBuilder::new().with_url("hdfs://localhost:9000").build().unwrap();
+//! ```
+//!
+//! Use the sync client with standard IO traits
+//! ```rust,no_run
+//! use std::io::{Read, Write};
+//! use hdfs_native::{WriteOptions, sync::ClientBuilder};
+//!
+//! let client = ClientBuilder::new().with_url("hdfs://localhost:9000").build().unwrap();
 //! ```
 pub mod acl;
 pub mod client;

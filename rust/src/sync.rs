@@ -135,6 +135,11 @@ impl Client {
         self.block_on(self.inner.delete(path, recursive))
     }
 
+    /// Move a file or directory at `path` into the user's trash.
+    pub fn trash(&self, path: &str) -> Result<Option<String>> {
+        self.block_on(self.inner.trash(path))
+    }
+
     /// Set modified and access times for a file.
     pub fn set_times(&self, path: &str, mtime: u64, atime: u64) -> Result<()> {
         self.block_on(self.inner.set_times(path, mtime, atime))
