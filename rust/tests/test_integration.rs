@@ -4,7 +4,7 @@ mod common;
 #[cfg(feature = "integration-test")]
 mod test {
     use crate::common::{TEST_FILE_INTS, assert_bufs_equal};
-    use bytes::{BufMut, Bytes, BytesMut};
+    use bytes::{BufMut, BytesMut};
     use hdfs_native::{
         Client, Result, WriteOptions,
         acl::AclEntry,
@@ -192,7 +192,7 @@ mod test {
 
         let write_options = WriteOptions::default().overwrite(true);
         let mut writer = client.create("/syncfile", &write_options)?;
-        writer.write(Bytes::from_static(b"hello "))?;
+        writer.write_all(b"hello ").unwrap();
         writer.close()?;
 
         assert_eq!(client.get_file_info("/syncfile")?.length, 6);
@@ -207,15 +207,16 @@ mod test {
         assert_eq!(statuses[0].path, "/syncfile");
 
         let mut writer = client.append("/syncfile")?;
-        writer.write(Bytes::from_static(b"sync"))?;
+        writer.write_all(b"sync").unwrap();
         writer.close()?;
 
         let mut reader = client.read("/syncfile")?;
         assert_eq!(reader.file_length(), 10);
-        let prefix = reader.read(6)?;
-        assert_eq!(prefix.as_ref(), b"hello ");
+        let mut prefix = [0; 6];
+        reader.read_exact(&mut prefix).unwrap();
+        assert_eq!(&prefix, b"hello ");
         assert_eq!(reader.tell(), 6);
-        reader.seek(0);
+        assert_eq!(Seek::seek(&mut reader, SeekFrom::Start(0)).unwrap(), 0);
 
         let data = reader.read_range(0, reader.file_length())?;
         assert_eq!(data.as_ref(), b"hello sync");
@@ -243,7 +244,7 @@ mod test {
 
         let mut file = client.create("/testfile", WriteOptions::default()).await?;
         for i in 0..TEST_FILE_INTS as i32 {
-            file.write(i.to_be_bytes().to_vec().into()).await?;
+            file.write_bytes(i.to_be_bytes().to_vec().into()).await?;
         }
         file.close().await?;
 
@@ -357,13 +358,13 @@ mod test {
 
         let buf = data.freeze();
 
-        writer.write(buf).await?;
+        writer.write_bytes(buf).await?;
         writer.close().await?;
 
         assert_eq!(client.get_file_info("/newfile").await?.length, 4096);
 
         let mut reader = client.read("/newfile").await?;
-        let read_data = reader.read(reader.file_length()).await?;
+        let read_data = reader.read_bytes(reader.file_length()).await?;
 
         assert_bufs_equal(&file_contents, &read_data, None);
 
@@ -376,11 +377,11 @@ mod test {
         let buf = data.freeze();
 
         let mut writer = client.append("/newfile").await?;
-        writer.write(buf).await?;
+        writer.write_bytes(buf).await?;
         writer.close().await?;
 
         let mut reader = client.read("/newfile").await?;
-        let read_data = reader.read(reader.file_length()).await?;
+        let read_data = reader.read_bytes(reader.file_length()).await?;
 
         assert_bufs_equal(&file_contents, &read_data, None);
 
@@ -608,12 +609,12 @@ mod test {
     async fn test_get_content_summary(client: &Client) -> Result<()> {
         let mut file1 = client.create("/test", WriteOptions::default()).await?;
 
-        file1.write(vec![0, 1, 2, 3].into()).await?;
+        file1.write_bytes(vec![0, 1, 2, 3].into()).await?;
         file1.close().await?;
 
         let mut file2 = client.create("/test2", WriteOptions::default()).await?;
 
-        file2.write(vec![0, 1, 2, 3, 4, 5].into()).await?;
+        file2.write_bytes(vec![0, 1, 2, 3, 4, 5].into()).await?;
         file2.close().await?;
 
         client.mkdirs("/testdir", 0o755, true).await?;

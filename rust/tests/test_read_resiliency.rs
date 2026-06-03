@@ -25,7 +25,7 @@ mod test {
 
         let mut file = client.create("/testfile", WriteOptions::default()).await?;
         for i in 0..TEST_FILE_INTS as i32 {
-            file.write(i.to_be_bytes().to_vec().into()).await?;
+            file.write_bytes(i.to_be_bytes().to_vec().into()).await?;
         }
         file.close().await?;
 
@@ -44,7 +44,7 @@ mod test {
             )
             .await?;
         for i in 0..TEST_FILE_INTS as i32 {
-            file.write(i.to_be_bytes().to_vec().into()).await?;
+            file.write_bytes(i.to_be_bytes().to_vec().into()).await?;
         }
         file.close().await?;
 

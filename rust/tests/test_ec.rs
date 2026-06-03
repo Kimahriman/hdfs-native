@@ -179,7 +179,7 @@ mod test {
                     buf.put_u32(i);
                 }
 
-                writer.write(buf.freeze()).await?;
+                writer.write_bytes(buf.freeze()).await?;
                 writer.close().await?;
 
                 let reader = client.read(&file).await?;
@@ -210,7 +210,7 @@ mod test {
                 buf.put_u32(i);
             }
 
-            writer.write(buf.freeze()).await?;
+            writer.write_bytes(buf.freeze()).await?;
             writer.close().await?;
 
             let mut writer = client.append(&file).await?;
@@ -221,7 +221,7 @@ mod test {
                 buf.put_u32(i as u32);
             }
 
-            writer.write(buf.freeze()).await?;
+            writer.write_bytes(buf.freeze()).await?;
             writer.close().await?;
 
             let _ = EC_FAULT_INJECTOR.lock().unwrap().take();

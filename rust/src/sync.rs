@@ -5,6 +5,7 @@
 //! without managing an async runtime directly.
 
 use std::future::Future;
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
@@ -16,6 +17,10 @@ use crate::acl::{AclEntry, AclStatus};
 use crate::client::{self, ContentSummary, FileStatus, WriteOptions};
 use crate::file::{FileReader as AsyncFileReader, FileWriter as AsyncFileWriter};
 use crate::{Result, client::IORuntime};
+
+fn io_error(error: crate::HdfsError) -> io::Error {
+    io::Error::other(error)
+}
 
 /// Builds a new synchronous [`Client`] instance.
 #[derive(Default)]
@@ -236,8 +241,8 @@ impl FileReader {
     }
 
     /// Sets the cursor position.
-    pub fn seek(&mut self, pos: usize) {
-        self.inner.seek(pos);
+    pub fn set_position(&mut self, pos: usize) {
+        self.inner.set_position(pos);
     }
 
     /// Returns the current cursor position in the file.
@@ -246,13 +251,13 @@ impl FileReader {
     }
 
     /// Read up to `len` bytes, advancing the internal position.
-    pub fn read(&mut self, len: usize) -> Result<Bytes> {
-        self.rt.block_on(self.inner.read(len))
+    pub fn read_bytes(&mut self, len: usize) -> Result<Bytes> {
+        self.rt.block_on(self.inner.read_bytes(len))
     }
 
     /// Read up to `buf.len()` bytes into the provided slice.
-    pub fn read_buf(&mut self, buf: &mut [u8]) -> Result<usize> {
-        self.rt.block_on(self.inner.read_buf(buf))
+    pub fn read_into(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.rt.block_on(self.inner.read_into(buf))
     }
 
     /// Read up to `len` bytes starting at `offset`.
@@ -271,6 +276,34 @@ impl FileReader {
             inner: Mutex::new(self.inner.read_range_stream(offset, len).boxed()),
             rt: Arc::clone(&self.rt),
         }
+    }
+}
+
+impl Read for FileReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.read_into(buf).map_err(io_error)
+    }
+}
+
+impl Seek for FileReader {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let file_length = self.file_length() as i128;
+        let current = self.tell() as i128;
+        let new_pos = match pos {
+            SeekFrom::Start(pos) => i128::from(pos),
+            SeekFrom::End(offset) => file_length + i128::from(offset),
+            SeekFrom::Current(offset) => current + i128::from(offset),
+        };
+
+        if new_pos < 0 || new_pos > file_length {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "cannot seek outside of file bounds",
+            ));
+        }
+
+        self.inner.set_position(new_pos as usize);
+        Ok(new_pos as u64)
     }
 }
 
@@ -296,12 +329,23 @@ pub struct FileWriter {
 
 impl FileWriter {
     /// Write bytes to the file.
-    pub fn write(&mut self, buf: Bytes) -> Result<usize> {
-        self.rt.block_on(self.inner.write(buf))
+    pub fn write_bytes(&mut self, buf: Bytes) -> Result<usize> {
+        self.rt.block_on(self.inner.write_bytes(buf))
     }
 
     /// Close the file writer.
     pub fn close(&mut self) -> Result<()> {
         self.rt.block_on(self.inner.close())
+    }
+}
+
+impl Write for FileWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.write_bytes(Bytes::copy_from_slice(buf))
+            .map_err(io_error)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }

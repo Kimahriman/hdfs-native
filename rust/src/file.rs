@@ -75,7 +75,7 @@ impl FileReader {
     }
 
     /// Sets the cursor to the position. Panics if the position is beyond the end of the file
-    pub fn seek(&mut self, pos: usize) {
+    pub fn set_position(&mut self, pos: usize) {
         if pos > self.file_length() {
             panic!("Cannot seek beyond the end of a file");
         }
@@ -90,7 +90,7 @@ impl FileReader {
 
     /// Read up to `len` bytes into a new [Bytes] object, advancing the internal position in the file.
     /// An empty [Bytes] object will be returned if the end of the file has been reached.
-    pub async fn read(&mut self, len: usize) -> Result<Bytes> {
+    pub async fn read_bytes(&mut self, len: usize) -> Result<Bytes> {
         self.pending_read = None;
         if self.position >= self.file_length() {
             Ok(Bytes::new())
@@ -103,7 +103,7 @@ impl FileReader {
 
     /// Read up to `buf.len()` bytes into the provided slice, advancing the internal position in the file.
     /// Returns the number of bytes that were read, or 0 if the end of the file has been reached.
-    pub async fn read_buf(&mut self, buf: &mut [u8]) -> Result<usize> {
+    pub async fn read_into(&mut self, buf: &mut [u8]) -> Result<usize> {
         self.pending_read = None;
         if self.position >= self.file_length() {
             Ok(0)
@@ -346,7 +346,7 @@ impl FileWriter {
         Ok(self.block_writer.as_mut().unwrap())
     }
 
-    pub async fn write(&mut self, mut buf: Bytes) -> Result<usize> {
+    pub async fn write_bytes(&mut self, mut buf: Bytes) -> Result<usize> {
         let bytes_to_write = buf.len();
         while !buf.is_empty() {
             let block_writer = self.get_block_writer().await?;

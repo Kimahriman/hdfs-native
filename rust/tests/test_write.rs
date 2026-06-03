@@ -79,7 +79,7 @@ mod test {
 
             let buf = data.freeze();
 
-            writer.write(buf.clone()).await?;
+            writer.write_bytes(buf.clone()).await?;
             writer.close().await?;
 
             assert_eq!(
@@ -88,7 +88,7 @@ mod test {
             );
 
             let mut reader = client.read("/newfile").await?;
-            let read_data = reader.read(reader.file_length()).await?;
+            let read_data = reader.read_bytes(reader.file_length()).await?;
 
             assert_bufs_equal(&buf, &read_data, Some(format!("for size {size_to_check}")));
         }
@@ -136,11 +136,11 @@ mod test {
             let buf = data.freeze();
 
             let mut writer = client.append("/newfile").await?;
-            writer.write(buf).await?;
+            writer.write_bytes(buf).await?;
             writer.close().await?;
 
             let mut reader = client.read("/newfile").await?;
-            let read_data = reader.read(reader.file_length()).await?;
+            let read_data = reader.read_bytes(reader.file_length()).await?;
 
             assert_bufs_equal(&file_contents, &read_data, None);
         }

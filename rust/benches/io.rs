@@ -18,7 +18,7 @@ async fn write_file(client: &Client, path: &str, ints: usize) {
     for i in 0..ints {
         data.put_u32(i as u32);
     }
-    writer.write(data.freeze()).await.unwrap();
+    writer.write_bytes(data.freeze()).await.unwrap();
     writer.close().await.unwrap();
 }
 
@@ -117,7 +117,7 @@ fn bench(c: &mut Criterion) {
                 .await
                 .unwrap();
 
-            writer.write(buf.clone()).await.unwrap();
+            writer.write_bytes(buf.clone()).await.unwrap();
             writer.close().await.unwrap();
         })
     });
@@ -152,7 +152,7 @@ fn bench(c: &mut Criterion) {
                 .await
                 .unwrap();
 
-            writer.write(buf.clone()).await.unwrap();
+            writer.write_bytes(buf.clone()).await.unwrap();
             writer.close().await.unwrap();
         })
     });
