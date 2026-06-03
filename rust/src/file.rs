@@ -1,10 +1,14 @@
+use std::io;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, stream};
 use log::warn;
+use tokio::io::{AsyncRead, ReadBuf};
 use tokio::runtime::Handle;
 
 use crate::common::config::Configuration;
@@ -18,6 +22,15 @@ use crate::{HdfsError, Result};
 const COMPLETE_RETRY_DELAY_MS: u64 = 500;
 const COMPLETE_RETRIES: u32 = 5;
 
+fn io_error(error: HdfsError) -> io::Error {
+    io::Error::other(error)
+}
+
+struct PendingRead {
+    stream: BoxStream<'static, Result<Bytes>>,
+    end_position: usize,
+}
+
 pub struct FileReader {
     protocol: Arc<NamenodeProtocol>,
     located_blocks: hdfs::LocatedBlocksProto,
@@ -25,6 +38,7 @@ pub struct FileReader {
     position: usize,
     config: Arc<Configuration>,
     handle: Handle,
+    pending_read: Option<std::sync::Mutex<PendingRead>>,
 }
 
 impl FileReader {
@@ -42,6 +56,7 @@ impl FileReader {
             position: 0,
             config,
             handle,
+            pending_read: None,
         }
     }
 
@@ -64,6 +79,7 @@ impl FileReader {
         if pos > self.file_length() {
             panic!("Cannot seek beyond the end of a file");
         }
+        self.pending_read = None;
         self.position = pos;
     }
 
@@ -75,6 +91,7 @@ impl FileReader {
     /// Read up to `len` bytes into a new [Bytes] object, advancing the internal position in the file.
     /// An empty [Bytes] object will be returned if the end of the file has been reached.
     pub async fn read(&mut self, len: usize) -> Result<Bytes> {
+        self.pending_read = None;
         if self.position >= self.file_length() {
             Ok(Bytes::new())
         } else {
@@ -87,6 +104,7 @@ impl FileReader {
     /// Read up to `buf.len()` bytes into the provided slice, advancing the internal position in the file.
     /// Returns the number of bytes that were read, or 0 if the end of the file has been reached.
     pub async fn read_buf(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.pending_read = None;
         if self.position >= self.file_length() {
             Ok(0)
         } else {
@@ -164,6 +182,72 @@ impl FileReader {
             .collect();
 
         stream::iter(block_streams).flatten()
+    }
+}
+
+impl AsyncRead for FileReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if buf.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+
+        let starting_len = buf.filled().len();
+
+        loop {
+            if self.pending_read.is_none() {
+                if self.position >= self.file_length() {
+                    return Poll::Ready(Ok(()));
+                }
+
+                let offset = self.position;
+                let len = usize::min(buf.remaining(), self.file_length() - self.position);
+                let stream = self.read_range_stream(offset, len).boxed();
+                self.pending_read = Some(std::sync::Mutex::new(PendingRead {
+                    stream,
+                    end_position: offset + len,
+                }));
+            }
+
+            let poll_result = {
+                let mut pending = self.pending_read.as_ref().unwrap().lock().unwrap();
+                Pin::new(&mut pending.stream).poll_next(cx)
+            };
+
+            match poll_result {
+                Poll::Ready(Some(Ok(bytes))) => {
+                    self.position += bytes.len();
+                    buf.put_slice(&bytes);
+
+                    if self.pending_read.as_ref().is_some_and(|pending| {
+                        self.position >= pending.lock().unwrap().end_position
+                    }) {
+                        self.pending_read = None;
+                    }
+
+                    if buf.remaining() == 0 {
+                        return Poll::Ready(Ok(()));
+                    }
+                }
+                Poll::Ready(Some(Err(error))) => {
+                    self.pending_read = None;
+                    return Poll::Ready(Err(io_error(error)));
+                }
+                Poll::Ready(None) => {
+                    self.pending_read = None;
+                    return Poll::Ready(Ok(()));
+                }
+                Poll::Pending => {
+                    if buf.filled().len() > starting_len {
+                        return Poll::Ready(Ok(()));
+                    }
+                    return Poll::Pending;
+                }
+            }
+        }
     }
 }
 
