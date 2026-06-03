@@ -55,6 +55,13 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the effective user for the client. If not set, the client will detect user from
+    /// environment variables `HADOOP_USER_NAME` or `HADOOP_PROXY_USER`.
+    pub fn with_user(mut self, user: impl Into<String>) -> Self {
+        self.inner = self.inner.with_user(user);
+        self
+    }
+
     /// Create the synchronous [`Client`] from the provided settings.
     pub fn build(self) -> Result<Client> {
         let rt = Arc::new(Runtime::new()?);
