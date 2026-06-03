@@ -129,6 +129,7 @@ impl RpcConnection {
         url: &str,
         alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
         nameservice: Option<&str>,
+        effective_user: Option<String>,
         config: &Configuration,
         handle: &Handle,
     ) -> Result<Self> {
@@ -152,7 +153,8 @@ impl RpcConnection {
         let service = nameservice
             .map(|ns| format!("ha-hdfs:{ns}"))
             .unwrap_or(url.to_string());
-        let (user_info, reader, writer) = negotiate_sasl_session(stream, &service, config).await?;
+        let (user_info, reader, writer) =
+            negotiate_sasl_session(stream, &service, config, effective_user).await?;
         let (sender, receiver) = mpsc::channel::<Vec<u8>>(1000);
 
         let mut conn = RpcConnection {
@@ -779,12 +781,15 @@ impl DatanodeConnectionCache {
 #[cfg(test)]
 mod test {
     use std::collections::HashMap;
+    use std::sync::atomic::AtomicI32;
+    use std::sync::{Arc, Mutex};
 
     use prost::Message;
+    use tokio::sync::mpsc;
 
-    use crate::{hdfs::connection::MAX_PACKET_HEADER_SIZE, proto::hdfs};
+    use crate::{hdfs::connection::MAX_PACKET_HEADER_SIZE, proto::hdfs, security::user::UserInfo};
 
-    use super::AlignmentContext;
+    use super::{AlignmentContext, RpcConnection};
 
     #[test]
     fn test_max_packet_header_size() {
@@ -836,5 +841,27 @@ mod test {
         assert_eq!(router_state.len(), 2);
         assert_eq!(*router_state.get("ns-1").unwrap(), 5);
         assert_eq!(*router_state.get("ns-2").unwrap(), 7);
+    }
+
+    #[test]
+    fn test_connection_context_uses_provided_user_info() {
+        let (sender, _receiver) = mpsc::channel(1);
+        let conn = RpcConnection {
+            client_id: Vec::new(),
+            user_info: UserInfo {
+                real_user: Some("real-user".to_string()),
+                effective_user: Some("alice".to_string()),
+            },
+            next_call_id: AtomicI32::new(0),
+            alignment_context: None,
+            call_map: Arc::new(Mutex::new(Some(HashMap::new()))),
+            sender,
+            listener: None,
+        };
+
+        let context = conn.get_connection_context();
+        let user_info = context.user_info.unwrap();
+        assert_eq!(user_info.real_user.as_deref(), Some("real-user"));
+        assert_eq!(user_info.effective_user.as_deref(), Some("alice"));
     }
 }

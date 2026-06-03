@@ -365,29 +365,37 @@ impl User {
             })
     }
 
-    pub(crate) fn get_user_info_from_principal(principal: &str) -> UserInfo {
-        let username = User::get_user_from_principal(principal);
-        let proxy_user = env::var(HADOOP_PROXY_USER).ok();
+    pub(crate) fn get_user_info_from_principal(
+        principal: &str,
+        effective_user: Option<String>,
+    ) -> UserInfo {
         UserInfo {
-            real_user: Some(username),
-            effective_user: proxy_user,
+            real_user: Some(User::get_user_from_principal(principal)),
+            effective_user: effective_user.or_else(|| env::var(HADOOP_PROXY_USER).ok()),
         }
     }
 
-    pub(crate) fn get_simple_user() -> UserInfo {
-        let effective_user = env::var(HADOOP_USER_NAME).ok().unwrap_or_else(username);
+    pub(crate) fn get_simple_user(effective_user: Option<String>) -> UserInfo {
         UserInfo {
             real_user: None,
-            effective_user: Some(effective_user),
+            effective_user: Some(
+                effective_user
+                    .or_else(|| env::var(HADOOP_USER_NAME).ok())
+                    .unwrap_or_else(username),
+            ),
         }
     }
 
-    pub(crate) fn get_user_info() -> UserInfo {
-        if let Ok(principal) = GssapiSession::get_default_principal() {
-            return User::get_user_info_from_principal(&principal);
+    pub(crate) fn get_user_info(
+        effective_user: Option<String>,
+        security_enabled: bool,
+    ) -> UserInfo {
+        if security_enabled && let Ok(principal) = GssapiSession::get_default_principal() {
+            let user_info = User::get_user_info_from_principal(&principal, effective_user);
+            return user_info;
         }
 
-        User::get_simple_user()
+        User::get_simple_user(effective_user)
     }
 
     pub(crate) fn get_user_from_principal(principal: &str) -> String {
@@ -409,6 +417,14 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use super::*;
+
+    #[test]
+    fn test_get_user_info_uses_provided_effective_user_for_simple_auth() {
+        let user_info = User::get_user_info(Some("alice".to_string()), false);
+
+        assert_eq!(user_info.real_user, None);
+        assert_eq!(user_info.effective_user.as_deref(), Some("alice"));
+    }
 
     #[test]
     fn test_load_writable_token() {

@@ -470,6 +470,7 @@ fn check_gss_ok(mut major: u32, mut minor: u32) -> crate::Result<()> {
 #[derive(Debug)]
 pub struct GssapiSession {
     state: GssapiState,
+    effective_user: Option<String>,
 }
 
 enum GssapiState {
@@ -491,12 +492,19 @@ impl fmt::Debug for GssapiState {
 }
 
 impl GssapiSession {
-    pub(crate) fn new(service: &str, hostname: &str) -> crate::Result<Self> {
+    pub(crate) fn new(
+        service: &str,
+        hostname: &str,
+        effective_user: Option<String>,
+    ) -> crate::Result<Self> {
         let targ_name = format!("{service}@{hostname}");
 
         let target = GssName::with_target(&targ_name)?;
         let state = GssapiState::Pending(GssClientCtx::new(target));
-        Ok(Self { state })
+        Ok(Self {
+            state,
+            effective_user,
+        })
     }
 
     pub(crate) fn get_default_principal() -> crate::Result<String> {
@@ -597,7 +605,9 @@ impl SaslSession for GssapiSession {
     fn get_user_info(&self) -> crate::Result<super::user::UserInfo> {
         match &self.state {
             GssapiState::Completed((principal, _)) => {
-                Ok(User::get_user_info_from_principal(principal))
+                let user_info =
+                    User::get_user_info_from_principal(principal, self.effective_user.clone());
+                Ok(user_info)
             }
             _ => Err(HdfsError::SASLError(
                 "SASL session doesn't have security layer".to_string(),

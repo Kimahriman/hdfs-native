@@ -39,6 +39,7 @@ const SASL_CALL_ID: i32 = -33;
 const SASL_TRANSFER_MAGIC_NUMBER: i32 = 0xDEADBEEFu32 as i32;
 const HDFS_DELEGATION_TOKEN: &str = "HDFS_DELEGATION_TOKEN";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AuthMethod {
     Simple,
     Kerberos,
@@ -71,13 +72,14 @@ pub(crate) async fn negotiate_sasl_session(
     stream: TcpStream,
     service: &str,
     config: &Configuration,
+    effective_user: Option<String>,
 ) -> Result<(UserInfo, SaslReader, SaslWriter)> {
     let (reader, writer) = stream.into_split();
     let mut reader = SaslReader::new(reader);
     let mut writer = SaslWriter::new(writer);
 
     if !config.security_enabled() {
-        return Ok((User::get_simple_user(), reader, writer));
+        return Ok((User::get_simple_user(effective_user), reader, writer));
     }
 
     let rpc_sasl = RpcSaslProto {
@@ -95,7 +97,8 @@ pub(crate) async fn negotiate_sasl_session(
         debug!("Handling SASL message: {:?}", message);
         match SaslState::try_from(message.state).unwrap() {
             SaslState::Negotiate => {
-                let (mut selected_auth, selected_session) = select_method(&message.auths, service)?;
+                let (mut selected_auth, selected_session) =
+                    select_method(&message.auths, service, effective_user.clone())?;
                 session = selected_session;
 
                 let token = if let Some(session) = session.as_mut() {
@@ -156,10 +159,10 @@ pub(crate) async fn negotiate_sasl_session(
         }
     }
 
-    let user_info = if let Some(s) = session.as_ref() {
-        s.get_user_info()?
+    let user_info = if let Some(session) = session.as_ref() {
+        session.get_user_info()?
     } else {
-        User::get_simple_user()
+        User::get_simple_user(effective_user)
     };
     let session = session
         .filter(|x| {
@@ -178,6 +181,7 @@ pub(crate) async fn negotiate_sasl_session(
 fn select_method(
     auths: &[SaslAuth],
     service: &str,
+    effective_user: Option<String>,
 ) -> Result<(SaslAuth, Option<Box<dyn SaslSession>>)> {
     let user = User::get();
     for auth in auths.iter() {
@@ -189,7 +193,8 @@ fn select_method(
                 return Ok((auth.clone(), None));
             }
             (Some(AuthMethod::Kerberos), _) => {
-                let session = GssapiSession::new(auth.protocol(), auth.server_id())?;
+                let session =
+                    GssapiSession::new(auth.protocol(), auth.server_id(), effective_user)?;
                 return Ok((auth.clone(), Some(Box::new(session))));
             }
             (Some(AuthMethod::Token), Some(token)) => {

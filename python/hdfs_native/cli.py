@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 from argcomplete import autocomplete
 
-from hdfs_native import AclEntry, AclStatus, Client
+from hdfs_native import AclEntry, AclStatus, Client, TrashNotEnabledError
 from hdfs_native._internal import FileStatus, WriteOptions
 
 __all__ = ["main"]
@@ -712,17 +712,31 @@ def put(args: Namespace):
 
 
 def rm(args: Namespace):
-    if not args.skip_trash:
-        raise ValueError(
-            "Moving files to the trash is not currently supported. Pass --skip-trash to permanently delete the files."
-        )
-
     for url in args.src:
         client = _client_for_url(url)
         try:
             for path in _glob_path(client, _path_for_url(url)):
-                if not client.delete(path, args.recursive) and not args.force:
-                    raise FileNotFoundError(f"Failed to delete {path}")
+                if args.skip_trash:
+                    if not client.delete(path, args.recursive) and not args.force:
+                        raise FileNotFoundError(f"Failed to delete {path}")
+                else:
+                    if not args.recursive and client.get_file_info(path).isdir:
+                        raise IsADirectoryError(path)
+                    try:
+                        trash_path = client.trash(path)
+                        if trash_path is not None:
+                            print(f"Moved: {path} to trash at: {trash_path}")
+                        else:
+                            # File is already in the trash, so we can delete it permanently
+                            if (
+                                not client.delete(path, args.recursive)
+                                and not args.force
+                            ):
+                                raise FileNotFoundError(f"Failed to delete {path}")
+                    except TrashNotEnabledError as err:
+                        raise ValueError(
+                            "Trash is not enabled. Pass --skip-trash to permanently delete the files."
+                        ) from err
         except FileNotFoundError:
             if not args.force:
                 raise

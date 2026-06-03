@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures::stream::BoxStream;
 use futures::{StreamExt, stream};
@@ -18,6 +19,10 @@ use crate::security::user::User;
 
 use crate::glob::{GlobPattern, expand_glob, get_path_components, unescape_component};
 use crate::proto::hdfs::{ContentSummaryProto, HdfsFileStatusProto};
+
+const TRASH_ROOT_DIR: &str = ".Trash";
+const TRASH_CURRENT_DIR: &str = "Current";
+const TRASH_DIR_PERMISSION: u32 = 0o700;
 
 #[derive(Clone)]
 pub struct WriteOptions {
@@ -259,6 +264,7 @@ pub struct ClientBuilder {
     config: Option<HashMap<String, String>>,
     config_dir: Option<String>,
     runtime: Option<IORuntime>,
+    user: Option<String>,
 }
 
 impl ClientBuilder {
@@ -300,6 +306,12 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the effective user for the client. If not set, the client will detect user from environment variables `HADOOP_USER_NAME` or `HADOOP_PROXY_USER`.
+    pub fn with_user(mut self, user: impl Into<String>) -> Self {
+        self.user = Some(user.into());
+        self
+    }
+
     /// Create the [Client] instance from the provided settings
     pub fn build(self) -> Result<Client> {
         let config = Configuration::new(self.config_dir, self.config)?;
@@ -309,7 +321,7 @@ impl ClientBuilder {
             Client::default_fs(&config)?
         };
 
-        Client::build(&url, config, self.runtime)
+        Client::build(&url, config, self.runtime, self.user)
     }
 }
 
@@ -359,19 +371,24 @@ impl Client {
     #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
     pub fn new(url: &str) -> Result<Self> {
         let parsed_url = Url::parse(url)?;
-        Self::build(&parsed_url, Configuration::new(None, None)?, None)
+        Self::build(&parsed_url, Configuration::new(None, None)?, None, None)
     }
 
     #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
     pub fn new_with_config(url: &str, config: HashMap<String, String>) -> Result<Self> {
         let parsed_url = Url::parse(url)?;
-        Self::build(&parsed_url, Configuration::new(None, Some(config))?, None)
+        Self::build(
+            &parsed_url,
+            Configuration::new(None, Some(config))?,
+            None,
+            None,
+        )
     }
 
     #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
     pub fn default_with_config(config: HashMap<String, String>) -> Result<Self> {
         let config = Configuration::new(None, Some(config))?;
-        Self::build(&Self::default_fs(&config)?, config, None)
+        Self::build(&Self::default_fs(&config)?, config, None, None)
     }
 
     fn default_fs(config: &Configuration) -> Result<Url> {
@@ -384,7 +401,12 @@ impl Client {
         Ok(Url::parse(url)?)
     }
 
-    fn build(url: &Url, config: Configuration, rt: Option<IORuntime>) -> Result<Self> {
+    fn build(
+        url: &Url,
+        config: Configuration,
+        rt: Option<IORuntime>,
+        user: Option<String>,
+    ) -> Result<Self> {
         let resolved_url = if !url.has_host() {
             let default_url = Self::default_fs(&config)?;
             if url.scheme() != default_url.scheme() || !default_url.has_host() {
@@ -401,7 +423,7 @@ impl Client {
 
         let rt_holder = RuntimeHolder::new(rt);
 
-        let user_info = User::get_user_info();
+        let user_info = User::get_user_info(user.clone(), config.security_enabled());
         let username = user_info
             .effective_user
             .as_deref()
@@ -420,6 +442,7 @@ impl Client {
                     &resolved_url,
                     Arc::clone(&config),
                     rt_holder.get_handle(),
+                    user.clone(),
                 )?;
                 let protocol = Arc::new(NamenodeProtocol::new(proxy, rt_holder.get_handle()));
 
@@ -434,6 +457,7 @@ impl Client {
                 resolved_url.host_str().expect("URL must have a host"),
                 Arc::clone(&config),
                 rt_holder.get_handle(),
+                user.clone(),
                 home_dir,
             )?,
             _ => {
@@ -454,6 +478,7 @@ impl Client {
         host: &str,
         config: Arc<Configuration>,
         handle: Handle,
+        effective_user: Option<String>,
         home_dir: String,
     ) -> Result<MountTable> {
         let mut mounts: Vec<MountLink> = Vec::new();
@@ -471,7 +496,12 @@ impl Client {
                     "Only hdfs mounts are supported for viewfs".to_string(),
                 ));
             }
-            let proxy = NameServiceProxy::new(&url, Arc::clone(&config), handle.clone())?;
+            let proxy = NameServiceProxy::new(
+                &url,
+                Arc::clone(&config),
+                handle.clone(),
+                effective_user.clone(),
+            )?;
             let protocol = Arc::new(NamenodeProtocol::new(proxy, handle.clone()));
 
             if let Some(prefix) = viewfs_path {
@@ -500,6 +530,121 @@ impl Client {
             Err(HdfsError::InvalidArgument(
                 "No viewfs fallback mount found".to_string(),
             ))
+        }
+    }
+
+    fn normalize_path(path: &str) -> String {
+        let mut normalized = if path.is_empty() {
+            "/".to_string()
+        } else {
+            path.to_string()
+        };
+        if !normalized.starts_with('/') {
+            normalized.insert(0, '/');
+        }
+        while normalized.len() > 1 && normalized.ends_with('/') {
+            normalized.pop();
+        }
+        normalized
+    }
+
+    fn join_paths(base: &str, suffix: &str) -> String {
+        if suffix.is_empty() {
+            return base.to_string();
+        }
+        let trimmed_base = if base.is_empty() { "/" } else { base };
+        let suffix = suffix.trim_start_matches('/');
+        if trimmed_base == "/" {
+            format!("/{suffix}")
+        } else {
+            format!("{}/{}", trimmed_base.trim_end_matches('/'), suffix)
+        }
+    }
+
+    fn is_prefix_path(parent: &str, child: &str) -> bool {
+        if parent == "/" {
+            return true;
+        }
+        child == parent || child.starts_with(&format!("{parent}/"))
+    }
+
+    fn current_time_millis() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    fn absolute_path(&self, path: &str) -> String {
+        if path.starts_with('/') {
+            Self::normalize_path(path)
+        } else {
+            let home = self.mount_table.home_dir.trim_end_matches('/');
+            Self::normalize_path(&format!("{home}/{path}"))
+        }
+    }
+
+    fn trash_root_path(&self) -> String {
+        let home = Self::normalize_path(&self.mount_table.home_dir);
+        Self::join_paths(&home, TRASH_ROOT_DIR)
+    }
+
+    async fn trash_enabled(&self, path: &str) -> Result<bool> {
+        let (link, _) = self.mount_table.resolve(path);
+        let server_defaults = link.protocol.get_cached_server_defaults().await?;
+        Ok(server_defaults.trash_interval.unwrap_or_default() > 0)
+    }
+
+    fn split_parent_name(path: &str) -> Result<(String, String)> {
+        let normalized = Self::normalize_path(path);
+        if normalized == "/" {
+            return Err(HdfsError::InvalidArgument(
+                "Cannot move the root directory to trash".to_string(),
+            ));
+        }
+        let (parent, name) = normalized
+            .rsplit_once('/')
+            .expect("Normalized path always contains '/'");
+        let parent = if parent.is_empty() {
+            "/".to_string()
+        } else {
+            parent.to_string()
+        };
+        Ok((parent, name.to_string()))
+    }
+
+    async fn non_dir_ancestor(&self, path: &str) -> Result<Option<String>> {
+        let normalized = Self::normalize_path(path);
+        let mut current = "/".to_string();
+        for component in normalized.trim_start_matches('/').split('/') {
+            if component.is_empty() {
+                continue;
+            }
+            current = Self::join_paths(&current, component);
+            match self.get_file_info(&current).await {
+                Ok(status) => {
+                    if !status.isdir {
+                        return Ok(Some(current));
+                    }
+                }
+                Err(HdfsError::FileNotFound(_)) => return Ok(None),
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(None)
+    }
+
+    async fn ensure_unique_trash_path(&self, path: String) -> Result<String> {
+        let base = path.clone();
+        let mut candidate = path;
+        loop {
+            match self.get_file_info(&candidate).await {
+                Ok(_) => {
+                    candidate = format!("{}{}", base, Self::current_time_millis());
+                }
+                Err(HdfsError::FileNotFound(_)) => return Ok(candidate),
+                Err(err) => return Err(err),
+            }
         }
     }
 
@@ -666,14 +811,24 @@ impl Client {
             .map(|_| ())
     }
 
-    /// Renames `src` to `dst`. Returns Ok(()) on success, and Err otherwise.
-    pub async fn rename(&self, src: &str, dst: &str, overwrite: bool) -> Result<()> {
+    async fn rename_internal(
+        &self,
+        src: &str,
+        dst: &str,
+        overwrite: bool,
+        move_to_trash: bool,
+    ) -> Result<()> {
         let (src_link, src_resolved_path) = self.mount_table.resolve(src);
         let (dst_link, dst_resolved_path) = self.mount_table.resolve(dst);
         if src_link.viewfs_path == dst_link.viewfs_path {
             src_link
                 .protocol
-                .rename(&src_resolved_path, &dst_resolved_path, overwrite)
+                .rename(
+                    &src_resolved_path,
+                    &dst_resolved_path,
+                    overwrite,
+                    move_to_trash,
+                )
                 .await
                 .map(|_| ())
         } else {
@@ -681,6 +836,11 @@ impl Client {
                 "Cannot rename across different name services".to_string(),
             ))
         }
+    }
+
+    /// Renames `src` to `dst`. Returns Ok(()) on success, and Err otherwise.
+    pub async fn rename(&self, src: &str, dst: &str, overwrite: bool) -> Result<()> {
+        self.rename_internal(src, dst, overwrite, false).await
     }
 
     /// Deletes the file or directory at `path`. If `recursive` is false and `path` is a non-empty
@@ -691,6 +851,90 @@ impl Client {
             .delete(&resolved_path, recursive)
             .await
             .map(|r| r.result)
+    }
+
+    /// Moves a file or directory at `path` into the user's trash. Returns `Ok(Some(path))` if
+    /// moved, where `path` is the new location in the trash, or `Ok(None)` if the path is already
+    /// under trash.
+    pub async fn trash(&self, path: &str) -> Result<Option<String>> {
+        if path.is_empty() {
+            return Err(HdfsError::InvalidPath("Empty path".to_string()));
+        }
+
+        let src_abs = self.absolute_path(path);
+        if !self.trash_enabled(&src_abs).await? {
+            return Err(HdfsError::TrashNotEnabled);
+        }
+
+        let trash_root = self.trash_root_path();
+
+        if Self::is_prefix_path(&trash_root, &src_abs) {
+            return Ok(None);
+        }
+        if Self::is_prefix_path(&src_abs, &trash_root) {
+            return Err(HdfsError::InvalidArgument(
+                "Cannot move to trash because it contains the trash".to_string(),
+            ));
+        }
+
+        let _ = self.get_file_info(&src_abs).await?;
+
+        let (src_parent, src_name) = Self::split_parent_name(&src_abs)?;
+        let trash_current = Self::join_paths(&trash_root, TRASH_CURRENT_DIR);
+        let src_parent_rel = src_parent.trim_start_matches('/');
+        let mut base_trash_path = if src_parent_rel.is_empty() {
+            trash_current.clone()
+        } else {
+            Self::join_paths(&trash_current, src_parent_rel)
+        };
+        let mut trash_path = Self::join_paths(&base_trash_path, &src_name);
+
+        for attempt in 0..2 {
+            let mut mkdirs_error: Option<HdfsError> = None;
+            loop {
+                match self
+                    .mkdirs(&base_trash_path, TRASH_DIR_PERMISSION, true)
+                    .await
+                {
+                    Ok(()) => break,
+                    Err(err) => {
+                        if let Some(ancestor) = self.non_dir_ancestor(&base_trash_path).await? {
+                            let timestamp = Self::current_time_millis();
+                            base_trash_path = base_trash_path.replacen(
+                                &ancestor,
+                                &format!("{ancestor}{timestamp}"),
+                                1,
+                            );
+                            trash_path = Self::join_paths(&base_trash_path, &src_name);
+                            continue;
+                        }
+                        mkdirs_error = Some(err);
+                        break;
+                    }
+                }
+            }
+
+            if let Some(err) = mkdirs_error {
+                if attempt == 0 {
+                    continue;
+                }
+                return Err(err);
+            }
+
+            let unique_trash_path = self.ensure_unique_trash_path(trash_path.clone()).await?;
+            match self
+                .rename_internal(&src_abs, &unique_trash_path, false, true)
+                .await
+            {
+                Ok(()) => return Ok(Some(unique_trash_path)),
+                Err(_) if attempt == 0 => continue,
+                Err(err) => return Err(err),
+            }
+        }
+
+        Err(HdfsError::OperationFailed(
+            "Failed to move to trash after retry".to_string(),
+        ))
     }
 
     /// Sets the modified and access times for a file. Times should be in milliseconds from the epoch.
@@ -1176,6 +1420,7 @@ mod test {
             &Url::parse(url).unwrap(),
             Arc::new(Configuration::new(None, None).unwrap()),
             RT.handle().clone(),
+            None,
         )
         .unwrap();
         Arc::new(NamenodeProtocol::new(proxy, RT.handle().clone()))
@@ -1345,6 +1590,18 @@ mod test {
                 .build()
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn test_with_user_sets_relative_path_home_dir() {
+        let client = ClientBuilder::new()
+            .with_url("hdfs://127.0.0.1:9000")
+            .with_user("alice")
+            .build()
+            .unwrap();
+
+        let (_, resolved) = client.mount_table.resolve("file");
+        assert_eq!(resolved, "/user/alice/file");
     }
 
     #[test]

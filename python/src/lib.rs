@@ -23,7 +23,7 @@ use pyo3::prelude::*;
 
 mod error;
 
-use crate::error::PythonHdfsError;
+use crate::error::{PythonHdfsError, TrashNotEnabledError};
 
 type PyHdfsResult<T> = Result<T, PythonHdfsError>;
 
@@ -486,6 +486,10 @@ impl RawClient {
         Ok(py.detach(|| self.inner.delete(path, recursive))?)
     }
 
+    pub fn trash(&self, path: &str, py: Python) -> PyHdfsResult<Option<String>> {
+        Ok(py.detach(|| self.rt.block_on(self.inner.trash(path)))?)
+    }
+
     pub fn set_times(&self, path: &str, mtime: u64, atime: u64, py: Python) -> PyHdfsResult<()> {
         Ok(py.detach(|| self.inner.set_times(path, mtime, atime))?)
     }
@@ -766,6 +770,10 @@ impl AsyncRawClient {
         Ok(self.inner.delete(&path, recursive).await?)
     }
 
+    pub async fn trash(&self, path: String) -> PyHdfsResult<Option<String>> {
+        Ok(self.inner.trash(&path).await?)
+    }
+
     pub async fn set_times(&self, path: String, mtime: u64, atime: u64) -> PyHdfsResult<()> {
         Ok(self.inner.set_times(&path, mtime, atime).await?)
     }
@@ -852,5 +860,9 @@ fn _internal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAclStatus>()?;
 
     m.add_class::<AsyncRawClient>()?;
+    m.add(
+        "TrashNotEnabledError",
+        m.py().get_type::<TrashNotEnabledError>(),
+    )?;
     Ok(())
 }
