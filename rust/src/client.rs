@@ -259,6 +259,7 @@ pub struct ClientBuilder {
     config: Option<HashMap<String, String>>,
     config_dir: Option<String>,
     runtime: Option<IORuntime>,
+    user: Option<String>,
 }
 
 impl ClientBuilder {
@@ -300,6 +301,12 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the effective user for the client. If not set, the client will detect user from environment variables `HADOOP_USER_NAME` or `HADOOP_PROXY_USER`.
+    pub fn with_user(mut self, user: impl Into<String>) -> Self {
+        self.user = Some(user.into());
+        self
+    }
+
     /// Create the [Client] instance from the provided settings
     pub fn build(self) -> Result<Client> {
         let config = Configuration::new(self.config_dir, self.config)?;
@@ -309,7 +316,7 @@ impl ClientBuilder {
             Client::default_fs(&config)?
         };
 
-        Client::build(&url, config, self.runtime)
+        Client::build(&url, config, self.runtime, self.user)
     }
 }
 
@@ -359,19 +366,24 @@ impl Client {
     #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
     pub fn new(url: &str) -> Result<Self> {
         let parsed_url = Url::parse(url)?;
-        Self::build(&parsed_url, Configuration::new(None, None)?, None)
+        Self::build(&parsed_url, Configuration::new(None, None)?, None, None)
     }
 
     #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
     pub fn new_with_config(url: &str, config: HashMap<String, String>) -> Result<Self> {
         let parsed_url = Url::parse(url)?;
-        Self::build(&parsed_url, Configuration::new(None, Some(config))?, None)
+        Self::build(
+            &parsed_url,
+            Configuration::new(None, Some(config))?,
+            None,
+            None,
+        )
     }
 
     #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
     pub fn default_with_config(config: HashMap<String, String>) -> Result<Self> {
         let config = Configuration::new(None, Some(config))?;
-        Self::build(&Self::default_fs(&config)?, config, None)
+        Self::build(&Self::default_fs(&config)?, config, None, None)
     }
 
     fn default_fs(config: &Configuration) -> Result<Url> {
@@ -384,7 +396,12 @@ impl Client {
         Ok(Url::parse(url)?)
     }
 
-    fn build(url: &Url, config: Configuration, rt: Option<IORuntime>) -> Result<Self> {
+    fn build(
+        url: &Url,
+        config: Configuration,
+        rt: Option<IORuntime>,
+        user: Option<String>,
+    ) -> Result<Self> {
         let resolved_url = if !url.has_host() {
             let default_url = Self::default_fs(&config)?;
             if url.scheme() != default_url.scheme() || !default_url.has_host() {
@@ -401,7 +418,7 @@ impl Client {
 
         let rt_holder = RuntimeHolder::new(rt);
 
-        let user_info = User::get_user_info();
+        let user_info = User::get_user_info(user.clone(), config.security_enabled());
         let username = user_info
             .effective_user
             .as_deref()
@@ -420,6 +437,7 @@ impl Client {
                     &resolved_url,
                     Arc::clone(&config),
                     rt_holder.get_handle(),
+                    user.clone(),
                 )?;
                 let protocol = Arc::new(NamenodeProtocol::new(proxy, rt_holder.get_handle()));
 
@@ -434,6 +452,7 @@ impl Client {
                 resolved_url.host_str().expect("URL must have a host"),
                 Arc::clone(&config),
                 rt_holder.get_handle(),
+                user.clone(),
                 home_dir,
             )?,
             _ => {
@@ -454,6 +473,7 @@ impl Client {
         host: &str,
         config: Arc<Configuration>,
         handle: Handle,
+        effective_user: Option<String>,
         home_dir: String,
     ) -> Result<MountTable> {
         let mut mounts: Vec<MountLink> = Vec::new();
@@ -471,7 +491,12 @@ impl Client {
                     "Only hdfs mounts are supported for viewfs".to_string(),
                 ));
             }
-            let proxy = NameServiceProxy::new(&url, Arc::clone(&config), handle.clone())?;
+            let proxy = NameServiceProxy::new(
+                &url,
+                Arc::clone(&config),
+                handle.clone(),
+                effective_user.clone(),
+            )?;
             let protocol = Arc::new(NamenodeProtocol::new(proxy, handle.clone()));
 
             if let Some(prefix) = viewfs_path {
@@ -1176,6 +1201,7 @@ mod test {
             &Url::parse(url).unwrap(),
             Arc::new(Configuration::new(None, None).unwrap()),
             RT.handle().clone(),
+            None,
         )
         .unwrap();
         Arc::new(NamenodeProtocol::new(proxy, RT.handle().clone()))
@@ -1345,6 +1371,18 @@ mod test {
                 .build()
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn test_with_user_sets_relative_path_home_dir() {
+        let client = ClientBuilder::new()
+            .with_url("hdfs://127.0.0.1:9000")
+            .with_user("alice")
+            .build()
+            .unwrap();
+
+        let (_, resolved) = client.mount_table.resolve("file");
+        assert_eq!(resolved, "/user/alice/file");
     }
 
     #[test]
