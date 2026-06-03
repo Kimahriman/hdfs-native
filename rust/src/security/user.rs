@@ -381,7 +381,7 @@ impl User {
             effective_user: Some(
                 effective_user
                     .or_else(|| env::var(HADOOP_USER_NAME).ok())
-                    .unwrap_or_else(username),
+                    .unwrap_or_else(|| username().unwrap_or_else(|_| "unknown".to_string())),
             ),
         }
     }

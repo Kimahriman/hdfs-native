@@ -562,7 +562,7 @@ impl SaslDatanodeWriter {
             }
             Some(DatanodeEncryptor::Cipher(cipher)) => {
                 let mut encrypted = vec![0u8; buf.len()];
-                cipher.apply_keystream_b2b(buf, &mut encrypted).unwrap();
+                cipher.apply_keystream_b2b(buf, &mut encrypted);
                 self.stream.write_all(&encrypted).await?;
             }
             None => {
@@ -726,8 +726,8 @@ impl SaslDatanodeConnection {
                     let out_key = session.decode(cipher.out_key())?;
 
                     // For the client, the in_key is used to encrypt data to send and the out_key is for decrypting incoming data
-                    let encryptor = Self::create_aes_cipher(&in_key, cipher.in_iv());
-                    let decryptor = Self::create_aes_cipher(&out_key, cipher.out_iv());
+                    let encryptor = Self::create_aes_cipher(&in_key, cipher.in_iv())?;
+                    let decryptor = Self::create_aes_cipher(&out_key, cipher.out_iv())?;
 
                     let reader = SaslDatanodeReader::cipher(stream_reader, decryptor);
                     let writer = SaslDatanodeWriter::cipher(stream_writer, encryptor);
@@ -749,12 +749,20 @@ impl SaslDatanodeConnection {
         }
     }
 
-    fn create_aes_cipher(key: &[u8], iv: &[u8]) -> Box<dyn StreamCipher + Send> {
+    fn create_aes_cipher(key: &[u8], iv: &[u8]) -> Result<Box<dyn StreamCipher + Send>> {
         match key.len() * 8 {
-            128 => Box::new(Aes128Ctr::new(key.into(), iv.into())),
-            192 => Box::new(Aes192Ctr::new(key.into(), iv.into())),
-            256 => Box::new(Aes256Ctr::new(key.into(), iv.into())),
-            x => panic!("Unsupported AES bit length {x}"),
+            128 => Aes128Ctr::new_from_slices(key, iv)
+                .map(|cipher| Box::new(cipher) as Box<dyn StreamCipher + Send>)
+                .map_err(|_| HdfsError::SASLError("Invalid AES-128 key or IV length".to_string())),
+            192 => Aes192Ctr::new_from_slices(key, iv)
+                .map(|cipher| Box::new(cipher) as Box<dyn StreamCipher + Send>)
+                .map_err(|_| HdfsError::SASLError("Invalid AES-192 key or IV length".to_string())),
+            256 => Aes256Ctr::new_from_slices(key, iv)
+                .map(|cipher| Box::new(cipher) as Box<dyn StreamCipher + Send>)
+                .map_err(|_| HdfsError::SASLError("Invalid AES-256 key or IV length".to_string())),
+            x => Err(HdfsError::SASLError(format!(
+                "Unsupported AES bit length {x}"
+            ))),
         }
     }
 }

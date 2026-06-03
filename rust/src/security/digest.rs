@@ -4,12 +4,12 @@ use std::{
 };
 
 use base64::{Engine as _, engine::general_purpose};
-use cbc::cipher::{BlockEncryptMut, KeyIvInit};
-use cipher::BlockDecryptMut;
+use cbc::cipher::{Array, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
+use cipher::KeyInit;
 use hmac::{Hmac, Mac};
 use md5::{Digest, Md5};
 use once_cell::sync::Lazy;
-use rand::Rng;
+use rand::RngExt;
 use regex::Regex;
 
 use crate::{HdfsError, Result, proto::hdfs::DataEncryptionKeyProto};
@@ -481,7 +481,10 @@ impl SaslSession for DigestSaslSession {
     fn encode(&mut self, buf: &[u8]) -> crate::Result<Vec<u8>> {
         match &mut self.state {
             DigestState::Completed(Some(ctx)) => {
-                let mut mac = HmacMD5::new_from_slice(&ctx.integrity_keys.client).unwrap();
+                let mut mac =
+                    HmacMD5::new_from_slice(&ctx.integrity_keys.client).map_err(|_| {
+                        HdfsError::SASLError("Invalid DIGEST-MD5 client integrity key".to_string())
+                    })?;
                 mac.update(&ctx.seq_num.to_be_bytes());
                 mac.update(buf);
                 let hmac = mac.finalize().into_bytes();
@@ -495,8 +498,14 @@ impl SaslSession for DigestSaslSession {
                     let enc_block: &mut [u8] = message.as_mut();
                     let mut enc_bytes = 0;
                     while enc_bytes < enc_block.len() {
-                        encryptor
-                            .encrypt_block_mut((&mut enc_block[enc_bytes..enc_bytes + 8]).into());
+                        let block =
+                            <&mut Array<_, _>>::try_from(&mut enc_block[enc_bytes..enc_bytes + 8])
+                                .map_err(|_| {
+                                    HdfsError::SASLError(
+                                        "Invalid DIGEST-MD5 encryption block length".to_string(),
+                                    )
+                                })?;
+                        encryptor.encrypt_block(block);
                         enc_bytes += 8;
                     }
                     message
@@ -528,8 +537,14 @@ impl SaslSession for DigestSaslSession {
                     let mut message = buf[..buf.len() - 6].to_vec();
                     let mut dec_bytes = 0;
                     while dec_bytes < message.len() {
-                        decryptor
-                            .decrypt_block_mut((&mut message[dec_bytes..dec_bytes + 8]).into());
+                        let block =
+                            <&mut Array<_, _>>::try_from(&mut message[dec_bytes..dec_bytes + 8])
+                                .map_err(|_| {
+                                    HdfsError::SASLError(
+                                        "Invalid DIGEST-MD5 decryption block length".to_string(),
+                                    )
+                                })?;
+                        decryptor.decrypt_block(block);
                         dec_bytes += 8;
                     }
 
@@ -546,7 +561,10 @@ impl SaslSession for DigestSaslSession {
                     (message, hmac)
                 };
 
-                let mut mac = HmacMD5::new_from_slice(&ctx.integrity_keys.server).unwrap();
+                let mut mac =
+                    HmacMD5::new_from_slice(&ctx.integrity_keys.server).map_err(|_| {
+                        HdfsError::SASLError("Invalid DIGEST-MD5 server integrity key".to_string())
+                    })?;
                 mac.update(&buf[buf.len() - 4..]);
                 mac.update(&message);
 

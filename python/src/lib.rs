@@ -171,7 +171,7 @@ impl PyAclStatus {
     }
 }
 
-#[pyclass(get_all, set_all, name = "AclEntry")]
+#[pyclass(get_all, set_all, name = "AclEntry", from_py_object)]
 #[derive(Clone, Default)]
 struct PyAclEntry {
     r#type: String,
@@ -292,7 +292,7 @@ impl RawFileReader {
     }
 }
 
-#[pyclass(get_all, set_all, name = "WriteOptions")]
+#[pyclass(get_all, set_all, name = "WriteOptions", from_py_object)]
 #[derive(Clone)]
 struct PyWriteOptions {
     block_size: Option<u64>,
