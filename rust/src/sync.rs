@@ -5,7 +5,6 @@
 //! without managing an async runtime directly.
 
 use std::future::Future;
-use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
@@ -17,10 +16,6 @@ use crate::acl::{AclEntry, AclStatus};
 use crate::client::{self, ContentSummary, FileStatus, WriteOptions};
 use crate::file::{FileReader as AsyncFileReader, FileWriter as AsyncFileWriter};
 use crate::{Result, client::IORuntime};
-
-fn io_error(error: crate::HdfsError) -> io::Error {
-    io::Error::other(error)
-}
 
 /// Builds a new synchronous [`Client`] instance.
 #[derive(Default)]
@@ -279,34 +274,6 @@ impl FileReader {
     }
 }
 
-impl Read for FileReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.read_buf(buf).map_err(io_error)
-    }
-}
-
-impl Seek for FileReader {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let file_length = self.file_length() as i128;
-        let current = self.tell() as i128;
-        let new_pos = match pos {
-            SeekFrom::Start(pos) => i128::from(pos),
-            SeekFrom::End(offset) => file_length + i128::from(offset),
-            SeekFrom::Current(offset) => current + i128::from(offset),
-        };
-
-        if new_pos < 0 || new_pos > file_length {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "cannot seek outside of file bounds",
-            ));
-        }
-
-        self.inner.seek(new_pos as usize);
-        Ok(new_pos as u64)
-    }
-}
-
 /// A blocking stream of file bytes.
 pub struct FileReadStream {
     inner: Mutex<BoxStream<'static, Result<Bytes>>>,
@@ -336,15 +303,5 @@ impl FileWriter {
     /// Close the file writer.
     pub fn close(&mut self) -> Result<()> {
         self.rt.block_on(self.inner.close())
-    }
-}
-
-impl Write for FileWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.write(Bytes::copy_from_slice(buf)).map_err(io_error)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
     }
 }

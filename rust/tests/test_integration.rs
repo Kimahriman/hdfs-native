@@ -4,7 +4,7 @@ mod common;
 #[cfg(feature = "integration-test")]
 mod test {
     use crate::common::{TEST_FILE_INTS, assert_bufs_equal};
-    use bytes::{BufMut, BytesMut};
+    use bytes::{BufMut, Bytes, BytesMut};
     use hdfs_native::{
         Client, Result, WriteOptions,
         acl::AclEntry,
@@ -15,7 +15,6 @@ mod test {
     };
     use serial_test::serial;
     use std::collections::HashSet;
-    use std::io::{Read, Seek, SeekFrom, Write};
     use whoami::username;
 
     #[tokio::test]
@@ -191,7 +190,7 @@ mod test {
 
         let write_options = WriteOptions::default().overwrite(true);
         let mut writer = client.create("/syncfile", &write_options)?;
-        writer.write_all(b"hello ").unwrap();
+        writer.write(Bytes::from_static(b"hello "))?;
         writer.close()?;
 
         assert_eq!(client.get_file_info("/syncfile")?.length, 6);
@@ -206,16 +205,15 @@ mod test {
         assert_eq!(statuses[0].path, "/syncfile");
 
         let mut writer = client.append("/syncfile")?;
-        writer.write_all(b"sync").unwrap();
+        writer.write(Bytes::from_static(b"sync"))?;
         writer.close()?;
 
         let mut reader = client.read("/syncfile")?;
         assert_eq!(reader.file_length(), 10);
-        let mut prefix = [0; 6];
-        reader.read_exact(&mut prefix).unwrap();
-        assert_eq!(&prefix, b"hello ");
+        let prefix = reader.read(6)?;
+        assert_eq!(prefix.as_ref(), b"hello ");
         assert_eq!(reader.tell(), 6);
-        assert_eq!(Seek::seek(&mut reader, SeekFrom::Start(0)).unwrap(), 0);
+        reader.seek(0);
 
         let data = reader.read_range(0, reader.file_length())?;
         assert_eq!(data.as_ref(), b"hello sync");
