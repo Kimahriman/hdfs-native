@@ -46,6 +46,9 @@ public class Main {
 
         Configuration conf = new Configuration();
         conf.set("dfs.blocksize", "16777216"); // 16 MiB instead of 128 MiB
+        if (flags.contains("trash")) {
+            conf.set(FS_TRASH_INTERVAL_KEY, "60");
+        }
         if (flags.contains("security")) {
             kdc = new MiniKdc(MiniKdc.createConf(), new File("target/test/kdc"));
             kdc.setTransport("UDP");

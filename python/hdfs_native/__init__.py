@@ -12,6 +12,7 @@ from ._internal import (
     ContentSummary,
     FileStatus,
     RawClient,
+    TrashNotEnabledError,
     WriteOptions,
 )
 
@@ -35,6 +36,7 @@ __all__ = [
     "WriteOptions",
     "AclEntry",
     "AclStatus",
+    "TrashNotEnabledError",
 ]
 
 
@@ -194,6 +196,13 @@ class Client:
         is a non-empty directory, this will fail.
         """
         return self.inner.delete(path, recursive)
+
+    def trash(self, path: str) -> Optional[str]:
+        """
+        Moves a file or directory at `path` into the user's trash. Returns the new location in the
+        trash, or None if `path` is already in the trash.
+        """
+        return self.inner.trash(path)
 
     def set_times(self, path: str, mtime: int, atime: int) -> None:
         """
@@ -430,6 +439,13 @@ class AsyncClient:
         is a non-empty directory, this will fail.
         """
         return await self.inner.delete(path, recursive)
+
+    async def trash(self, path: str) -> Optional[str]:
+        """
+        Moves a file or directory at `path` into the user's trash. Returns the new location in the
+        trash, or None if `path` is already in the trash.
+        """
+        return await self.inner.trash(path)
 
     async def set_times(self, path: str, mtime: int, atime: int) -> None:
         """
