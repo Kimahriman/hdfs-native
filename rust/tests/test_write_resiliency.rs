@@ -31,7 +31,7 @@ mod test {
 
         let mut writer = client.create(file, WriteOptions::default()).await?;
 
-        writer.write(Bytes::from(vec![0u8, 1, 2, 3])).await?;
+        writer.write_bytes(Bytes::from(vec![0u8, 1, 2, 3])).await?;
 
         // First client owns the lease, so can't append to the file
         assert!(client2.append("/testfile").await.is_err());
@@ -43,7 +43,7 @@ mod test {
         // writing.
         assert!(client2.append("/testfile").await.is_err());
 
-        writer.write(Bytes::from(vec![4u8, 5, 6, 7])).await?;
+        writer.write_bytes(Bytes::from(vec![4u8, 5, 6, 7])).await?;
 
         // This succeeding means the lease was renewed
         writer.close().await?;
@@ -114,7 +114,7 @@ mod test {
             WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
 
             let data = data.freeze();
-            writer.write(data.clone()).await?;
+            writer.write_bytes(data.clone()).await?;
             writer.close().await?;
 
             let reader = client.read(&file).await?;
@@ -128,14 +128,14 @@ mod test {
                 )
                 .await?;
 
-            writer.write(data.slice(..bytes_to_write / 2)).await?;
+            writer.write_bytes(data.slice(..bytes_to_write / 2)).await?;
 
             // Give a little time for the packets to send
             tokio::time::sleep(Duration::from_millis(100)).await;
 
             WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
 
-            writer.write(data.slice(bytes_to_write / 2..)).await?;
+            writer.write_bytes(data.slice(bytes_to_write / 2..)).await?;
             writer.close().await?;
 
             let reader = client.read(&file).await?;
@@ -151,7 +151,7 @@ mod test {
 
             *WRITE_REPLY_FAULT_INJECTOR.lock().unwrap() = Some(2);
 
-            writer.write(data.clone()).await?;
+            writer.write_bytes(data.clone()).await?;
             writer.close().await?;
 
             let reader = client.read(&file).await?;
@@ -165,14 +165,14 @@ mod test {
                 )
                 .await?;
 
-            writer.write(data.slice(..bytes_to_write / 2)).await?;
+            writer.write_bytes(data.slice(..bytes_to_write / 2)).await?;
 
             // Give a little time for the packets to send
             tokio::time::sleep(Duration::from_millis(100)).await;
 
             *WRITE_REPLY_FAULT_INJECTOR.lock().unwrap() = Some(2);
 
-            writer.write(data.slice(bytes_to_write / 2..)).await?;
+            writer.write_bytes(data.slice(bytes_to_write / 2..)).await?;
             writer.close().await?;
 
             let reader = client.read(&file).await?;
@@ -216,17 +216,19 @@ mod test {
             .create(file, WriteOptions::default().replication(3))
             .await?;
 
-        writer.write(data.slice(..bytes_to_write / 3)).await?;
+        writer.write_bytes(data.slice(..bytes_to_write / 3)).await?;
 
         WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
         writer
-            .write(data.slice(bytes_to_write / 3..2 * bytes_to_write / 3))
+            .write_bytes(data.slice(bytes_to_write / 3..2 * bytes_to_write / 3))
             .await?;
         // Give a little time for the packets to send
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
-        writer.write(data.slice(2 * bytes_to_write / 3..)).await?;
+        writer
+            .write_bytes(data.slice(2 * bytes_to_write / 3..))
+            .await?;
         // Give a little time for the packets to send
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -275,7 +277,7 @@ mod test {
 
         WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
 
-        writer.write(data.clone()).await?;
+        writer.write_bytes(data.clone()).await?;
         writer.close().await?;
 
         let reader = client.read(file).await?;
@@ -287,7 +289,7 @@ mod test {
 
         WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
 
-        writer.write(data.slice(..bytes_to_write / 2)).await?;
+        writer.write_bytes(data.slice(..bytes_to_write / 2)).await?;
 
         // Give a little time for the packets to send
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -295,7 +297,7 @@ mod test {
         assert!(!WRITE_CONNECTION_FAULT_INJECTOR.load(Ordering::SeqCst));
         WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
 
-        writer.write(data.slice(bytes_to_write / 2..)).await?;
+        writer.write_bytes(data.slice(bytes_to_write / 2..)).await?;
         writer.close().await?;
 
         // Give a little time for the packets to send
@@ -312,7 +314,7 @@ mod test {
 
         *WRITE_REPLY_FAULT_INJECTOR.lock().unwrap() = Some(2);
 
-        writer.write(data.clone()).await?;
+        writer.write_bytes(data.clone()).await?;
         writer.close().await?;
 
         let reader = client.read(file).await?;
@@ -322,14 +324,14 @@ mod test {
         let file = "/ec-3-2/striped_testfile4";
         let mut writer = client.create(file, WriteOptions::default()).await?;
 
-        writer.write(data.slice(..bytes_to_write / 2)).await?;
+        writer.write_bytes(data.slice(..bytes_to_write / 2)).await?;
 
         // Give a little time for the packets to send
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         *WRITE_REPLY_FAULT_INJECTOR.lock().unwrap() = Some(2);
 
-        writer.write(data.slice(bytes_to_write / 2..)).await?;
+        writer.write_bytes(data.slice(bytes_to_write / 2..)).await?;
         writer.close().await?;
 
         let reader = client.read(file).await?;
@@ -340,25 +342,25 @@ mod test {
         let mut writer = client.create(file, WriteOptions::default()).await?;
 
         WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
-        writer.write(data.slice(..bytes_to_write / 2)).await?;
+        writer.write_bytes(data.slice(..bytes_to_write / 2)).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!WRITE_CONNECTION_FAULT_INJECTOR.load(Ordering::SeqCst));
 
         WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
-        writer.write(data.slice(..bytes_to_write / 2)).await?;
+        writer.write_bytes(data.slice(..bytes_to_write / 2)).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!WRITE_CONNECTION_FAULT_INJECTOR.load(Ordering::SeqCst));
 
         // Third write. It won't fail yet because the sending of the data is asynchronous.
         // The failure will happen when the client tries to send the next block.
         WRITE_CONNECTION_FAULT_INJECTOR.store(true, Ordering::SeqCst);
-        writer.write(data.slice(..bytes_to_write / 2)).await?;
+        writer.write_bytes(data.slice(..bytes_to_write / 2)).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!WRITE_CONNECTION_FAULT_INJECTOR.load(Ordering::SeqCst));
 
         assert!(
             writer
-                .write(data.slice(..bytes_to_write / 2))
+                .write_bytes(data.slice(..bytes_to_write / 2))
                 .await
                 .is_err()
         );

@@ -48,13 +48,13 @@ async fn main() {
         .await
         .unwrap();
 
-    writer.write(vec![1, 2, 3, 4].into()).await.unwrap();
+    writer.write_bytes(vec![1, 2, 3, 4].into()).await.unwrap();
     writer.close().await.unwrap();
 
     // Append to an existing file
     let mut writer = client.append("/hdfs-native-write").await.unwrap();
 
-    writer.write(vec![5, 6, 7, 8].into()).await.unwrap();
+    writer.write_bytes(vec![5, 6, 7, 8].into()).await.unwrap();
     writer.close().await.unwrap();
 
     // Read a file

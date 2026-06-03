@@ -263,7 +263,7 @@ impl RawFileReader {
     }
 
     pub fn seek(&mut self, pos: usize) {
-        self.inner.seek(pos);
+        self.inner.set_position(pos);
     }
 
     pub fn tell(&self) -> usize {
@@ -276,7 +276,9 @@ impl RawFileReader {
         } else {
             len as usize
         };
-        Ok(Cow::from(py.detach(|| self.inner.read(read_len))?.to_vec()))
+        Ok(Cow::from(
+            py.detach(|| self.inner.read_bytes(read_len))?.to_vec(),
+        ))
     }
 
     pub fn read_range(&self, offset: usize, len: usize, py: Python) -> PyHdfsResult<Cow<'_, [u8]>> {
@@ -382,7 +384,7 @@ struct RawFileWriter {
 #[pymethods]
 impl RawFileWriter {
     pub fn write(&mut self, buf: Vec<u8>, py: Python) -> PyHdfsResult<usize> {
-        Ok(py.detach(|| self.inner.write(Bytes::from(buf)))?)
+        Ok(py.detach(|| self.inner.write_bytes(Bytes::from(buf)))?)
     }
 
     pub fn close(&mut self, py: Python) -> PyHdfsResult<()> {
@@ -624,7 +626,7 @@ impl AsyncRawFileReader {
     }
 
     pub fn seek(&mut self, pos: usize) {
-        self.inner.seek(pos);
+        self.inner.set_position(pos);
     }
 
     pub fn tell(&self) -> usize {
@@ -637,7 +639,7 @@ impl AsyncRawFileReader {
         } else {
             len as usize
         };
-        Ok(Cow::from(self.inner.read(read_len).await?.to_vec()))
+        Ok(Cow::from(self.inner.read_bytes(read_len).await?.to_vec()))
     }
 
     pub async fn read_range(&self, offset: usize, len: usize) -> PyHdfsResult<Cow<'static, [u8]>> {
@@ -661,7 +663,7 @@ struct AsyncRawFileWriter {
 #[pymethods]
 impl AsyncRawFileWriter {
     pub async fn write(&mut self, buf: Vec<u8>) -> PyHdfsResult<usize> {
-        Ok(self.inner.write(Bytes::from(buf)).await?)
+        Ok(self.inner.write_bytes(Bytes::from(buf)).await?)
     }
 
     pub async fn close(&mut self) -> PyHdfsResult<()> {
