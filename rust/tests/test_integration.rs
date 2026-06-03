@@ -16,7 +16,7 @@ mod test {
     use serial_test::serial;
     use std::collections::HashSet;
     use std::io::{Read, Seek, SeekFrom, Write};
-    use tokio::io::AsyncReadExt;
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
     use whoami::username;
 
     #[tokio::test]
@@ -394,6 +394,12 @@ mod test {
             &BytesMut::from(&async_read_data[..]),
             Some("async read".to_string()),
         );
+
+        let mut reader = client.read("/newfile").await?;
+        assert_eq!(reader.seek(SeekFrom::Start(4)).await?, 4);
+        let mut async_seek_data = [0; 4];
+        reader.read_exact(&mut async_seek_data).await?;
+        assert_eq!(async_seek_data, 1i32.to_be_bytes());
 
         assert!(client.delete("/newfile", false).await.is_ok_and(|r| r));
 

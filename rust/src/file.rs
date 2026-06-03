@@ -1,4 +1,4 @@
-use std::io;
+use std::io::{self, SeekFrom};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -8,7 +8,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt, stream};
 use log::warn;
-use tokio::io::{AsyncRead, ReadBuf};
+use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 use tokio::runtime::Handle;
 
 use crate::common::config::Configuration;
@@ -248,6 +248,32 @@ impl AsyncRead for FileReader {
                 }
             }
         }
+    }
+}
+
+impl AsyncSeek for FileReader {
+    fn start_seek(mut self: Pin<&mut Self>, position: SeekFrom) -> io::Result<()> {
+        let file_length = self.file_length() as i128;
+        let current = self.tell() as i128;
+        let new_pos = match position {
+            SeekFrom::Start(pos) => i128::from(pos),
+            SeekFrom::End(offset) => file_length + i128::from(offset),
+            SeekFrom::Current(offset) => current + i128::from(offset),
+        };
+
+        if new_pos < 0 || new_pos > file_length {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "cannot seek outside of file bounds",
+            ));
+        }
+
+        self.set_position(new_pos as usize);
+        Ok(())
+    }
+
+    fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
+        Poll::Ready(Ok(self.tell() as u64))
     }
 }
 
