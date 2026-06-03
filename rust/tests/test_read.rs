@@ -53,7 +53,7 @@ mod test {
 
         let mut file = client.create("/testfile", WriteOptions::default()).await?;
         for i in 0..TEST_FILE_INTS as i32 {
-            file.write(i.to_be_bytes().to_vec().into()).await?;
+            file.write_bytes(i.to_be_bytes().to_vec().into()).await?;
         }
         file.close().await?;
 
@@ -81,24 +81,24 @@ mod test {
         }
 
         // Positioned reads
-        let mut buf = reader.read(reader.file_length()).await?;
+        let mut buf = reader.read_bytes(reader.file_length()).await?;
         for i in 0..TEST_FILE_INTS as i32 {
             assert_eq!(buf.get_i32(), i);
         }
 
-        reader.seek(0);
+        reader.set_position(0);
 
         let mut buf = BytesMut::zeroed(reader.file_length());
-        assert_eq!(reader.read_buf(&mut buf).await?, reader.file_length());
+        assert_eq!(reader.read_into(&mut buf).await?, reader.file_length());
         for i in 0..TEST_FILE_INTS as i32 {
             assert_eq!(buf.get_i32(), i);
         }
 
         // Trying to read again should return nothing
-        assert!(reader.read(1).await?.is_empty());
+        assert!(reader.read_bytes(1).await?.is_empty());
 
         // Same with reading into a provided buffer
-        assert_eq!(reader.read_buf(&mut [0u8]).await?, 0);
+        assert_eq!(reader.read_into(&mut [0u8]).await?, 0);
 
         Ok(())
     }
