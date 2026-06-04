@@ -21,6 +21,7 @@ const HEART_BEAT_SEQNO: i64 = -1;
 const UNKNOWN_SEQNO: i64 = -2;
 
 const HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
+const ACK_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 // The number of packets and acks to queue up on writes
 const WRITE_PACKET_BUFFER_LEN: usize = 100;
@@ -241,10 +242,21 @@ impl Pipeline {
     ) -> JoinHandle<Result<WriteStatus>> {
         handle.spawn(async move {
             loop {
-                let next_ack = match reader.read_ack().await {
-                    Ok(next_ack) => next_ack,
-                    Err(e) => {
+                let next_ack = match tokio::time::timeout(ACK_READ_TIMEOUT, reader.read_ack()).await
+                {
+                    Ok(Ok(next_ack)) => next_ack,
+                    Ok(Err(e)) => {
                         warn!("Failed to read ack from DataNode: {}", e);
+                        return Ok(WriteStatus::Recover(
+                            vec![0],
+                            Self::drain_queue(ack_queue).await,
+                        ));
+                    }
+                    Err(_) => {
+                        warn!(
+                            "Timed out waiting for ack from DataNode after {}s",
+                            ACK_READ_TIMEOUT.as_secs()
+                        );
                         return Ok(WriteStatus::Recover(
                             vec![0],
                             Self::drain_queue(ack_queue).await,
