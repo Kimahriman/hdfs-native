@@ -416,7 +416,7 @@ mod test {
         let user = if kerberos_enabled {
             "hdfs".to_string()
         } else {
-            username()
+            username().unwrap()
         };
 
         let write_options = WriteOptions::default().overwrite(true);

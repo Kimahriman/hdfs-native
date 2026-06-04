@@ -48,7 +48,7 @@ mod test {
     }
 
     async fn test_trash_behavior(client: &Client) -> Result<()> {
-        let trash_current = format!("/user/{}/.Trash/Current", username());
+        let trash_current = format!("/user/{}/.Trash/Current", username().unwrap());
 
         touch(client, "/trash_normal/file").await?;
         assert_eq!(
