@@ -365,32 +365,6 @@ pub struct Client {
 }
 
 impl Client {
-    /// Creates a new HDFS Client. The URL must include the protocol and host, and optionally a port.
-    /// If a port is included, the host is treated as a single NameNode. If no port is included, the
-    /// host is treated as a name service that will be resolved using the HDFS config.
-    #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
-    pub fn new(url: &str) -> Result<Self> {
-        let parsed_url = Url::parse(url)?;
-        Self::build(&parsed_url, Configuration::new(None, None)?, None, None)
-    }
-
-    #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
-    pub fn new_with_config(url: &str, config: HashMap<String, String>) -> Result<Self> {
-        let parsed_url = Url::parse(url)?;
-        Self::build(
-            &parsed_url,
-            Configuration::new(None, Some(config))?,
-            None,
-            None,
-        )
-    }
-
-    #[deprecated(since = "0.12.0", note = "Use ClientBuilder instead")]
-    pub fn default_with_config(config: HashMap<String, String>) -> Result<Self> {
-        let config = Configuration::new(None, Some(config))?;
-        Self::build(&Self::default_fs(&config)?, config, None, None)
-    }
-
     fn default_fs(config: &Configuration) -> Result<Url> {
         let url = config
             .get(config::DEFAULT_FS)
