@@ -937,13 +937,7 @@ impl Client {
     /// Sets permissions for a file. Permission should be an octal number reprenting the Unix style
     /// permission.
     ///
-    /// For example, to set permissions to rwxr-xr-x:
-    /// ```rust
-    /// # async fn func() {
-    /// # let client = hdfs_native::Client::new("localhost:9000").unwrap();
-    /// client.set_permission("/path", 0o755).await.unwrap();
-    /// }
-    /// ```
+    /// For example, to set permissions to rwxr-xr-x, use 0o755.
     pub async fn set_permission(&self, path: &str, permission: u32) -> Result<()> {
         let (link, resolved_path) = self.mount_table.resolve(path);
         link.protocol
