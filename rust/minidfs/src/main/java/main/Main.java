@@ -5,16 +5,21 @@ import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
+import java.net.URL;
 import java.util.HashSet;
 import java.util.Set;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.crypto.key.KeyProvider;
+import org.apache.hadoop.crypto.key.kms.server.MiniKMS;
+import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.hdfs.HdfsConfiguration;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
 import org.apache.hadoop.hdfs.MiniDFSNNTopology;
+import org.apache.hadoop.hdfs.client.HdfsAdmin;
 import org.apache.hadoop.hdfs.client.HdfsClientConfigKeys;
 import org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenIdentifier;
 import org.apache.hadoop.hdfs.server.federation.RouterConfigBuilder;
@@ -48,6 +53,17 @@ public class Main {
         conf.set("dfs.blocksize", "16777216"); // 16 MiB instead of 128 MiB
         if (flags.contains("trash")) {
             conf.set(FS_TRASH_INTERVAL_KEY, "60");
+        }
+
+        MiniKMS kms = null;
+        String kmsProviderUri = null;
+        if (flags.contains("kms")) {
+            kms = startMiniKMS();
+            URL kmsUrl = kms.getKMSUrl();
+            // Convert "http://host:port/kms" to "kms://http@host:port/kms",
+            // matching `hadoop.security.key.provider.path` syntax.
+            kmsProviderUri = "kms://" + kmsUrl.getProtocol() + "@" + kmsUrl.getAuthority() + kmsUrl.getPath();
+            conf.set("hadoop.security.key.provider.path", kmsProviderUri);
         }
         if (flags.contains("security")) {
             kdc = new MiniKdc(MiniKdc.createConf(), new File("target/test/kdc"));
@@ -156,6 +172,30 @@ public class Main {
                 fs.setErasureCodingPolicy(new Path("/ec-10-4"), "RS-10-4-1024k");
             }
 
+            if (flags.contains("kms")) {
+                DistributedFileSystem fs = dfs.getFileSystem(activeNamenode);
+                // Create the encryption-zone master key via the KMS, then mark
+                // /ezone as a zone backed by it. The Rust integration test reads
+                // a file inside this zone and expects to recover the plaintext
+                // written here through the standard Java HDFS client.
+                KeyProvider keyProvider = fs.getClient().getKeyProvider();
+                KeyProvider.Options keyOpts = new KeyProvider.Options(hdfsConf)
+                    .setBitLength(128)
+                    .setCipher("AES/CTR/NoPadding")
+                    .setDescription("hdfs-native test key");
+                keyProvider.createKey("test-key", keyOpts);
+                keyProvider.flush();
+
+                fs.mkdirs(new Path("/ezone"), new FsPermission("755"));
+                HdfsAdmin admin = new HdfsAdmin(fs.getUri(), hdfsConf);
+                admin.createEncryptionZone(new Path("/ezone"), "test-key");
+
+                byte[] payload = "hdfs-native TDE round-trip test payload".getBytes();
+                try (FSDataOutputStream out = fs.create(new Path("/ezone/file"))) {
+                    out.write(payload);
+                }
+            }
+
             if (flags.contains("token")) {
                 Credentials creds = new Credentials();
                 if (flags.contains("ha")) {
@@ -167,7 +207,7 @@ public class Main {
                     token.setService(new Text(dfs.getNameNode().getTokenServiceName()));
                     creds.addToken(new Text(dfs.getNameNode().getTokenServiceName()), token);
                 }
-                
+
                 try (DataOutputStream os = new DataOutputStream(new FileOutputStream("target/test/delegation_token"))) {
                     creds.writeTokenStorageToStream(os, SerializedFormat.WRITABLE);
                 }
@@ -183,7 +223,7 @@ public class Main {
 
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
         reader.readLine();
-    
+
         if (dfs != null) {
             dfs.close();
         }
@@ -191,9 +231,67 @@ public class Main {
             routerDfs.shutdown();
         }
 
+        if (kms != null) {
+            kms.stop();
+        }
+
         if (flags.contains("security")) {
             kdc.stop();
         }
+    }
+
+    /**
+     * Start a MiniKMS for HDFS Transparent Data Encryption tests. Uses simple
+     * (pseudo) auth and a JCEKS keystore in target/test/kms.
+     */
+    private static MiniKMS startMiniKMS() throws Exception {
+        File kmsDir = new File("target/test/kms").getAbsoluteFile();
+        kmsDir.mkdirs();
+
+        File keystoreFile = new File(kmsDir, "kms.keystore");
+        // Wipe any leftover keystore from a previous run so `createKey` does
+        // not collide with a stale entry.
+        if (keystoreFile.exists()) {
+            keystoreFile.delete();
+        }
+
+        // The Hadoop 3.5 JKS provider reads the keystore password from the
+        // HADOOP_KEYSTORE_PASSWORD env var (set by the Rust harness) — its
+        // password-file lookup only resolves classpath resources, not
+        // filesystem paths, so an env var is the simplest path here.
+        Configuration kmsConf = new Configuration(false);
+        kmsConf.set(
+            "hadoop.kms.key.provider.uri",
+            "jceks://file@" + keystoreFile.toURI().getPath()
+        );
+        kmsConf.set("hadoop.kms.authentication.type", "simple");
+        // Allow the proxy user used by the cluster to talk to the KMS.
+        kmsConf.set("hadoop.kms.proxyuser.HTTP.users", "*");
+        kmsConf.set("hadoop.kms.proxyuser.HTTP.hosts", "*");
+
+        try (FileOutputStream fos = new FileOutputStream(new File(kmsDir, "kms-site.xml"))) {
+            kmsConf.writeXml(fos);
+        }
+        try (FileOutputStream fos = new FileOutputStream(new File(kmsDir, "core-site.xml"))) {
+            new Configuration(false).writeXml(fos);
+        }
+        // Per-key ACLs gate operations on individual keys. The defaults deny
+        // everything; for tests we open them up.
+        Configuration aclsConf = new Configuration(false);
+        for (String op : new String[] {
+                "MANAGEMENT", "GENERATE_EEK", "DECRYPT_EEK", "READ", "ALL"}) {
+            aclsConf.set("default.key.acl." + op, "*");
+            aclsConf.set("whitelist.key.acl." + op, "*");
+        }
+        try (FileOutputStream fos = new FileOutputStream(new File(kmsDir, "kms-acls.xml"))) {
+            aclsConf.writeXml(fos);
+        }
+
+        MiniKMS kms = new MiniKMS.Builder()
+            .setKmsConfDir(kmsDir)
+            .build();
+        kms.start();
+        return kms;
     }
 
     public static MiniDFSNNTopology generateTopology(Set<String> flags, Configuration conf) {

@@ -11,6 +11,7 @@ use crate::{
     ec::{EcSchema, gf256::Coder},
     hdfs::{
         connection::{DatanodeConnection, DatanodeReader, DatanodeWriter, Op, WritePacket},
+        crypto::FileCryptoCodec,
         protocol::NamenodeProtocol,
         replace_datanode::ReplaceDatanodeOnFailure,
     },
@@ -44,6 +45,7 @@ impl BlockWriter {
         ec_schema: Option<&EcSchema>,
         src: &str,
         status: &hdfs::HdfsFileStatusProto,
+        crypto: Option<Arc<FileCryptoCodec>>,
     ) -> Result<Self> {
         let block_writer = if let Some(ec_schema) = ec_schema {
             Self::Striped(StripedBlockWriter::new(
@@ -54,6 +56,7 @@ impl BlockWriter {
                 config,
                 handle,
                 status,
+                crypto,
             ))
         } else {
             Self::Replicated(
@@ -65,6 +68,7 @@ impl BlockWriter {
                     config,
                     handle,
                     status,
+                    crypto,
                 )
                 .await?,
             )
@@ -332,6 +336,7 @@ pub(crate) struct ReplicatedBlockWriter {
     block: hdfs::LocatedBlockProto,
     block_size: usize,
     server_defaults: hdfs::FsServerDefaultsProto,
+    crypto: Option<Arc<FileCryptoCodec>>,
 
     current_packet: WritePacket,
     pipeline: Option<Pipeline>,
@@ -342,6 +347,7 @@ pub(crate) struct ReplicatedBlockWriter {
 }
 
 impl ReplicatedBlockWriter {
+    #[allow(clippy::too_many_arguments)]
     async fn new(
         src: &str,
         protocol: Arc<NamenodeProtocol>,
@@ -350,6 +356,7 @@ impl ReplicatedBlockWriter {
         config: Arc<Configuration>,
         handle: Handle,
         status: &hdfs::HdfsFileStatusProto,
+        crypto: Option<Arc<FileCryptoCodec>>,
     ) -> Result<Self> {
         let pipeline = Self::setup_pipeline(
             &protocol,
@@ -388,6 +395,7 @@ impl ReplicatedBlockWriter {
             block,
             block_size: status.blocksize() as usize,
             server_defaults,
+            crypto,
             current_packet,
             pipeline: Some(pipeline),
             status: status.clone(),
@@ -627,6 +635,17 @@ impl ReplicatedBlockWriter {
         );
         let mut buf_to_write = buf.split_to(bytes_to_write);
 
+        // For encryption zones, encrypt the user's plaintext at its absolute
+        // file offset before any chunking. CTR-mode keystream is independent
+        // of the slicing, so this is correct as long as we feed every byte
+        // exactly once at the right offset.
+        if let Some(codec) = self.crypto.as_ref() {
+            let file_offset = self.block.offset + self.block.b.num_bytes();
+            let mut encrypted = buf_to_write.to_vec();
+            codec.apply(file_offset, &mut encrypted);
+            buf_to_write = Bytes::from(encrypted);
+        }
+
         while !buf_to_write.is_empty() {
             let initial_buf_len = buf_to_write.len();
             self.current_packet.write(&mut buf_to_write);
@@ -864,9 +883,11 @@ pub(crate) struct StripedBlockWriter {
     capacity: usize,
     status: hdfs::HdfsFileStatusProto,
     data_units: usize,
+    crypto: Option<Arc<FileCryptoCodec>>,
 }
 
 impl StripedBlockWriter {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         protocol: Arc<NamenodeProtocol>,
         block: hdfs::LocatedBlockProto,
@@ -875,6 +896,7 @@ impl StripedBlockWriter {
         config: Arc<Configuration>,
         handle: Handle,
         status: &hdfs::HdfsFileStatusProto,
+        crypto: Option<Arc<FileCryptoCodec>>,
     ) -> Self {
         let block_writers = (0..block.block_indices().len()).map(|_| None).collect();
 
@@ -890,6 +912,7 @@ impl StripedBlockWriter {
             capacity: ec_schema.data_units * status.blocksize() as usize,
             status: status.clone(),
             data_units: ec_schema.data_units,
+            crypto,
         }
     }
 
@@ -934,6 +957,10 @@ impl StripedBlockWriter {
                         Arc::clone(&self.config),
                         self.handle.clone(),
                         &self.status,
+                        // Encryption is applied once at the EC layer above
+                        // before encoding; the per-shard writers must not
+                        // re-encrypt the ciphertext.
+                        None,
                     )
                     .await,
                 )
@@ -977,6 +1004,16 @@ impl StripedBlockWriter {
         let bytes_to_write = usize::min(buf.len(), self.bytes_remaining());
 
         let mut buf_to_write = buf.split_to(bytes_to_write);
+
+        // Encryption (if any) is applied here, before EC encoding — the data
+        // shards stored on disk must be ciphertext, parity is computed over
+        // ciphertext, and decryption on read happens after EC decode.
+        if let Some(codec) = self.crypto.as_ref() {
+            let file_offset = self.block.offset + self.bytes_written as u64;
+            let mut encrypted = buf_to_write.to_vec();
+            codec.apply(file_offset, &mut encrypted);
+            buf_to_write = Bytes::from(encrypted);
+        }
 
         while !buf_to_write.is_empty() {
             self.cell_buffer.write(&mut buf_to_write);

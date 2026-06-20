@@ -267,9 +267,19 @@ impl Drop for GssCred {
     }
 }
 
+// SPNEGO mechanism OID 1.3.6.1.5.5.2, encoded body bytes (no tag/length prefix).
+static SPNEGO_OID_BYTES: [u8; 6] = [0x2b, 0x06, 0x01, 0x05, 0x05, 0x02];
+
+#[derive(Clone, Copy)]
+enum GssMech {
+    Krb5,
+    Spnego,
+}
+
 struct GssClientCtx {
     ctx: bindings::gss_ctx_id_t,
     target: GssName,
+    mech: GssMech,
     flags: u32,
 }
 
@@ -278,19 +288,39 @@ unsafe impl Sync for GssClientCtx {}
 
 impl GssClientCtx {
     fn new(target: GssName) -> Self {
-        let flags = bindings::GSS_C_DELEG_FLAG
-            | bindings::GSS_C_MUTUAL_FLAG
-            | bindings::GSS_C_REPLAY_FLAG
-            | bindings::GSS_C_SEQUENCE_FLAG
-            | bindings::GSS_C_CONF_FLAG
-            | bindings::GSS_C_INTEG_FLAG
-            | bindings::GSS_C_ANON_FLAG
-            | bindings::GSS_C_PROT_READY_FLAG
-            | bindings::GSS_C_TRANS_FLAG
-            | bindings::GSS_C_DELEG_POLICY_FLAG;
+        Self::with_mech(target, GssMech::Krb5)
+    }
+
+    fn with_mech(target: GssName, mech: GssMech) -> Self {
+        // Hadoop IPC SASL uses GSSAPI/Kerberos and historically requests credential
+        // delegation. SPNEGO over HTTP (KMS) does not need delegation, and the
+        // delegated TGT bloats the SPNEGO token to the point where it can exceed
+        // a server's default `maxHttpHeaderSize` (Tomcat defaults to 8 KiB) under
+        // Active Directory PAC payloads. Use a leaner flag set for SPNEGO.
+        let flags = match mech {
+            GssMech::Krb5 => {
+                bindings::GSS_C_DELEG_FLAG
+                    | bindings::GSS_C_MUTUAL_FLAG
+                    | bindings::GSS_C_REPLAY_FLAG
+                    | bindings::GSS_C_SEQUENCE_FLAG
+                    | bindings::GSS_C_CONF_FLAG
+                    | bindings::GSS_C_INTEG_FLAG
+                    | bindings::GSS_C_ANON_FLAG
+                    | bindings::GSS_C_PROT_READY_FLAG
+                    | bindings::GSS_C_TRANS_FLAG
+                    | bindings::GSS_C_DELEG_POLICY_FLAG
+            }
+            GssMech::Spnego => {
+                bindings::GSS_C_MUTUAL_FLAG
+                    | bindings::GSS_C_REPLAY_FLAG
+                    | bindings::GSS_C_SEQUENCE_FLAG
+                    | bindings::GSS_C_INTEG_FLAG
+            }
+        };
         Self {
             ctx: ptr::null_mut(),
             target,
+            mech,
             flags,
         }
     }
@@ -309,13 +339,24 @@ impl GssClientCtx {
             .map(|t| unsafe { t.as_ptr() })
             .unwrap_or(ptr::null_mut());
 
+        // SPNEGO needs a heap-stable gss_OID_desc whose elements point at the static OID
+        // bytes. Hold it on the stack across the call.
+        let mut spnego_oid_storage = bindings::gss_OID_desc {
+            length: SPNEGO_OID_BYTES.len() as u32,
+            elements: SPNEGO_OID_BYTES.as_ptr() as *mut c_void,
+        };
+        let mech_oid: bindings::gss_OID = match self.mech {
+            GssMech::Krb5 => unsafe { *libgssapi()?.gss_mech_krb5() as bindings::gss_OID },
+            GssMech::Spnego => &mut spnego_oid_storage as bindings::gss_OID,
+        };
+
         let major = unsafe {
             libgssapi()?.gss_init_sec_context(
                 &mut minor,
                 ptr::null_mut(),
                 &mut self.ctx as *mut bindings::gss_ctx_id_t,
                 self.target.name,
-                *libgssapi()?.gss_mech_krb5() as bindings::gss_OID,
+                mech_oid,
                 self.flags,
                 bindings::_GSS_C_INDEFINITE,
                 ptr::null_mut(),
@@ -511,6 +552,39 @@ impl GssapiSession {
         let cred = GssCred::acquire_default()?;
         let name = cred.name()?;
         name.display_name()
+    }
+}
+
+/// SPNEGO/Kerberos session for HTTP `Authorization: Negotiate` flows.
+///
+/// The first call returns the initial token to send to the server. If the server
+/// replies with a continuation token (rare in Hadoop deployments), call again with
+/// that token until `complete` is `true`.
+pub(crate) struct SpnegoSession {
+    ctx: GssClientCtx,
+    complete: bool,
+}
+
+impl SpnegoSession {
+    pub(crate) fn new(service: &str, hostname: &str) -> crate::Result<Self> {
+        let target = GssName::with_target(&format!("{service}@{hostname}"))?;
+        Ok(Self {
+            ctx: GssClientCtx::with_mech(target, GssMech::Spnego),
+            complete: false,
+        })
+    }
+
+    /// Drive the next leg of the SPNEGO handshake. Returns the next token to send
+    /// (empty if the handshake is finished). `is_complete()` is true after the
+    /// final step from the GSSAPI library's perspective.
+    pub(crate) fn step(&mut self, server_token: Option<&[u8]>) -> crate::Result<Vec<u8>> {
+        let (out_token, complete) = self.ctx.step(server_token)?;
+        self.complete = complete;
+        Ok(out_token.unwrap_or_default())
+    }
+
+    pub(crate) fn is_complete(&self) -> bool {
+        self.complete
     }
 }
 
