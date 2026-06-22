@@ -7,7 +7,7 @@ use std::{
 };
 use which::which;
 
-#[derive(PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum DfsFeatures {
     Security,
     Token,
@@ -53,6 +53,7 @@ impl DfsFeatures {
 }
 
 pub struct MiniDfs {
+    features: HashSet<DfsFeatures>,
     process: Child,
     pub url: String,
 }
@@ -145,20 +146,22 @@ impl MiniDfs {
 
         unsafe { env::set_var("HADOOP_CONF_DIR", "target/test") };
         MiniDfs {
+            features: features.clone(),
             process: child,
             url: url.to_string(),
         }
     }
 
     fn kdestroy() {
-        let kdestroy_exec = which("kdestroy").expect("Failed to find kdestroy executable");
-        Command::new(kdestroy_exec)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap()
-            .wait()
-            .unwrap();
+        if let Ok(kdestroy_exec) = which("kdestroy") {
+            Command::new(kdestroy_exec)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap()
+                .wait()
+                .unwrap();
+        }
     }
 }
 
@@ -176,6 +179,8 @@ impl Drop for MiniDfs {
         self.process.kill().unwrap();
         self.process.wait().unwrap();
 
-        Self::kdestroy();
+        if self.features.contains(&DfsFeatures::Security) {
+            Self::kdestroy();
+        }
     }
 }
