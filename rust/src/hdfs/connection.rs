@@ -40,6 +40,15 @@ const CRC32C: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_ISCSI);
 pub(crate) static DATANODE_CACHE: Lazy<DatanodeConnectionCache> =
     Lazy::new(DatanodeConnectionCache::new);
 
+fn datanode_url(datanode_id: &DatanodeIdProto, config: &Configuration) -> String {
+    let host = if config.use_datanode_hostname() {
+        &datanode_id.host_name
+    } else {
+        &datanode_id.ip_addr
+    };
+    format!("{}:{}", host, datanode_id.xfer_port)
+}
+
 // Connect to a remote host and return a TcpStream with standard options we want
 async fn connect(addr: &str, handle: &Handle) -> Result<TcpStream> {
     let addr = addr.to_string();
@@ -590,7 +599,7 @@ impl DatanodeConnection {
         config: &Configuration,
         handle: &Handle,
     ) -> Result<Self> {
-        let url = format!("{}:{}", datanode_id.ip_addr, datanode_id.xfer_port);
+        let url = datanode_url(datanode_id, config);
         let stream = connect(&url, handle).await?;
 
         let sasl_connection = SaslDatanodeConnection::create(stream);
@@ -744,12 +753,16 @@ impl DatanodeConnectionCache {
         }
     }
 
-    pub(crate) fn get(&self, datanode_id: &hdfs::DatanodeIdProto) -> Option<DatanodeConnection> {
+    pub(crate) fn get(
+        &self,
+        datanode_id: &hdfs::DatanodeIdProto,
+        config: &Configuration,
+    ) -> Option<DatanodeConnection> {
         // Keep things simple and just expire cache entries when checking the cache. We could
         // move this to its own task but that will add a little more complexity.
         self.remove_expired();
 
-        let url = format!("{}:{}", datanode_id.ip_addr, datanode_id.xfer_port);
+        let url = datanode_url(datanode_id, config);
         let mut cache = self.cache.lock().unwrap();
 
         cache
@@ -787,9 +800,12 @@ mod test {
     use prost::Message;
     use tokio::sync::mpsc;
 
-    use crate::{hdfs::connection::MAX_PACKET_HEADER_SIZE, proto::hdfs, security::user::UserInfo};
+    use crate::{
+        common::config::Configuration, hdfs::connection::MAX_PACKET_HEADER_SIZE, proto::hdfs,
+        security::user::UserInfo,
+    };
 
-    use super::{AlignmentContext, RpcConnection};
+    use super::{AlignmentContext, RpcConnection, datanode_url};
 
     #[test]
     fn test_max_packet_header_size() {
@@ -800,6 +816,44 @@ mod test {
         };
         // Add 4 bytes for size of whole packet and 2 bytes for size of header
         assert_eq!(MAX_PACKET_HEADER_SIZE, header.encoded_len() + 4 + 2);
+    }
+
+    #[test]
+    fn test_datanode_url_uses_ip_address_by_default() {
+        let datanode_id = hdfs::DatanodeIdProto {
+            ip_addr: "127.0.0.1".to_string(),
+            host_name: "hdfs-datanode".to_string(),
+            xfer_port: 9866,
+            ..Default::default()
+        };
+        let config =
+            Configuration::new(Some("/tmp/hdfs-native-missing-conf".to_string()), None).unwrap();
+
+        assert_eq!(datanode_url(&datanode_id, &config), "127.0.0.1:9866");
+    }
+
+    #[test]
+    fn test_datanode_url_uses_hostname_when_configured() {
+        let datanode_id = hdfs::DatanodeIdProto {
+            ip_addr: "127.0.0.1".to_string(),
+            host_name: "hdfs-datanode".to_string(),
+            xfer_port: 9866,
+            ..Default::default()
+        };
+        let config = Configuration::new(
+            Some("/tmp/hdfs-native-missing-conf".to_string()),
+            Some(
+                [(
+                    "dfs.client.use.datanode.hostname".to_string(),
+                    "true".to_string(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(datanode_url(&datanode_id, &config), "hdfs-datanode:9866");
     }
 
     fn encode_router_state(map: &HashMap<String, i64>) -> Vec<u8> {

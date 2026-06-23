@@ -76,8 +76,10 @@ Copy the `<INSTALL FOLDER>\MIT\Kerberos\bin\gssapi64.dll` file to a folder in %P
 The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xml` in the directories `$HADOOP_CONF_DIR` or if that doesn't exist, `$HADOOP_HOME/etc/hadoop`. Passing configs in run time is supported as well via `client::ClientBuilder`. Currently the supported configs that are used are:
 
 - `fs.defaultFS` - Client::default() support
+- `hadoop.security.authentication` - Enables Kerberos
 - `dfs.ha.namenodes` - name service support
 - `dfs.namenode.rpc-address.*` - name service support
+- `dfs.user.home.dir.prefix` - Home directory prefix for HDFS paths
 - `dfs.client.failover.resolve-needed.*` - DNS based NameNode discovery
 - `dfs.client.failover.resolver.useFQDN.*` - DNS based NameNode discovery
 - `dfs.client.failover.random.order.*` - Randomize order of NameNodes to try
@@ -85,9 +87,12 @@ The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xm
   - `org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider`
   - `org.apache.hadoop.hdfs.server.namenode.ha.ObserverReadProxyProvider`
   - `org.apache.hadoop.hdfs.server.namenode.ha.RouterObserverReadConfiguredFailoverProxyProvider`
+- `dfs.client.use.datanode.hostname` - Use DataNode hostnames instead of IP addresses for DataNode connections
 - `dfs.client.block.write.replace-datanode-on-failure.enable`
 - `dfs.client.block.write.replace-datanode-on-failure.policy`
 - `dfs.client.block.write.replace-datanode-on-failure.best-effort`
+- `dfs.data.transfer.protection` - Enables DataNode data transfer protection negotiation when set
+- `fs.viewfs.mounttable.*.homedir` - ViewFS home directory prefix
 - `fs.viewfs.mounttable.*.link.*` - ViewFS links
 - `fs.viewfs.mounttable.*.linkFallback` - ViewFS link fallback
 

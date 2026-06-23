@@ -24,6 +24,7 @@ const DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN: &str = "dfs.client.failover.resolve
 const DFS_CLIENT_FAILOVER_RANDOM_ORDER: &str = "dfs.client.failover.random.order";
 const DFS_CLIENT_FAILOVER_PROXY_PROVIDER: &str = "dfs.client.failover.proxy.provider";
 const DFS_DATA_TRANSFER_PROTECTION: &str = "dfs.data.transfer.protection";
+const DFS_CLIENT_USE_DATANODE_HOSTNAME: &str = "dfs.client.use.datanode.hostname";
 
 const HADOOP_SECURITY_AUTHENTICATION: &str = "hadoop.security.authentication";
 
@@ -78,6 +79,10 @@ impl Configuration {
 
     pub(crate) fn data_transfer_protection_enabled(&self) -> bool {
         self.get(DFS_DATA_TRANSFER_PROTECTION).is_some()
+    }
+
+    pub(crate) fn use_datanode_hostname(&self) -> bool {
+        self.get_boolean(DFS_CLIENT_USE_DATANODE_HOSTNAME, false)
     }
 
     pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Result<Vec<String>> {
@@ -397,7 +402,7 @@ mod test {
     use crate::common::config::DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN;
 
     use super::{
-        Configuration, DFS_CLIENT_FAILOVER_RESOLVE_NEEDED,
+        Configuration, DFS_CLIENT_FAILOVER_RESOLVE_NEEDED, DFS_CLIENT_USE_DATANODE_HOSTNAME,
         DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_BEST_EFFORT_KEY,
         DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY,
         DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_POLICY_KEY, EntityResolver,
@@ -634,6 +639,24 @@ mod test {
         };
         let policy = config.get_replace_datanode_on_failure_policy();
         assert!(!policy.is_best_effort());
+    }
+
+    #[test]
+    fn test_use_datanode_hostname_config() {
+        let config = Configuration {
+            map: HashMap::new(),
+        };
+        assert!(!config.use_datanode_hostname());
+
+        let config = Configuration {
+            map: [(
+                DFS_CLIENT_USE_DATANODE_HOSTNAME.to_string(),
+                "true".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+        };
+        assert!(config.use_datanode_hostname());
     }
 
     #[test]
