@@ -76,7 +76,7 @@ Copy the `<INSTALL FOLDER>\MIT\Kerberos\bin\gssapi64.dll` file to a folder in %P
 The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xml` in the directories `$HADOOP_CONF_DIR` or if that doesn't exist, `$HADOOP_HOME/etc/hadoop`. Passing configs in run time is supported as well via `client::ClientBuilder`. Currently the supported configs that are used are:
 
 - `fs.defaultFS` - Client::default() support
-- `hadoop.security.authentication` - Enables Kerberos when set to a non-`simple` value
+- `hadoop.security.authentication` - Enables Kerberos
 - `dfs.ha.namenodes` - name service support
 - `dfs.namenode.rpc-address.*` - name service support
 - `dfs.user.home.dir.prefix` - Home directory prefix for HDFS paths
