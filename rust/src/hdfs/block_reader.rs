@@ -76,7 +76,7 @@ async fn connect_and_send(
 
     let mut remaining_attempts = 2;
     while remaining_attempts > 0 {
-        if let Some(mut conn) = DATANODE_CACHE.get(datanode_id) {
+        if let Some(mut conn) = DATANODE_CACHE.get(datanode_id, config) {
             let message = hdfs::OpReadBlockProto {
                 header: conn.build_header(block, Some(token.clone())),
                 offset,
