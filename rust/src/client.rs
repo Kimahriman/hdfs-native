@@ -15,8 +15,9 @@ use crate::file::{FileReader, FileWriter};
 use crate::hdfs::crypto::FileCryptoCodec;
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
-use crate::security::kms::KmsClient;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
+#[cfg(feature = "kms")]
+use crate::security::kms::KmsClient;
 use crate::security::user::User;
 
 use crate::glob::{GlobPattern, expand_glob, get_path_components, unescape_component};
@@ -366,6 +367,7 @@ pub struct Client {
     rt_holder: RuntimeHolder,
     // Built once at client construction from `hadoop.security.key.provider.path`.
     // `None` means TDE is not configured; reads of encrypted files will error.
+    #[cfg(feature = "kms")]
     kms_client: Option<Arc<KmsClient>>,
 }
 
@@ -446,12 +448,14 @@ impl Client {
             }
         };
 
+        #[cfg(feature = "kms")]
         let kms_client = KmsClient::from_config(config.as_ref(), None, username.to_string())?;
 
         Ok(Self {
             mount_table: Arc::new(mount_table),
             config,
             rt_holder,
+            #[cfg(feature = "kms")]
             kms_client,
         })
     }
@@ -704,15 +708,27 @@ impl Client {
         let Some(info) = info else {
             return Ok(None);
         };
-        let kms = self.kms_client.as_ref().ok_or_else(|| {
-            HdfsError::OperationFailed(
-                "File is in an HDFS encryption zone but no KMS provider is configured \
-                 (set `hadoop.security.key.provider.path` in core-site.xml)"
+        #[cfg(feature = "kms")]
+        {
+            let kms = self.kms_client.as_ref().ok_or_else(|| {
+                HdfsError::OperationFailed(
+                    "File is in an HDFS encryption zone but no KMS provider is configured \
+                     (set `hadoop.security.key.provider.path` in core-site.xml)"
+                        .to_string(),
+                )
+            })?;
+            let dek = kms.decrypt_edek(info).await?;
+            Ok(Some(Arc::new(FileCryptoCodec::new(info, dek)?)))
+        }
+        #[cfg(not(feature = "kms"))]
+        {
+            let _ = info;
+            Err(HdfsError::UnsupportedFeature(
+                "file is in an HDFS encryption zone; reading or writing it requires \
+                 building hdfs-native with the `kms` cargo feature"
                     .to_string(),
-            )
-        })?;
-        let dek = kms.decrypt_edek(info).await?;
-        Ok(Some(Arc::new(FileCryptoCodec::new(info, dek)?)))
+            ))
+        }
     }
 
     /// Opens a new file for writing. See [WriteOptions] for options and behavior for different

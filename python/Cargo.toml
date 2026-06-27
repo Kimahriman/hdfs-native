@@ -28,7 +28,10 @@ name = "hdfs_native._internal"
 bytes = { workspace = true } 
 env_logger = { workspace = true }
 futures = { workspace = true }
-hdfs-native = { path = "../rust" }
+# Enable KMS with the pure-Rust TLS backend so published wheels support reading
+# and writing files in HDFS encryption zones out of the box, without requiring a
+# system TLS library at build time.
+hdfs-native = { path = "../rust", features = ["kms-rustls-tls"] }
 log = { workspace = true }
 pyo3 = { version = "0.28", features = ["extension-module", "abi3", "abi3-py310", "experimental-async"] }
 pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }

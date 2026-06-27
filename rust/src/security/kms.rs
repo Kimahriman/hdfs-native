@@ -44,6 +44,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::common::config::{Configuration, HADOOP_SECURITY_KEY_PROVIDER_PATH};
+use crate::hdfs::crypto::DataEncryptionKey;
 use crate::proto::hdfs::FileEncryptionInfoProto;
 use crate::security::gssapi::SpnegoSession;
 use crate::{HdfsError, Result};
@@ -51,13 +52,6 @@ use crate::{HdfsError, Result};
 const KMS_URI_PREFIX: &str = "kms://";
 const SPNEGO_SERVICE: &str = "HTTP";
 const KMS_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// A plaintext data encryption key returned by the KMS.
-#[derive(Debug, Clone)]
-pub(crate) struct DataEncryptionKey {
-    pub material: Vec<u8>,
-    pub iv: Vec<u8>,
-}
 
 /// Async client for the Hadoop KMS REST API.
 #[derive(Debug)]

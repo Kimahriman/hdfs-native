@@ -273,6 +273,8 @@ static SPNEGO_OID_BYTES: [u8; 6] = [0x2b, 0x06, 0x01, 0x05, 0x05, 0x02];
 #[derive(Clone, Copy)]
 enum GssMech {
     Krb5,
+    // Only constructed by `SpnegoSession`, which is gated on the `kms` feature.
+    #[cfg_attr(not(feature = "kms"), allow(dead_code))]
     Spnego,
 }
 
@@ -560,11 +562,13 @@ impl GssapiSession {
 /// The first call returns the initial token to send to the server. If the server
 /// replies with a continuation token (rare in Hadoop deployments), call again with
 /// that token until `complete` is `true`.
+#[cfg(feature = "kms")]
 pub(crate) struct SpnegoSession {
     ctx: GssClientCtx,
     complete: bool,
 }
 
+#[cfg(feature = "kms")]
 impl SpnegoSession {
     pub(crate) fn new(service: &str, hostname: &str) -> crate::Result<Self> {
         let target = GssName::with_target(&format!("{service}@{hostname}"))?;

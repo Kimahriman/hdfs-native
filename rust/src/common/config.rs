@@ -28,6 +28,7 @@ const DFS_CLIENT_USE_DATANODE_HOSTNAME: &str = "dfs.client.use.datanode.hostname
 
 const HADOOP_SECURITY_AUTHENTICATION: &str = "hadoop.security.authentication";
 
+#[cfg(feature = "kms")]
 pub(crate) const HADOOP_SECURITY_KEY_PROVIDER_PATH: &str = "hadoop.security.key.provider.path";
 
 // Viewfs settings

@@ -11,13 +11,25 @@ use aes::{Aes128, Aes192, Aes256};
 use cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
 use ctr::Ctr128BE;
 
+#[cfg(feature = "kms")]
 use crate::proto::hdfs::{CipherSuiteProto, FileEncryptionInfoProto};
-use crate::security::kms::DataEncryptionKey;
+#[cfg(feature = "kms")]
 use crate::{HdfsError, Result};
 
 type Aes128Ctr = Ctr128BE<Aes128>;
 type Aes192Ctr = Ctr128BE<Aes192>;
 type Aes256Ctr = Ctr128BE<Aes256>;
+
+/// A plaintext data encryption key: the AES key material plus the per-file IV.
+/// Produced by the KMS client (which decrypts the namenode's EDEK) and consumed
+/// by [`FileCryptoCodec::new`]. Only constructed when the `kms` feature is on,
+/// since the KMS is the sole source of decrypted keys.
+#[cfg(feature = "kms")]
+#[derive(Debug, Clone)]
+pub(crate) struct DataEncryptionKey {
+    pub material: Vec<u8>,
+    pub iv: Vec<u8>,
+}
 
 /// Per-file cipher state, derived from the plaintext data encryption key
 /// returned by the KMS plus the IV from the namenode's `FileEncryptionInfo`.
@@ -29,6 +41,7 @@ pub(crate) struct FileCryptoCodec {
 
 impl FileCryptoCodec {
     /// Build a codec from the file's encryption info and the plaintext DEK.
+    #[cfg(feature = "kms")]
     pub(crate) fn new(info: &FileEncryptionInfoProto, dek: DataEncryptionKey) -> Result<Self> {
         match CipherSuiteProto::try_from(info.suite) {
             Ok(CipherSuiteProto::AesCtrNopadding) => {}
@@ -90,7 +103,10 @@ impl FileCryptoCodec {
     }
 }
 
-#[cfg(test)]
+// The codec is exercised end-to-end only with a `DataEncryptionKey`, which is
+// gated on the `kms` feature; gate the tests to match so the no-kms build stays
+// warning-clean.
+#[cfg(all(test, feature = "kms"))]
 mod tests {
     use super::*;
 
