@@ -20,6 +20,7 @@ use crate::{
     common::config::Configuration,
     ec::EcSchema,
     hdfs::connection::{DATANODE_CACHE, DatanodeConnection, Op},
+    hdfs::crypto::{FileCipher, FileCryptoCodec},
     proto::{
         common,
         hdfs::{
@@ -34,6 +35,7 @@ use super::protocol::NamenodeProtocol;
 // The number of packets to queue up on reads
 const READ_PACKET_BUFFER_LEN: usize = 100;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn get_block_stream(
     protocol: Arc<NamenodeProtocol>,
     block: hdfs::LocatedBlockProto,
@@ -42,13 +44,16 @@ pub(crate) fn get_block_stream(
     ec_schema: Option<EcSchema>,
     config: Arc<Configuration>,
     handle: Handle,
+    crypto: Option<Arc<FileCryptoCodec>>,
 ) -> BoxStream<'static, Result<Bytes>> {
     if let Some(ec_schema) = ec_schema {
-        StripedBlockStream::new(protocol, block, offset, len, ec_schema, config, handle)
-            .into_stream()
-            .boxed()
+        StripedBlockStream::new(
+            protocol, block, offset, len, ec_schema, config, handle, crypto,
+        )
+        .into_stream()
+        .boxed()
     } else {
-        ReplicatedBlockStream::new(protocol, block, offset, len, config, handle)
+        ReplicatedBlockStream::new(protocol, block, offset, len, config, handle, crypto)
             .into_stream()
             .boxed()
     }
@@ -129,6 +134,9 @@ struct ReplicatedBlockStream {
     len: usize,
     config: Arc<Configuration>,
     handle: Handle,
+    // Built once per block from the shared codec so the AES key schedule is
+    // computed a single time rather than per packet.
+    cipher: Option<FileCipher>,
 
     listener: Option<JoinHandle<Result<DatanodeConnection>>>,
     sender: Sender<Result<(PacketHeaderProto, Bytes)>>,
@@ -144,6 +152,7 @@ impl ReplicatedBlockStream {
         len: usize,
         config: Arc<Configuration>,
         handle: Handle,
+        crypto: Option<Arc<FileCryptoCodec>>,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(READ_PACKET_BUFFER_LEN);
 
@@ -154,6 +163,7 @@ impl ReplicatedBlockStream {
             len,
             config,
             handle,
+            cipher: crypto.as_ref().map(|c| c.make_cipher()),
             listener: None,
             sender,
             receiver,
@@ -264,6 +274,12 @@ impl ReplicatedBlockStream {
         let packet_offset = self.offset.saturating_sub(header.offset_in_block as usize);
         let packet_len = usize::min(header.data_len as usize - packet_offset, self.len);
 
+        // Capture the absolute file offset of the first byte we will yield before
+        // we advance `self.offset`, so the codec can apply the right keystream.
+        let file_offset = self.block.offset
+            + header.offset_in_block as u64
+            + packet_offset as u64;
+
         self.offset += packet_len;
         self.len -= packet_len;
 
@@ -273,9 +289,16 @@ impl ReplicatedBlockStream {
             DATANODE_CACHE.release(conn);
         }
 
-        Ok(Some(
-            data.slice(packet_offset..(packet_offset + packet_len)),
-        ))
+        let slice = data.slice(packet_offset..(packet_offset + packet_len));
+        let slice = match self.cipher.as_mut() {
+            None => slice,
+            Some(cipher) => {
+                let mut decrypted = slice.to_vec();
+                cipher.apply(file_offset, &mut decrypted);
+                Bytes::from(decrypted)
+            }
+        };
+        Ok(Some(slice))
     }
 
     async fn get_next_packet(
@@ -419,9 +442,17 @@ struct StripedBlockStream {
     // End location in a single block we need to read
     block_end: usize,
     cell_readers: Vec<Option<CellReader>>,
+    // Built once per block from the shared codec so the AES key schedule is
+    // computed a single time rather than per decoded buffer.
+    cipher: Option<FileCipher>,
+    // Absolute file offset of the next byte that will be yielded after any
+    // pending `bytes_to_skip` are consumed. Only meaningful when `cipher` is
+    // set; tracked so the cipher sees the correct keystream position.
+    next_file_offset: u64,
 }
 
 impl StripedBlockStream {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         protocol: Arc<NamenodeProtocol>,
         block: hdfs::LocatedBlockProto,
@@ -430,6 +461,7 @@ impl StripedBlockStream {
         ec_schema: EcSchema,
         config: Arc<Configuration>,
         handle: Handle,
+        crypto: Option<Arc<FileCryptoCodec>>,
     ) -> Self {
         assert_eq!(block.block_indices().len(), block.locs.len());
 
@@ -461,6 +493,8 @@ impl StripedBlockStream {
             .zip(datanode_infos)
             .collect();
 
+        let next_file_offset = block.offset + offset as u64;
+
         Self {
             protocol,
             block,
@@ -473,6 +507,8 @@ impl StripedBlockStream {
             current_block_start,
             block_end,
             cell_readers: vec![],
+            cipher: crypto.as_ref().map(|c| c.make_cipher()),
+            next_file_offset,
         }
     }
 
@@ -550,6 +586,17 @@ impl StripedBlockStream {
 
         self.current_block_start += self.ec_schema.cell_size;
 
+        if let Some(cipher) = self.cipher.as_mut() {
+            let mut cursor = self.next_file_offset;
+            for chunk in decoded.iter_mut() {
+                let mut buf = chunk.to_vec();
+                cipher.apply(cursor, &mut buf);
+                cursor += buf.len() as u64;
+                *chunk = Bytes::from(buf);
+            }
+            self.next_file_offset = cursor;
+        }
+
         Ok(Some(decoded))
     }
 
@@ -597,6 +644,8 @@ impl StripedBlockStream {
             block.locs = vec![datanode_info.clone()];
             block.block_token = token.clone();
 
+            // EC reads raw cell bytes from individual blocks; decryption is applied
+            // once on the post-decode output in `read_slice`, not on each cell.
             let block_stream = ReplicatedBlockStream::new(
                 Arc::clone(&self.protocol),
                 block,
@@ -604,6 +653,7 @@ impl StripedBlockStream {
                 len,
                 Arc::clone(&self.config),
                 self.handle.clone(),
+                None,
             );
 
             self.cell_readers.push(Some(CellReader::new(

@@ -43,6 +43,9 @@ jobs:
       - name: build and lint with clippy
         run: cargo clippy --all-targets --features integration-test,benchmark -- -D warnings
 
+      - name: build and lint with clippy (kms)
+        run: cargo clippy --all-targets --features integration-test,benchmark,kms-rustls-tls -- -D warnings
+
       - name: Check docs
         run: cargo doc
 
@@ -50,10 +53,13 @@ jobs:
         run: cargo check --tests
 
       - name: Check all features
-        run: cargo check --all-targets --features integration-test,benchmark
+        run: cargo check --all-targets --features integration-test,benchmark,kms-rustls-tls
 
       - name: Run unit tests
         run: cargo test -p hdfs-native --lib
+
+      - name: Run unit tests (kms)
+        run: cargo test -p hdfs-native --lib --features kms-rustls-tls
 
   test-integration:
     strategy:
@@ -92,4 +98,4 @@ jobs:
           echo "$GITHUB_WORKSPACE/hadoop-3.4.2/bin" >> $GITHUB_PATH
 
       - name: Run tests
-        run: cargo test --features integration-test
+        run: cargo test --features integration-test,kms-rustls-tls

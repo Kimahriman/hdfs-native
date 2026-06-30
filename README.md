@@ -41,7 +41,7 @@ Here is a list of currently supported and unsupported but possible future featur
 - [x] NameNode SASL connection
 - [x] DataNode SASL connection
 - [x] DataNode data transfer encryption
-- [ ] Encryption at rest (KMS support)
+- [x] Encryption at rest (KMS support) (requires the `kms` feature, off by default — see below)
 
 ### Kerberos Support
 
@@ -71,6 +71,20 @@ Download and install the Microsoft Kerberos package from https://web.mit.edu/ker
 
 Copy the `<INSTALL FOLDER>\MIT\Kerberos\bin\gssapi64.dll` file to a folder in %PATH% and change the name to `gssapi_krb5.dll`
 
+### Encryption at rest (KMS)
+
+Reading and writing files in an HDFS encryption zone requires the `kms` Cargo feature, which is off by default. Enable it by picking a TLS backend:
+
+```toml
+# Pure-Rust TLS (rustls)
+hdfs-native = { version = "...", features = ["kms-rustls-tls"] }
+
+# System TLS (OpenSSL / Secure Transport / SChannel)
+hdfs-native = { version = "...", features = ["kms-native-tls"] }
+```
+
+The bare `kms` feature supports plaintext `http://` KMS endpoints only; use a TLS variant for `https://`. The KMS endpoint comes from `hadoop.security.key.provider.path`. The Python package enables `kms-rustls-tls` by default.
+
 ## Supported HDFS Settings
 
 The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xml` in the directories `$HADOOP_CONF_DIR` or if that doesn't exist, `$HADOOP_HOME/etc/hadoop`. Passing configs in run time is supported as well via `client::ClientBuilder`. Currently the supported configs that are used are:
@@ -92,6 +106,7 @@ The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xm
 - `dfs.client.block.write.replace-datanode-on-failure.policy`
 - `dfs.client.block.write.replace-datanode-on-failure.best-effort`
 - `dfs.data.transfer.protection` - Enables DataNode data transfer protection negotiation when set
+- `hadoop.security.key.provider.path` - KMS endpoint for reading/writing files in encryption zones (requires the `kms` feature)
 - `fs.viewfs.mounttable.*.homedir` - ViewFS home directory prefix
 - `fs.viewfs.mounttable.*.link.*` - ViewFS links
 - `fs.viewfs.mounttable.*.linkFallback` - ViewFS link fallback
@@ -115,6 +130,8 @@ The tests are mostly integration tests that utilize a small Java application in 
 ```bash
 cargo test -p hdfs-native --features integration-test
 ```
+
+Add `kms-rustls-tls` to the feature list to also run the encryption-zone (KMS) tests: `--features integration-test,kms-rustls-tls`.
 
 ### Python tests
 

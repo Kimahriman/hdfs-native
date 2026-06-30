@@ -188,6 +188,12 @@ impl NamenodeProtocol {
             replication,
             block_size,
             create_flag,
+            // Required when the target path is inside an HDFS encryption zone:
+            // the namenode rejects the request unless we declare which crypto
+            // protocol versions we support. We only ever support v2.
+            crypto_protocol_version: vec![
+                hdfs::CryptoProtocolVersionProto::EncryptionZones as i32,
+            ],
             ..Default::default()
         };
 

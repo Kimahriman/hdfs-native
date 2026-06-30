@@ -37,7 +37,10 @@ prost = "0.14"
 prost-types = "0.14"
 rand = "0.10"
 regex = "1"
+reqwest = { version = "0.13", optional = true, default-features = false, features = ["json"] }
 roxmltree = "0.21.1"
+serde = { version = "1", optional = true, features = ["derive"] }
+serde_json = { version = "1", optional = true }
 socket2 = "0.6"
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "io-util", "macros", "sync", "time"] }
@@ -61,11 +64,20 @@ serial_test = "3"
 tempfile = "3"
 which = "8"
 indoc = "2"
+wiremock = "0.6"
 
 [features]
 generate-protobuf = ["prost-build", "protobuf-src"]
 integration-test = ["which"]
 benchmark = ["fs-hdfs3", "which"]
+# Hadoop KMS REST client for HDFS Transparent Data Encryption. Off by default:
+# enabling it pulls in reqwest and its HTTP/TLS dependency stack. `kms` alone
+# supports plaintext (http) KMS endpoints; pick a TLS-enabled variant below for
+# https. `kms-rustls-tls` keeps the build pure-Rust; `kms-native-tls` links the
+# system TLS library (OpenSSL/Secure Transport/SChannel).
+kms = ["dep:reqwest", "dep:serde", "dep:serde_json"]
+kms-rustls-tls = ["kms", "reqwest/rustls"]
+kms-native-tls = ["kms", "reqwest/native-tls"]
 
 [[bench]]
 name = "ec"

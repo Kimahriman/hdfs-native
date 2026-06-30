@@ -20,6 +20,7 @@ pub enum DfsFeatures {
     EC,
     RBF,
     Trash,
+    Kms,
 }
 
 impl DfsFeatures {
@@ -36,6 +37,7 @@ impl DfsFeatures {
             DfsFeatures::Token => "token",
             DfsFeatures::RBF => "rbf",
             DfsFeatures::Trash => "trash",
+            DfsFeatures::Kms => "kms",
         }
     }
 
@@ -47,6 +49,7 @@ impl DfsFeatures {
             "security" => Some(DfsFeatures::Security),
             "token" => Some(DfsFeatures::Token),
             "trash" => Some(DfsFeatures::Trash),
+            "kms" => Some(DfsFeatures::Kms),
             _ => None,
         }
     }
@@ -67,7 +70,8 @@ impl MiniDfs {
             feature_args.push(feature.as_str());
         }
 
-        let mut child = Command::new(mvn_exec)
+        let mut command = Command::new(mvn_exec);
+        command
             .args([
                 "-f",
                 concat!(env!("OUT_DIR"), "/minidfs"),
@@ -78,9 +82,17 @@ impl MiniDfs {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+            .stderr(Stdio::null());
+
+        // Hadoop 3.5's ProviderUtils.locatePassword only resolves the JKS
+        // password from the classpath or this env var — there's no filesystem
+        // fallback. Plumbing it through the env keeps the Java side from
+        // having to write into target/classes.
+        if features.contains(&DfsFeatures::Kms) {
+            command.env("HADOOP_KEYSTORE_PASSWORD", "kmspassword");
+        }
+
+        let mut child = command.spawn().unwrap();
 
         let mut output = BufReader::new(child.stdout.take().unwrap()).lines();
 

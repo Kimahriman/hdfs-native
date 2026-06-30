@@ -12,13 +12,16 @@ use crate::common::config::{self, Configuration};
 use crate::ec::resolve_ec_policy;
 use crate::error::{HdfsError, Result};
 use crate::file::{FileReader, FileWriter};
+use crate::hdfs::crypto::FileCryptoCodec;
 use crate::hdfs::protocol::NamenodeProtocol;
 use crate::hdfs::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
+#[cfg(feature = "kms")]
+use crate::security::kms::KmsClient;
 use crate::security::user::User;
 
 use crate::glob::{GlobPattern, expand_glob, get_path_components, unescape_component};
-use crate::proto::hdfs::{ContentSummaryProto, HdfsFileStatusProto};
+use crate::proto::hdfs::{ContentSummaryProto, FileEncryptionInfoProto, HdfsFileStatusProto};
 
 const TRASH_ROOT_DIR: &str = ".Trash";
 const TRASH_CURRENT_DIR: &str = "Current";
@@ -362,6 +365,10 @@ pub struct Client {
     // Store the runtime used for spawning all internal tasks. If we are not created
     // inside a tokio runtime, we will create our own to use.
     rt_holder: RuntimeHolder,
+    // Built once at client construction from `hadoop.security.key.provider.path`.
+    // `None` means TDE is not configured; reads of encrypted files will error.
+    #[cfg(feature = "kms")]
+    kms_client: Option<Arc<KmsClient>>,
 }
 
 impl Client {
@@ -441,10 +448,15 @@ impl Client {
             }
         };
 
+        #[cfg(feature = "kms")]
+        let kms_client = KmsClient::from_config(config.as_ref(), None, username.to_string())?;
+
         Ok(Self {
             mount_table: Arc::new(mount_table),
             config,
             rt_holder,
+            #[cfg(feature = "kms")]
+            kms_client,
         })
     }
 
@@ -669,9 +681,9 @@ impl Client {
                 None
             };
 
-            if locations.file_encryption_info.is_some() {
-                return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
-            }
+            let crypto = self
+                .build_crypto_codec(locations.file_encryption_info.as_ref())
+                .await?;
 
             Ok(FileReader::new(
                 Arc::clone(&link.protocol),
@@ -679,9 +691,43 @@ impl Client {
                 ec_schema,
                 Arc::clone(&self.config),
                 self.rt_holder.get_handle(),
+                crypto,
             ))
         } else {
             Err(HdfsError::FileNotFound(path.to_string()))
+        }
+    }
+
+    /// Build a [`FileCryptoCodec`] for a file in an HDFS encryption zone.
+    /// Returns `None` for files outside any zone. Returns an error if the file
+    /// is encrypted but no KMS is configured for this client.
+    async fn build_crypto_codec(
+        &self,
+        info: Option<&FileEncryptionInfoProto>,
+    ) -> Result<Option<Arc<FileCryptoCodec>>> {
+        let Some(info) = info else {
+            return Ok(None);
+        };
+        #[cfg(feature = "kms")]
+        {
+            let kms = self.kms_client.as_ref().ok_or_else(|| {
+                HdfsError::OperationFailed(
+                    "File is in an HDFS encryption zone but no KMS provider is configured \
+                     (set `hadoop.security.key.provider.path` in core-site.xml)"
+                        .to_string(),
+                )
+            })?;
+            let dek = kms.decrypt_edek(info).await?;
+            Ok(Some(Arc::new(FileCryptoCodec::new(info, dek)?)))
+        }
+        #[cfg(not(feature = "kms"))]
+        {
+            let _ = info;
+            Err(HdfsError::UnsupportedFeature(
+                "file is in an HDFS encryption zone; reading or writing it requires \
+                 building hdfs-native with the `kms` cargo feature"
+                    .to_string(),
+            ))
         }
     }
 
@@ -710,10 +756,19 @@ impl Client {
 
         match create_response.fs {
             Some(status) => {
-                if status.file_encryption_info.is_some() {
-                    let _ = self.delete(src, false).await;
-                    return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
-                }
+                let crypto = match self
+                    .build_crypto_codec(status.file_encryption_info.as_ref())
+                    .await
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        // The file already exists on the namenode but we can't
+                        // build a codec to write to it. Clean it up so the
+                        // caller doesn't see a zero-byte stub.
+                        let _ = self.delete(src, false).await;
+                        return Err(e);
+                    }
+                };
 
                 Ok(FileWriter::new(
                     Arc::clone(&link.protocol),
@@ -722,6 +777,7 @@ impl Client {
                     Arc::clone(&self.config),
                     self.rt_holder.get_handle(),
                     None,
+                    crypto,
                 ))
             }
             None => Err(HdfsError::FileNotFound(src.to_string())),
@@ -749,13 +805,25 @@ impl Client {
 
         match append_response.stat {
             Some(status) => {
-                if status.file_encryption_info.is_some() {
-                    let _ = link
-                        .protocol
-                        .complete(src, append_response.block.map(|b| b.b), status.file_id)
-                        .await;
-                    return Err(HdfsError::UnsupportedFeature("File encryption".to_string()));
-                }
+                let crypto = match self
+                    .build_crypto_codec(status.file_encryption_info.as_ref())
+                    .await
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        // Release the open lease the namenode granted for the
+                        // append we can no longer fulfill.
+                        let _ = link
+                            .protocol
+                            .complete(
+                                src,
+                                append_response.block.as_ref().map(|b| b.b.clone()),
+                                status.file_id,
+                            )
+                            .await;
+                        return Err(e);
+                    }
+                };
 
                 Ok(FileWriter::new(
                     Arc::clone(&link.protocol),
@@ -764,6 +832,7 @@ impl Client {
                     Arc::clone(&self.config),
                     self.rt_holder.get_handle(),
                     append_response.block,
+                    crypto,
                 ))
             }
             None => Err(HdfsError::FileNotFound(src.to_string())),
