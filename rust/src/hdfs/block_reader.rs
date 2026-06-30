@@ -20,7 +20,7 @@ use crate::{
     common::config::Configuration,
     ec::EcSchema,
     hdfs::connection::{DATANODE_CACHE, DatanodeConnection, Op},
-    hdfs::crypto::FileCryptoCodec,
+    hdfs::crypto::{FileCipher, FileCryptoCodec},
     proto::{
         common,
         hdfs::{
@@ -134,7 +134,9 @@ struct ReplicatedBlockStream {
     len: usize,
     config: Arc<Configuration>,
     handle: Handle,
-    crypto: Option<Arc<FileCryptoCodec>>,
+    // Built once per block from the shared codec so the AES key schedule is
+    // computed a single time rather than per packet.
+    cipher: Option<FileCipher>,
 
     listener: Option<JoinHandle<Result<DatanodeConnection>>>,
     sender: Sender<Result<(PacketHeaderProto, Bytes)>>,
@@ -161,7 +163,7 @@ impl ReplicatedBlockStream {
             len,
             config,
             handle,
-            crypto,
+            cipher: crypto.as_ref().map(|c| c.make_cipher()),
             listener: None,
             sender,
             receiver,
@@ -288,11 +290,11 @@ impl ReplicatedBlockStream {
         }
 
         let slice = data.slice(packet_offset..(packet_offset + packet_len));
-        let slice = match self.crypto.as_ref() {
+        let slice = match self.cipher.as_mut() {
             None => slice,
-            Some(codec) => {
+            Some(cipher) => {
                 let mut decrypted = slice.to_vec();
-                codec.apply(file_offset, &mut decrypted);
+                cipher.apply(file_offset, &mut decrypted);
                 Bytes::from(decrypted)
             }
         };
@@ -440,10 +442,12 @@ struct StripedBlockStream {
     // End location in a single block we need to read
     block_end: usize,
     cell_readers: Vec<Option<CellReader>>,
-    crypto: Option<Arc<FileCryptoCodec>>,
+    // Built once per block from the shared codec so the AES key schedule is
+    // computed a single time rather than per decoded buffer.
+    cipher: Option<FileCipher>,
     // Absolute file offset of the next byte that will be yielded after any
-    // pending `bytes_to_skip` are consumed. Only meaningful when `crypto` is
-    // set; tracked so the codec sees the correct keystream position.
+    // pending `bytes_to_skip` are consumed. Only meaningful when `cipher` is
+    // set; tracked so the cipher sees the correct keystream position.
     next_file_offset: u64,
 }
 
@@ -503,7 +507,7 @@ impl StripedBlockStream {
             current_block_start,
             block_end,
             cell_readers: vec![],
-            crypto,
+            cipher: crypto.as_ref().map(|c| c.make_cipher()),
             next_file_offset,
         }
     }
@@ -582,11 +586,11 @@ impl StripedBlockStream {
 
         self.current_block_start += self.ec_schema.cell_size;
 
-        if let Some(codec) = self.crypto.as_ref() {
+        if let Some(cipher) = self.cipher.as_mut() {
             let mut cursor = self.next_file_offset;
             for chunk in decoded.iter_mut() {
                 let mut buf = chunk.to_vec();
-                codec.apply(cursor, &mut buf);
+                cipher.apply(cursor, &mut buf);
                 cursor += buf.len() as u64;
                 *chunk = Bytes::from(buf);
             }

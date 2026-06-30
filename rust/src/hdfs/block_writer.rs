@@ -11,7 +11,7 @@ use crate::{
     ec::{EcSchema, gf256::Coder},
     hdfs::{
         connection::{DatanodeConnection, DatanodeReader, DatanodeWriter, Op, WritePacket},
-        crypto::FileCryptoCodec,
+        crypto::{FileCipher, FileCryptoCodec},
         protocol::NamenodeProtocol,
         replace_datanode::ReplaceDatanodeOnFailure,
     },
@@ -336,7 +336,9 @@ pub(crate) struct ReplicatedBlockWriter {
     block: hdfs::LocatedBlockProto,
     block_size: usize,
     server_defaults: hdfs::FsServerDefaultsProto,
-    crypto: Option<Arc<FileCryptoCodec>>,
+    // Built once per block from the shared codec so the AES key schedule is
+    // computed a single time rather than per write.
+    cipher: Option<FileCipher>,
 
     current_packet: WritePacket,
     pipeline: Option<Pipeline>,
@@ -395,7 +397,7 @@ impl ReplicatedBlockWriter {
             block,
             block_size: status.blocksize() as usize,
             server_defaults,
-            crypto,
+            cipher: crypto.as_ref().map(|c| c.make_cipher()),
             current_packet,
             pipeline: Some(pipeline),
             status: status.clone(),
@@ -639,10 +641,10 @@ impl ReplicatedBlockWriter {
         // file offset before any chunking. CTR-mode keystream is independent
         // of the slicing, so this is correct as long as we feed every byte
         // exactly once at the right offset.
-        if let Some(codec) = self.crypto.as_ref() {
+        if let Some(cipher) = self.cipher.as_mut() {
             let file_offset = self.block.offset + self.block.b.num_bytes();
             let mut encrypted = buf_to_write.to_vec();
-            codec.apply(file_offset, &mut encrypted);
+            cipher.apply(file_offset, &mut encrypted);
             buf_to_write = Bytes::from(encrypted);
         }
 
@@ -883,7 +885,9 @@ pub(crate) struct StripedBlockWriter {
     capacity: usize,
     status: hdfs::HdfsFileStatusProto,
     data_units: usize,
-    crypto: Option<Arc<FileCryptoCodec>>,
+    // Built once per block from the shared codec so the AES key schedule is
+    // computed a single time rather than per write.
+    cipher: Option<FileCipher>,
 }
 
 impl StripedBlockWriter {
@@ -912,7 +916,7 @@ impl StripedBlockWriter {
             capacity: ec_schema.data_units * status.blocksize() as usize,
             status: status.clone(),
             data_units: ec_schema.data_units,
-            crypto,
+            cipher: crypto.as_ref().map(|c| c.make_cipher()),
         }
     }
 
@@ -1008,10 +1012,10 @@ impl StripedBlockWriter {
         // Encryption (if any) is applied here, before EC encoding — the data
         // shards stored on disk must be ciphertext, parity is computed over
         // ciphertext, and decryption on read happens after EC decode.
-        if let Some(codec) = self.crypto.as_ref() {
+        if let Some(cipher) = self.cipher.as_mut() {
             let file_offset = self.block.offset + self.bytes_written as u64;
             let mut encrypted = buf_to_write.to_vec();
-            codec.apply(file_offset, &mut encrypted);
+            cipher.apply(file_offset, &mut encrypted);
             buf_to_write = Bytes::from(encrypted);
         }
 

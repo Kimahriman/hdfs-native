@@ -79,28 +79,56 @@ impl FileCryptoCodec {
         })
     }
 
-    /// Apply the AES-CTR keystream to `buf` as if it began at absolute file
-    /// offset `file_offset`. CTR mode is symmetric so the same call encrypts
-    /// or decrypts.
-    pub(crate) fn apply(&self, file_offset: u64, buf: &mut [u8]) {
+    /// Build a live cipher for a single block reader/writer. This runs the AES
+    /// key expansion once; the returned [`FileCipher`] is then reused for every
+    /// packet/buffer of that block, so the key schedule isn't recomputed per
+    /// packet. The codec itself stays shared (`Arc`) and read-only — each owner
+    /// gets its own `FileCipher` by value and drives it with `&mut`.
+    pub(crate) fn make_cipher(&self) -> FileCipher {
+        // Key length validated in `new`.
         match self.key.len() {
-            16 => self.run::<Aes128Ctr>(file_offset, buf),
-            24 => self.run::<Aes192Ctr>(file_offset, buf),
-            32 => self.run::<Aes256Ctr>(file_offset, buf),
-            // Validated in `new`; unreachable in practice.
-            _ => unreachable!(),
+            16 => FileCipher::Aes128(new_ctr(&self.key, &self.iv)),
+            24 => FileCipher::Aes192(new_ctr(&self.key, &self.iv)),
+            32 => FileCipher::Aes256(new_ctr(&self.key, &self.iv)),
+            _ => unreachable!("validated in new"),
         }
     }
+}
 
-    fn run<C>(&self, file_offset: u64, buf: &mut [u8])
-    where
-        C: KeyIvInit + StreamCipher + StreamCipherSeek,
-    {
-        let mut cipher = <C as KeyIvInit>::new_from_slices(&self.key, &self.iv)
-            .expect("validated key and iv lengths");
-        cipher.seek(file_offset);
-        cipher.apply_keystream(buf);
+fn new_ctr<C: KeyIvInit>(key: &[u8], iv: &[u8]) -> C {
+    C::new_from_slices(key, iv).expect("validated key and iv lengths")
+}
+
+/// A live, seekable AES-CTR cipher owned by a single block reader/writer.
+///
+/// Unlike [`FileCryptoCodec`] (which is shared via `Arc` and read-only), a
+/// `FileCipher` is owned by one sequential reader/writer and mutated in place,
+/// so the expensive AES key schedule is built once in
+/// [`FileCryptoCodec::make_cipher`] rather than on every call.
+pub(crate) enum FileCipher {
+    Aes128(Aes128Ctr),
+    Aes192(Aes192Ctr),
+    Aes256(Aes256Ctr),
+}
+
+impl FileCipher {
+    /// XOR the AES-CTR keystream over `buf` as if it began at absolute file
+    /// offset `file_offset`. CTR mode is symmetric, so the same call encrypts or
+    /// decrypts. The per-call `seek` keeps every call independent of the last,
+    /// so this is correct for non-contiguous erasure-coded buffers as well —
+    /// only the key expansion is amortized, not the seek.
+    pub(crate) fn apply(&mut self, file_offset: u64, buf: &mut [u8]) {
+        match self {
+            FileCipher::Aes128(c) => apply_ctr(c, file_offset, buf),
+            FileCipher::Aes192(c) => apply_ctr(c, file_offset, buf),
+            FileCipher::Aes256(c) => apply_ctr(c, file_offset, buf),
+        }
     }
+}
+
+fn apply_ctr<C: StreamCipher + StreamCipherSeek>(cipher: &mut C, file_offset: u64, buf: &mut [u8]) {
+    cipher.seek(file_offset);
+    cipher.apply_keystream(buf);
 }
 
 // The codec is exercised end-to-end only with a `DataEncryptionKey`, which is
@@ -130,16 +158,14 @@ mod tests {
 
     #[test]
     fn round_trip_at_offset_zero() {
-        let codec = FileCryptoCodec::new(
-            &aes_ctr_info(),
-            dek(&[0x11; 16], &[0x22; 16]),
-        )
-        .unwrap();
+        let mut cipher = FileCryptoCodec::new(&aes_ctr_info(), dek(&[0x11; 16], &[0x22; 16]))
+            .unwrap()
+            .make_cipher();
         let plaintext = b"the quick brown fox jumps over the lazy dog".to_vec();
         let mut buf = plaintext.clone();
-        codec.apply(0, &mut buf);
+        cipher.apply(0, &mut buf);
         assert_ne!(buf, plaintext);
-        codec.apply(0, &mut buf);
+        cipher.apply(0, &mut buf);
         assert_eq!(buf, plaintext);
     }
 
@@ -148,20 +174,18 @@ mod tests {
         // Encrypt the whole buffer at offset 0, then decrypt a sub-range using
         // the matching offset. Result for that sub-range must equal the
         // corresponding plaintext slice.
-        let codec = FileCryptoCodec::new(
-            &aes_ctr_info(),
-            dek(&[0x42; 32], &[0xAA; 16]),
-        )
-        .unwrap();
+        let mut cipher = FileCryptoCodec::new(&aes_ctr_info(), dek(&[0x42; 32], &[0xAA; 16]))
+            .unwrap()
+            .make_cipher();
         let plaintext: Vec<u8> = (0..512u32).map(|i| i as u8).collect();
         let mut whole = plaintext.clone();
-        codec.apply(0, &mut whole);
+        cipher.apply(0, &mut whole);
 
         // Pick an offset that's not a 16-byte boundary to exercise the seek logic.
         let start = 37usize;
         let end = 401usize;
         let mut slice = whole[start..end].to_vec();
-        codec.apply(start as u64, &mut slice);
+        cipher.apply(start as u64, &mut slice);
         assert_eq!(slice, &plaintext[start..end]);
     }
 
@@ -182,9 +206,11 @@ mod tests {
         let plaintext = b"HDFS encryption test vector!";
 
         // Encrypt with our codec at offset 0.
-        let codec = FileCryptoCodec::new(&aes_ctr_info(), dek(&key, &iv)).unwrap();
+        let mut cipher = FileCryptoCodec::new(&aes_ctr_info(), dek(&key, &iv))
+            .unwrap()
+            .make_cipher();
         let mut ours = plaintext.to_vec();
-        codec.apply(0, &mut ours);
+        cipher.apply(0, &mut ours);
 
         // Encrypt independently using the bare cipher crates the same way the
         // codec does — equivalent to a hand-computed reference. This guards
@@ -217,16 +243,15 @@ mod tests {
     #[test]
     fn supports_aes192_and_aes256() {
         for keylen in [16usize, 24, 32] {
-            let codec = FileCryptoCodec::new(
-                &aes_ctr_info(),
-                dek(&vec![0x33u8; keylen], &[0x77; 16]),
-            )
-            .unwrap();
+            let mut cipher =
+                FileCryptoCodec::new(&aes_ctr_info(), dek(&vec![0x33u8; keylen], &[0x77; 16]))
+                    .unwrap()
+                    .make_cipher();
             let plaintext = vec![0u8; 100];
             let mut buf = plaintext.clone();
-            codec.apply(7, &mut buf); // non-block-aligned offset
+            cipher.apply(7, &mut buf); // non-block-aligned offset
             assert_ne!(buf, plaintext);
-            codec.apply(7, &mut buf);
+            cipher.apply(7, &mut buf);
             assert_eq!(buf, plaintext);
         }
     }
