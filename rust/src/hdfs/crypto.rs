@@ -216,8 +216,7 @@ mod tests {
         // codec does — equivalent to a hand-computed reference. This guards
         // against subtle mistakes (counter endianness, key-iv plumbing) without
         // depending on a Python tool at test time.
-        let mut reference =
-            Aes128Ctr::new_from_slices(&key, &iv).expect("valid lengths");
+        let mut reference = Aes128Ctr::new_from_slices(&key, &iv).expect("valid lengths");
         let mut expected = plaintext.to_vec();
         reference.apply_keystream(&mut expected);
 

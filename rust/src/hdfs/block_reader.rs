@@ -276,9 +276,7 @@ impl ReplicatedBlockStream {
 
         // Capture the absolute file offset of the first byte we will yield before
         // we advance `self.offset`, so the codec can apply the right keystream.
-        let file_offset = self.block.offset
-            + header.offset_in_block as u64
-            + packet_offset as u64;
+        let file_offset = self.block.offset + header.offset_in_block as u64 + packet_offset as u64;
 
         self.offset += packet_len;
         self.len -= packet_len;

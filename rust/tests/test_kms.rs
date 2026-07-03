@@ -53,10 +53,7 @@ mod test {
         let plaintext: Vec<u8> = (0..2048u32).map(|i| i as u8).collect();
 
         let path = "/ezone/written-by-rust";
-        let mut writer = client
-            .create(path, WriteOptions::default())
-            .await
-            .unwrap();
+        let mut writer = client.create(path, WriteOptions::default()).await.unwrap();
         writer
             .write_bytes(Bytes::from(plaintext.clone()))
             .await
@@ -83,11 +80,11 @@ mod test {
         let part2 = b"second chunk that crosses a 16-byte CTR boundary or two".to_vec();
 
         let path = "/ezone/appended";
-        let mut writer = client
-            .create(path, WriteOptions::default())
+        let mut writer = client.create(path, WriteOptions::default()).await.unwrap();
+        writer
+            .write_bytes(Bytes::from(part1.clone()))
             .await
             .unwrap();
-        writer.write_bytes(Bytes::from(part1.clone())).await.unwrap();
         writer.close().await.unwrap();
 
         let mut appender = client.append(path).await.unwrap();

@@ -33,8 +33,8 @@
 //!    mode (test setups, dev clusters). If a request without a delegation
 //!    token comes back 200, we stay in this mode and never attempt SPNEGO.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use base64::Engine;
@@ -92,9 +92,14 @@ impl KmsClient {
         let http = reqwest::Client::builder()
             .timeout(KMS_REQUEST_TIMEOUT)
             .build()
-            .map_err(|e| HdfsError::OperationFailed(format!("Failed to build KMS HTTP client: {e}")))?;
+            .map_err(|e| {
+                HdfsError::OperationFailed(format!("Failed to build KMS HTTP client: {e}"))
+            })?;
 
-        debug!("KMS client configured with {} endpoint(s) for user `{user}`", endpoints.len());
+        debug!(
+            "KMS client configured with {} endpoint(s) for user `{user}`",
+            endpoints.len()
+        );
         Ok(Some(Arc::new(Self {
             endpoints,
             http,
@@ -436,9 +441,7 @@ fn is_retriable(err: &HdfsError) -> bool {
 /// Parse a `kms://<scheme>@host1;host2:port/path` URI into one [`Url`] per host.
 fn parse_kms_uri(raw: &str) -> Result<Vec<Url>> {
     let body = raw.strip_prefix(KMS_URI_PREFIX).ok_or_else(|| {
-        HdfsError::OperationFailed(format!(
-            "KMS URI must start with `kms://`, got `{raw}`"
-        ))
+        HdfsError::OperationFailed(format!("KMS URI must start with `kms://`, got `{raw}`"))
     })?;
 
     let (scheme, rest) = body.split_once('@').ok_or_else(|| {
@@ -459,13 +462,15 @@ fn parse_kms_uri(raw: &str) -> Result<Vec<Url>> {
     // Authority is `host1;host2;...;hostN[:port]`. The port (if any) attaches
     // to the last host's segment; we apply it to every host.
     let (hosts_part, port) = match authority.rsplit_once(':') {
-        Some((before, after)) if !after.contains(';') && !after.is_empty() => {
-            (before, Some(after))
-        }
+        Some((before, after)) if !after.contains(';') && !after.is_empty() => (before, Some(after)),
         _ => (authority, None),
     };
 
-    let hosts: Vec<&str> = hosts_part.split(';').map(str::trim).filter(|s| !s.is_empty()).collect();
+    let hosts: Vec<&str> = hosts_part
+        .split(';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
     if hosts.is_empty() {
         return Err(HdfsError::OperationFailed(format!(
             "KMS URI has no hosts: {raw}"
@@ -485,8 +490,9 @@ fn parse_kms_uri(raw: &str) -> Result<Vec<Url>> {
             } else {
                 format!("{url_str}/")
             };
-            Url::parse(&url_str)
-                .map_err(|e| HdfsError::OperationFailed(format!("Invalid KMS URL `{url_str}`: {e}")))
+            Url::parse(&url_str).map_err(|e| {
+                HdfsError::OperationFailed(format!("Invalid KMS URL `{url_str}`: {e}"))
+            })
         })
         .collect()
 }
@@ -571,16 +577,22 @@ mod tests {
             "kms://http@kms.example.com:9292/kms".to_string(),
         );
         let cfg = config_with(map);
-        let client = KmsClient::from_config(&cfg, None, "testuser".to_string()).unwrap().unwrap();
+        let client = KmsClient::from_config(&cfg, None, "testuser".to_string())
+            .unwrap()
+            .unwrap();
         assert_eq!(client.endpoints.len(), 1);
     }
 
     #[test]
     fn from_config_falls_back_to_server_default() {
         let cfg = config_with(HashMap::new());
-        let client = KmsClient::from_config(&cfg, Some("kms://http@kms:9292/kms"), "testuser".to_string())
-            .unwrap()
-            .unwrap();
+        let client = KmsClient::from_config(
+            &cfg,
+            Some("kms://http@kms:9292/kms"),
+            "testuser".to_string(),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(client.endpoints.len(), 1);
     }
 
@@ -615,7 +627,9 @@ mod tests {
         let mut map = HashMap::new();
         map.insert(HADOOP_SECURITY_KEY_PROVIDER_PATH.to_string(), uri);
         let cfg = config_with(map);
-        let client = KmsClient::from_config(&cfg, None, "testuser".to_string()).unwrap().unwrap();
+        let client = KmsClient::from_config(&cfg, None, "testuser".to_string())
+            .unwrap()
+            .unwrap();
 
         let dek = client.decrypt_edek(&fei()).await.unwrap();
         assert_eq!(dek.material, plaintext_dek);
