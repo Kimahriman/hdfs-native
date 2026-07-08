@@ -65,6 +65,43 @@ mod test {
         assert_eq!(got.as_ref(), plaintext.as_slice());
     }
 
+    /// Exercise the KMS Kerberos path end-to-end: with a kerberized cluster and
+    /// KMS, the first KMS request is rejected with 401, forcing the client
+    /// through the SPNEGO `Negotiate` handshake to fetch a delegation token,
+    /// which is then used for the actual EDEK decrypt calls. The other tests in
+    /// this file run the KMS in simple-auth mode and never hit that path.
+    #[tokio::test]
+    #[serial]
+    async fn test_kms_kerberos_spnego() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let features = HashSet::from([DfsFeatures::Security, DfsFeatures::Kms]);
+        let _dfs = MiniDfs::with_features(&features);
+        let client = ClientBuilder::new().build().unwrap();
+
+        // Read the file written by the Java client. Decrypting its EDEK is the
+        // first KMS call, so this is what triggers SPNEGO.
+        let expected = b"hdfs-native TDE round-trip test payload";
+        let reader = client.read("/ezone/file").await.unwrap();
+        let got = reader.read_range(0, expected.len()).await.unwrap();
+        assert_eq!(got.as_ref(), expected);
+
+        // Round-trip a file of our own; this decrypt reuses the delegation
+        // token cached by the handshake above.
+        let plaintext: Vec<u8> = (0..2048u32).map(|i| i as u8).collect();
+        let path = "/ezone/written-by-rust-kerberos";
+        let mut writer = client.create(path, WriteOptions::default()).await.unwrap();
+        writer
+            .write_bytes(Bytes::from(plaintext.clone()))
+            .await
+            .unwrap();
+        writer.close().await.unwrap();
+
+        let reader = client.read(path).await.unwrap();
+        let got = reader.read_range(0, plaintext.len()).await.unwrap();
+        assert_eq!(got.as_ref(), plaintext.as_slice());
+    }
+
     /// Append support inside an encryption zone: write a chunk, close, append a
     /// second chunk, then read back the concatenation.
     #[tokio::test]

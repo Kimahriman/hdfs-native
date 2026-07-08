@@ -3,7 +3,7 @@ name: rust-test
 on:
   push:
     branches:
-      - 'master'
+      - "master"
   pull_request:
     branches:
       - "*"
@@ -38,10 +38,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.10'
-
-      - name: build and lint with clippy
-        run: cargo clippy --all-targets --features integration-test,benchmark -- -D warnings
+          python-version: "3.10"
 
       - name: build and lint with clippy (kms)
         run: cargo clippy --all-targets --features integration-test,benchmark,kms-rustls-tls -- -D warnings

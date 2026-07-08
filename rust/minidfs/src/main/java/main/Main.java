@@ -55,21 +55,14 @@ public class Main {
             conf.set(FS_TRASH_INTERVAL_KEY, "60");
         }
 
-        MiniKMS kms = null;
-        String kmsProviderUri = null;
-        if (flags.contains("kms")) {
-            kms = startMiniKMS();
-            URL kmsUrl = kms.getKMSUrl();
-            // Convert "http://host:port/kms" to "kms://http@host:port/kms",
-            // matching `hadoop.security.key.provider.path` syntax.
-            kmsProviderUri = "kms://" + kmsUrl.getProtocol() + "@" + kmsUrl.getAuthority() + kmsUrl.getPath();
-            conf.set("hadoop.security.key.provider.path", kmsProviderUri);
-        }
         if (flags.contains("security")) {
             kdc = new MiniKdc(MiniKdc.createConf(), new File("target/test/kdc"));
             kdc.setTransport("UDP");
             kdc.start();
-            kdc.createPrincipal(new File("target/test/hdfs.keytab"), "hdfs/localhost");
+            // HTTP/localhost is the SPNEGO acceptor principal used by the KMS
+            // when the kms flag is also set. createPrincipal overwrites the
+            // keytab file, so both principals must be created in one call.
+            kdc.createPrincipal(new File("target/test/hdfs.keytab"), "hdfs/localhost", "HTTP/localhost");
 
             conf.set(HADOOP_SECURITY_AUTHENTICATION, "kerberos");
             conf.set(HADOOP_SECURITY_AUTHORIZATION, "true");
@@ -96,6 +89,16 @@ public class Main {
             conf.set(DFS_DATANODE_KERBEROS_PRINCIPAL_KEY, "hdfs/localhost@" + kdc.getRealm());
             conf.set(DFSConfigKeys.DFS_BLOCK_ACCESS_TOKEN_ENABLE_KEY, "true");
             conf.set(DFSConfigKeys.IGNORE_SECURE_PORTS_FOR_TESTING_KEY, "true");
+        }
+
+        MiniKMS kms = null;
+        if (flags.contains("kms")) {
+            kms = startMiniKMS(kdc);
+            URL kmsUrl = kms.getKMSUrl();
+            // Convert "http://host:port/kms" to "kms://http@host:port/kms",
+            // matching `hadoop.security.key.provider.path` syntax.
+            String kmsProviderUri = "kms://" + kmsUrl.getProtocol() + "@" + kmsUrl.getAuthority() + kmsUrl.getPath();
+            conf.set("hadoop.security.key.provider.path", kmsProviderUri);
         }
 
         HdfsConfiguration hdfsConf = new HdfsConfiguration(conf);
@@ -241,10 +244,12 @@ public class Main {
     }
 
     /**
-     * Start a MiniKMS for HDFS Transparent Data Encryption tests. Uses simple
-     * (pseudo) auth and a JCEKS keystore in target/test/kms.
+     * Start a MiniKMS for HDFS Transparent Data Encryption tests, backed by a
+     * JCEKS keystore in target/test/kms. With no KDC it uses simple (pseudo)
+     * auth; when a MiniKdc is passed it requires SPNEGO/Kerberos, accepting as
+     * the HTTP/localhost principal from the shared test keytab.
      */
-    private static MiniKMS startMiniKMS() throws Exception {
+    private static MiniKMS startMiniKMS(MiniKdc kdc) throws Exception {
         File kmsDir = new File("target/test/kms").getAbsoluteFile();
         kmsDir.mkdirs();
 
@@ -264,7 +269,19 @@ public class Main {
             "hadoop.kms.key.provider.uri",
             "jceks://file@" + keystoreFile.toURI().getPath()
         );
-        kmsConf.set("hadoop.kms.authentication.type", "simple");
+        if (kdc != null) {
+            kmsConf.set("hadoop.kms.authentication.type", "kerberos");
+            kmsConf.set("hadoop.kms.authentication.kerberos.keytab",
+                new File("target/test/hdfs.keytab").getAbsolutePath());
+            kmsConf.set("hadoop.kms.authentication.kerberos.principal",
+                "HTTP/localhost@" + kdc.getRealm());
+            // Map service principals like hdfs/localhost@REALM to their first
+            // component; the DEFAULT rule alone only handles user@REALM.
+            kmsConf.set("hadoop.kms.authentication.kerberos.name.rules",
+                "RULE:[2:$1]\nDEFAULT");
+        } else {
+            kmsConf.set("hadoop.kms.authentication.type", "simple");
+        }
         // Allow the proxy user used by the cluster to talk to the KMS.
         kmsConf.set("hadoop.kms.proxyuser.HTTP.users", "*");
         kmsConf.set("hadoop.kms.proxyuser.HTTP.hosts", "*");
