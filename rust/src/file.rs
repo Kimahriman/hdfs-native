@@ -15,6 +15,7 @@ use crate::common::config::Configuration;
 use crate::ec::{EcSchema, resolve_ec_policy};
 use crate::hdfs::block_reader::get_block_stream;
 use crate::hdfs::block_writer::BlockWriter;
+use crate::hdfs::crypto::FileCryptoCodec;
 use crate::hdfs::protocol::{LeaseTracker, NamenodeProtocol};
 use crate::proto::hdfs;
 use crate::{HdfsError, Result};
@@ -39,6 +40,7 @@ pub struct FileReader {
     config: Arc<Configuration>,
     handle: Handle,
     pending_read: Option<std::sync::Mutex<PendingRead>>,
+    crypto: Option<Arc<FileCryptoCodec>>,
 }
 
 impl FileReader {
@@ -48,6 +50,7 @@ impl FileReader {
         ec_schema: Option<EcSchema>,
         config: Arc<Configuration>,
         handle: Handle,
+        crypto: Option<Arc<FileCryptoCodec>>,
     ) -> Self {
         Self {
             protocol,
@@ -57,6 +60,7 @@ impl FileReader {
             config,
             handle,
             pending_read: None,
+            crypto,
         }
     }
 
@@ -173,6 +177,7 @@ impl FileReader {
                         self.ec_schema.clone(),
                         Arc::clone(&self.config),
                         self.handle.clone(),
+                        self.crypto.clone(),
                     ))
                 } else {
                     // No data is needed from this block
@@ -287,9 +292,11 @@ pub struct FileWriter {
     last_block: Option<hdfs::LocatedBlockProto>,
     closed: bool,
     bytes_written: usize,
+    crypto: Option<Arc<FileCryptoCodec>>,
 }
 
 impl FileWriter {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         protocol: Arc<NamenodeProtocol>,
         src: String,
@@ -298,6 +305,7 @@ impl FileWriter {
         handle: Handle,
         // Some for append, None for create
         last_block: Option<hdfs::LocatedBlockProto>,
+        crypto: Option<Arc<FileCryptoCodec>>,
     ) -> Self {
         protocol.add_file_lease(status.file_id(), status.namespace.clone());
         Self {
@@ -310,6 +318,7 @@ impl FileWriter {
             last_block,
             closed: false,
             bytes_written: 0,
+            crypto,
         }
     }
 
@@ -356,6 +365,7 @@ impl FileWriter {
                 .as_ref(),
             &self.src,
             &self.status,
+            self.crypto.clone(),
         )
         .await?;
 
