@@ -699,7 +699,7 @@ impl SaslDatanodeConnection {
 
         let buf = self.stream.fill_buf().await?;
         if buf.is_empty() {
-            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))?;
+            Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))?;
         }
         let msg_length = prost::decode_length_delimiter(buf)?;
         let total_size = msg_length + prost::length_delimiter_len(msg_length);

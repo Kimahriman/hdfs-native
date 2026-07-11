@@ -89,7 +89,7 @@ async fn connect_and_send(
                 send_checksums: Some(true),
                 ..Default::default()
             };
-            debug!("Block read op request {:?}", &message);
+            debug!("Block read op request {:?}", message);
             match conn.send(Op::ReadBlock, &message).await {
                 Ok(response) => {
                     debug!("Block read op response {:?}", response);
@@ -121,7 +121,7 @@ async fn connect_and_send(
         ..Default::default()
     };
 
-    debug!("Block read op request {:?}", &message);
+    debug!("Block read op request {:?}", message);
     let response = conn.send(Op::ReadBlock, &message).await?;
     debug!("Block read op response {:?}", response);
     Ok((conn, response))

@@ -576,7 +576,7 @@ impl ReplicatedBlockWriter {
             ..Default::default()
         };
 
-        debug!("Block write request: {:?}", &message);
+        debug!("Block write request: {:?}", message);
         let response = connection.send(Op::WriteBlock, &message).await?;
         debug!("Block write response: {:?}", response);
 
@@ -715,7 +715,7 @@ impl ReplicatedBlockWriter {
             target_storage_ids: vec![],
         };
 
-        debug!("Transfer block request: {:?}", &message);
+        debug!("Transfer block request: {:?}", message);
 
         let response = connection.send(Op::TransferBlock, &message).await?;
 

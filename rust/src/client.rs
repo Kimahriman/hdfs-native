@@ -118,7 +118,7 @@ impl MountLink {
             Some(self.hdfs_path.clone())
         } else {
             path.strip_prefix(&format!("{}/", self.viewfs_path))
-                .map(|relative_path| format!("{}/{}", &self.hdfs_path, relative_path))
+                .map(|relative_path| format!("{}/{}", self.hdfs_path, relative_path))
         }
     }
 }

@@ -785,7 +785,7 @@ impl DatanodeConnectionCache {
     fn remove_expired(&self) {
         let mut cache = self.cache.lock().unwrap();
         let now = Utc::now();
-        for (_, values) in cache.iter_mut() {
+        for values in cache.values_mut() {
             values.retain(|(expire_at, _)| expire_at > &now)
         }
     }

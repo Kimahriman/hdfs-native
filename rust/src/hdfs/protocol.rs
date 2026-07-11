@@ -61,7 +61,7 @@ impl NamenodeProtocol {
         Req: Message + Default + std::fmt::Debug,
         Res: Message + Default + std::fmt::Debug,
     {
-        debug!("{} request: {:?}", method_name, &message);
+        debug!("{} request: {:?}", method_name, message);
 
         let response = self
             .proxy
@@ -73,7 +73,7 @@ impl NamenodeProtocol {
             .await?;
 
         let decoded = Res::decode_length_delimited(response)?;
-        debug!("{} response: {:?}", method_name, &decoded);
+        debug!("{} response: {:?}", method_name, decoded);
 
         Ok(decoded)
     }

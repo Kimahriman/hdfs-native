@@ -125,7 +125,7 @@ impl MiniDfs {
                 env::set_var("KRB5_CONFIG", &krb_conf);
                 env::set_var(
                     "HADOOP_OPTS",
-                    format!("-Djava.security.krb5.conf={}", &krb_conf),
+                    format!("-Djava.security.krb5.conf={}", krb_conf),
                 );
             }
 
