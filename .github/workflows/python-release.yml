@@ -24,9 +24,14 @@ jobs:
           fi
 
   linux:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner}}
     strategy:
       matrix:
+        include:
+          - target: x86_64
+            runner: ubuntu-24.04
+          - target: aarch64
+            runner: ubuntu-24.04-arm
         target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v4
@@ -81,9 +86,6 @@ jobs:
 
   windows:
     runs-on: windows-latest
-    strategy:
-      matrix:
-        target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v5
       - name: Install python
@@ -97,13 +99,11 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
       - name: Build wheels free-threaded
         uses: PyO3/maturin-action@v1
         with:
-          target: ${{ matrix.target }}
           args: --release --out dist --interpreter python3.14t --manifest-path python/Cargo.toml
           sccache: 'true'
       - name: Upload wheels
