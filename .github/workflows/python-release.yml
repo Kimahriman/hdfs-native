@@ -34,7 +34,14 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
-          manylinux: auto
+          container: quay.io/pypa/manylinux2014_${{ matrix.target }}
+      - name: Build wheels 3.14 free-threaded
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --interpreter python3.14t --manifest-path python/Cargo.toml
+          sccache: 'true'
+          container: quay.io/pypa/manylinux2014_${{ matrix.target }}
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
