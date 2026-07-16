@@ -12,7 +12,7 @@ use once_cell::sync::Lazy;
 use rand::RngExt;
 use regex::Regex;
 
-use crate::{HdfsError, Result, proto::hdfs::DataEncryptionKeyProto};
+use crate::{HadoopError as HdfsError, Result};
 
 use super::{
     sasl::SaslSession,
@@ -259,7 +259,7 @@ enum DigestState {
     Errored,
 }
 
-pub(super) struct DigestSaslSession {
+pub struct DigestSaslSession {
     auth_id: String,
     password: String,
     service: String,
@@ -268,7 +268,7 @@ pub(super) struct DigestSaslSession {
 }
 
 impl DigestSaslSession {
-    pub(super) fn from_token(service: String, hostname: String, token: &Token) -> Self {
+    pub fn from_token(service: String, hostname: String, token: &Token) -> Self {
         Self {
             auth_id: general_purpose::STANDARD.encode(&token.identifier),
             password: general_purpose::STANDARD.encode(&token.password),
@@ -278,19 +278,11 @@ impl DigestSaslSession {
         }
     }
 
-    pub(super) fn from_encryption_key(
-        service: String,
-        hostname: String,
-        encryption_key: &DataEncryptionKeyProto,
-    ) -> Self {
+    /// Create a DIGEST-MD5 session from already encoded credentials.
+    pub fn new(service: String, hostname: String, auth_id: String, password: String) -> Self {
         Self {
-            auth_id: format!(
-                "{} {} {}",
-                encryption_key.key_id,
-                encryption_key.block_pool_id,
-                general_purpose::STANDARD.encode(&encryption_key.nonce)
-            ),
-            password: general_purpose::STANDARD.encode(&encryption_key.encryption_key),
+            auth_id,
+            password,
             service,
             hostname,
             state: DigestState::Pending,
@@ -377,7 +369,7 @@ impl DigestSaslSession {
         }
     }
 
-    pub(crate) fn supports_encryption(&self) -> bool {
+    pub fn supports_encryption(&self) -> bool {
         match &self.state {
             DigestState::Stepped(ctx) => matches!(ctx.qop, Qop::AuthConf),
             DigestState::Completed(ctx) => ctx.as_ref().is_some_and(|c| c.encryptor.is_some()),

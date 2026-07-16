@@ -7,7 +7,7 @@ use std::os::raw::c_void;
 use std::slice::from_raw_parts;
 use std::{ptr, slice};
 
-use crate::HdfsError;
+use crate::HadoopError as HdfsError;
 
 use super::sasl::SaslSession;
 use super::user::User;
@@ -274,7 +274,6 @@ static SPNEGO_OID_BYTES: [u8; 6] = [0x2b, 0x06, 0x01, 0x05, 0x05, 0x02];
 enum GssMech {
     Krb5,
     // Only constructed by `SpnegoSession`, which is gated on the `kms` feature.
-    #[cfg_attr(not(feature = "kms"), allow(dead_code))]
     Spnego,
 }
 
@@ -562,15 +561,13 @@ impl GssapiSession {
 /// The first call returns the initial token to send to the server. If the server
 /// replies with a continuation token (rare in Hadoop deployments), call again with
 /// that token until `complete` is `true`.
-#[cfg(feature = "kms")]
-pub(crate) struct SpnegoSession {
+pub struct SpnegoSession {
     ctx: GssClientCtx,
     complete: bool,
 }
 
-#[cfg(feature = "kms")]
 impl SpnegoSession {
-    pub(crate) fn new(service: &str, hostname: &str) -> crate::Result<Self> {
+    pub fn new(service: &str, hostname: &str) -> crate::Result<Self> {
         let target = GssName::with_target(&format!("{service}@{hostname}"))?;
         Ok(Self {
             ctx: GssClientCtx::with_mech(target, GssMech::Spnego),
@@ -581,13 +578,13 @@ impl SpnegoSession {
     /// Drive the next leg of the SPNEGO handshake. Returns the next token to send
     /// (empty if the handshake is finished). `is_complete()` is true after the
     /// final step from the GSSAPI library's perspective.
-    pub(crate) fn step(&mut self, server_token: Option<&[u8]>) -> crate::Result<Vec<u8>> {
+    pub fn step(&mut self, server_token: Option<&[u8]>) -> crate::Result<Vec<u8>> {
         let (out_token, complete) = self.ctx.step(server_token)?;
         self.complete = complete;
         Ok(out_token.unwrap_or_default())
     }
 
-    pub(crate) fn is_complete(&self) -> bool {
+    pub fn is_complete(&self) -> bool {
         self.complete
     }
 }

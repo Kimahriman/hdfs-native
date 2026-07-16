@@ -3,6 +3,8 @@ use std::io::Result;
 fn main() -> Result<()> {
     #[cfg(feature = "generate-protobuf")]
     {
+        let common_proto_root = std::env::var("DEP_HADOOP_NATIVE_PROTO_ROOT")
+            .expect("hadoop-native must expose its common protobuf source directory");
         unsafe {
             std::env::set_var("PROTOC", protobuf_src::protoc());
         }
@@ -11,11 +13,8 @@ fn main() -> Result<()> {
             &[
                 "src/proto/hdfs/ClientNamenodeProtocol.proto",
                 "src/proto/hdfs/datatransfer.proto",
-                "src/proto/common/RpcHeader.proto",
-                "src/proto/common/IpcConnectionContext.proto",
-                "src/proto/common/ProtobufRpcEngine.proto",
             ],
-            &["src/proto/common", "src/proto/hdfs"],
+            &[&common_proto_root, "src/proto/hdfs"],
         )?;
     }
 

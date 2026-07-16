@@ -4,6 +4,7 @@ use std::sync::{
 };
 
 use bytes::Bytes;
+use hadoop_native::rpc::{RpcConnection, RpcConnectionOptions};
 use log::{debug, warn};
 use prost::Message;
 use tokio::runtime::Handle;
@@ -12,20 +13,22 @@ use url::Url;
 use crate::{
     HdfsError, Result,
     common::config::Configuration,
-    hdfs::connection::{AlignmentContext, RpcConnection},
+    hdfs::connection::AlignmentContext,
     proto::{common::HaServiceStateProto, hdfs},
 };
 
 // RPC exceptions that should be tried
 const STANDBY_EXCEPTION: &str = "org.apache.hadoop.ipc.StandbyException";
 const OBSERVER_RETRY_EXCEPTION: &str = "org.apache.hadoop.ipc.ObserverRetryOnActiveException";
+const PROTOCOL: &str = "org.apache.hadoop.hdfs.protocol.ClientProtocol";
+const TOKEN_KIND: &str = "HDFS_DELEGATION_TOKEN";
 
 /// Lazily creates a connection to a host, and recreates the connection
 /// on fatal errors.
 #[derive(Debug)]
 struct ProxyConnection {
     url: String,
-    inner: Arc<tokio::sync::Mutex<Option<RpcConnection>>>,
+    inner: Arc<tokio::sync::Mutex<Option<RpcConnection<AlignmentContext>>>>,
     alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
     nameservice: Option<String>,
     effective_user: Option<String>,
@@ -63,9 +66,18 @@ impl ProxyConnection {
                         *c = Some(
                             RpcConnection::connect(
                                 &self.url,
+                                RpcConnectionOptions {
+                                    protocol: PROTOCOL,
+                                    token_kind: TOKEN_KIND,
+                                    token_service: self
+                                        .nameservice
+                                        .as_ref()
+                                        .map(|nameservice| format!("ha-hdfs:{nameservice}"))
+                                        .as_deref()
+                                        .unwrap_or(&self.url),
+                                    effective_user: self.effective_user.clone(),
+                                },
                                 self.alignment_context.clone(),
-                                self.nameservice.as_deref(),
-                                self.effective_user.clone(),
                                 &self.config,
                                 &self.handle,
                             )
@@ -80,12 +92,15 @@ impl ProxyConnection {
                     .call(method_name, message)
                     .await?
             };
-            let result = receiver.await.map_err(|_| {
-                HdfsError::IOError(std::io::Error::new(
-                    std::io::ErrorKind::ConnectionAborted,
-                    "RPC listener disconnected",
-                ))
-            })?;
+            let result: Result<Bytes> = receiver
+                .await
+                .map_err(|_| {
+                    HdfsError::IOError(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionAborted,
+                        "RPC listener disconnected",
+                    ))
+                })?
+                .map_err(HdfsError::from);
 
             match result {
                 Ok(bytes) => return Ok(bytes),

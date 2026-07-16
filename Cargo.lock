@@ -941,6 +941,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "hadoop-native"
+version = "0.14.2"
+dependencies = [
+ "base64",
+ "bitflags 2.13.0",
+ "bumpalo",
+ "bytes",
+ "cbc",
+ "chrono",
+ "cipher",
+ "des",
+ "hex",
+ "hmac",
+ "libc",
+ "libloading 0.9.0",
+ "log",
+ "md-5",
+ "once_cell",
+ "prost",
+ "prost-build",
+ "protobuf-src",
+ "rand 0.10.2",
+ "regex",
+ "roxmltree",
+ "socket2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "uuid",
+ "whoami",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -972,28 +1005,20 @@ version = "0.14.2"
 dependencies = [
  "aes",
  "base64",
- "bitflags 2.13.0",
- "bumpalo",
  "bytes",
- "cbc",
  "chrono",
  "cipher",
  "crc",
  "criterion",
  "ctr",
- "des",
  "dns-lookup",
  "env_logger",
  "fs-hdfs3",
  "futures",
  "g2p",
- "hex",
- "hmac",
+ "hadoop-native",
  "indoc",
- "libc",
- "libloading 0.9.0",
  "log",
- "md-5",
  "num-traits",
  "once_cell",
  "prost",
@@ -1001,9 +1026,7 @@ dependencies = [
  "prost-types",
  "protobuf-src",
  "rand 0.10.2",
- "regex",
  "reqwest",
- "roxmltree",
  "serde",
  "serde_json",
  "serial_test",

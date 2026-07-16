@@ -1,10 +1,5 @@
 #[allow(clippy::all, dead_code)]
-pub mod common {
-    #[cfg(feature = "generate-protobuf")]
-    include!(concat!(env!("OUT_DIR"), "/hadoop.common.rs"));
-    #[cfg(not(feature = "generate-protobuf"))]
-    include!(concat!("hadoop.common.rs"));
-}
+pub use hadoop_native::proto::common;
 
 #[allow(clippy::all, dead_code)]
 pub mod hdfs {

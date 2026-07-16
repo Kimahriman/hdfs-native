@@ -119,13 +119,20 @@ All other settings are generally assumed to be the defaults currently. For insta
 cargo build
 ```
 
+The Rust implementation is split into two crates:
+
+- `rust/hadoop-native` contains reusable Hadoop configuration, common protobuf,
+  authentication, glob, and IPC/RPC functionality.
+- `rust/hdfs-native` contains the HDFS client, NameNode/DataNode protocols,
+  erasure coding, and filesystem APIs.
+
 ## Object store implementation
 
 An object_store implementation for HDFS is provided in the [hdfs-native-object-store](https://github.com/datafusion-contrib/hdfs-native-object-store) crate.
 
 ## Running tests
 
-The tests are mostly integration tests that utilize a small Java application in `rust/mindifs/` that runs a custom `MiniDFSCluster`. To run the tests, you need to have Java, Maven, Hadoop binaries, and Kerberos tools available and on your path. Any Java version between 8 and 17 should work.
+The tests are mostly integration tests that utilize a small Java application in `rust/hdfs-native/minidfs/` that runs a custom `MiniDFSCluster`. To run the tests, you need to have Java, Maven, Hadoop binaries, and Kerberos tools available and on your path. Any Java version between 8 and 17 should work.
 
 ```bash
 cargo test -p hdfs-native --features integration-test
@@ -142,7 +149,7 @@ See the [Python README](./python/README.md)
 Some of the benchmarks compare performance to the JVM based client through libhdfs via the fs-hdfs3 crate. Because of that, some extra setup is required to run the benchmarks:
 
 ```bash
-export HADOOP_CONF_DIR=$(pwd)/rust/target/test
+export HADOOP_CONF_DIR=$(pwd)/target/test
 export CLASSPATH=$(hadoop classpath)
 ```
 

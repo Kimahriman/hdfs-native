@@ -1,0 +1,47 @@
+[package]
+name = "hadoop-native"
+version = "0.14.2"
+edition = "2024"
+authors = ["Adam Binford <adamq43@gmail.com>"]
+homepage = "https://github.com/Kimahriman/hdfs-native"
+repository = "https://github.com/Kimahriman/hdfs-native"
+keywords = ["hadoop"]
+description = "Native Hadoop client foundations for Rust"
+license = "Apache-2.0"
+links = "hadoop_native"
+
+[dependencies]
+base64 = "0.22"
+bitflags = "2"
+bumpalo = "3.20.3"
+bytes = { workspace = true }
+cbc = "0.2"
+chrono = "0.4"
+cipher = "0.5"
+des = "0.9"
+hex = "0.4"
+hmac = "0.13"
+libc = "0.2"
+libloading = "0.9"
+log = { workspace = true }
+md-5 = "0.11"
+once_cell = "1"
+prost = "0.14"
+rand = "0.10"
+regex = "1"
+roxmltree = "0.21.1"
+socket2 = "0.6"
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "net", "io-util", "sync"] }
+whoami = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+prost-build = { version = "0.14", optional = true }
+protobuf-src = { version = "2", optional = true }
+
+[features]
+generate-protobuf = ["prost-build", "protobuf-src"]

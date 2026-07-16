@@ -1,6 +1,7 @@
 [workspace]
 members = [
-    "rust",
+    "rust/hadoop-native",
+    "rust/hdfs-native",
     "python",
 ]
 resolver = "2"
