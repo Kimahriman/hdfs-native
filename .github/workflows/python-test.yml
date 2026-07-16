@@ -22,7 +22,7 @@ jobs:
           - "3.14"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-java@v5
         with:
@@ -67,10 +67,10 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: 3.14
 
@@ -81,21 +81,3 @@ jobs:
         run: |
           uv sync --group docs
           uv run sphinx-build -M html docs/source/ docs/build/
-
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: Build wheel
-        uses: PyO3/maturin-action@v1
-        with:
-          args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
-          sccache: 'true'
-          manylinux: auto
-
-      - name: Upload wheels
-        if: github.ref == 'refs/heads/master'
-        uses: actions/upload-artifact@v5
-        with:
-          name: wheels
-          path: dist
