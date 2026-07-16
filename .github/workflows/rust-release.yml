@@ -3,53 +3,70 @@ name: rust-release
 on:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'hadoop-v*'
+      - 'hdfs-v*'
 
 jobs:
   validate-release-tag:
-    name: Validate git tag
+    name: Validate release tag
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v7
 
-      - name: compare git tag with cargo metadata
+      - name: Compare tag with Cargo metadata
         run: |
           PUSHED_TAG=${GITHUB_REF##*/}
-          CURR_VER=$( grep version rust/hdfs-native/Cargo.toml | head -n 1 | awk '{print $3}' | tr -d '"' )
-          if [[ "${PUSHED_TAG}" != "v${CURR_VER}" ]]; then
-            echo "Cargo metadata has version set to ${CURR_VER}, but got pushed tag ${PUSHED_TAG}."
+          case "${PUSHED_TAG}" in
+            hadoop-v*)
+              PREFIX=hadoop-v
+              MANIFEST=rust/hadoop-native/Cargo.toml
+              ;;
+            hdfs-v*)
+              PREFIX=hdfs-v
+              MANIFEST=rust/hdfs-native/Cargo.toml
+              ;;
+            *)
+              echo "Unsupported release tag ${PUSHED_TAG}"
+              exit 1
+              ;;
+          esac
+
+          CURR_VER=$(grep '^version' "${MANIFEST}" | head -n 1 | awk '{print $3}' | tr -d '"')
+          if [[ "${PUSHED_TAG}" != "${PREFIX}${CURR_VER}" ]]; then
+            echo "Cargo metadata in ${MANIFEST} has version ${CURR_VER}, but got tag ${PUSHED_TAG}."
             exit 1
           fi
 
-  release:
-    name: Release
+  release-hadoop:
+    name: Publish hadoop-native
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/hadoop-v')
+    needs: validate-release-tag
     permissions:
       id-token: write
     steps:
       - uses: actions/checkout@v7
-
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
+      - name: Publish hadoop-native to crates.io
+        run: cargo publish -p hadoop-native
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
-      - name: Publish Rust crates to crates.io
-        run: |
-          cargo publish -p hadoop-native
-          VERSION=$(grep '^version' rust/hadoop-native/Cargo.toml | head -n 1 | awk '{print $3}' | tr -d '"')
-          for attempt in {1..12}; do
-            if cargo info "hadoop-native@${VERSION}" >/dev/null 2>&1; then
-              break
-            fi
-            if [[ "${attempt}" == "12" ]]; then
-              echo "hadoop-native ${VERSION} did not appear in the crates.io index"
-              exit 1
-            fi
-            sleep 10
-          done
-          cargo publish -p hdfs-native
+  release-hdfs:
+    name: Publish hdfs-native
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/hdfs-v')
+    needs: validate-release-tag
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      - name: Publish hdfs-native to crates.io
+        run: cargo publish -p hdfs-native
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

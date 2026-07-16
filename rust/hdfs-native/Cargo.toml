@@ -21,7 +21,7 @@ ctr = "0.10"
 dns-lookup = "3"
 futures = { workspace = true }
 g2p = "1"
-hadoop-native = { version = "0.14.2", path = "../hadoop-native" }
+hadoop-native = { version = "0.1.0", path = "../hadoop-native" }
 log = { workspace = true }
 num-traits = "0.2"
 once_cell = "1"
