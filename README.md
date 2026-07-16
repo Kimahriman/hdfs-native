@@ -122,9 +122,9 @@ cargo build
 The Rust implementation is split into two crates:
 
 - `rust/hadoop-native` contains reusable Hadoop configuration, common protobuf,
-  authentication, glob, and IPC/RPC functionality.
+  authentication, and IPC/RPC functionality.
 - `rust/hdfs-native` contains the HDFS client, NameNode/DataNode protocols,
-  erasure coding, and filesystem APIs.
+  glob handling, erasure coding, and filesystem APIs.
 
 ## Object store implementation
 
