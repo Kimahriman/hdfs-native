@@ -17,10 +17,11 @@ use tokio::{
 
 use crate::{
     HdfsError, Result,
-    common::config::Configuration,
+    config::Configuration,
+    datanode::connection::{DATANODE_CACHE, DatanodeConnection, Op},
     ec::EcSchema,
-    hdfs::connection::{DATANODE_CACHE, DatanodeConnection, Op},
-    hdfs::crypto::{FileCipher, FileCryptoCodec},
+    encryption::codec::{FileCipher, FileCryptoCodec},
+    namenode::protocol::NamenodeProtocol,
     proto::{
         common,
         hdfs::{
@@ -29,8 +30,6 @@ use crate::{
         },
     },
 };
-
-use super::protocol::NamenodeProtocol;
 
 // The number of packets to queue up on reads
 const READ_PACKET_BUFFER_LEN: usize = 100;

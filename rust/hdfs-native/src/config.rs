@@ -126,8 +126,8 @@ impl Configuration {
 
     pub fn get_replace_datanode_on_failure_policy(
         &self,
-    ) -> crate::hdfs::replace_datanode::ReplaceDatanodeOnFailure {
-        use crate::hdfs::replace_datanode::{Policy, ReplaceDatanodeOnFailure};
+    ) -> crate::datanode::replacement::ReplaceDatanodeOnFailure {
+        use crate::datanode::replacement::{Policy, ReplaceDatanodeOnFailure};
 
         if !self.get_boolean(
             DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_ENABLE_KEY,

@@ -5,7 +5,6 @@
 //! top of these primitives.
 
 pub mod config;
-pub mod glob;
 pub mod proto;
 pub mod rpc;
 pub mod security;

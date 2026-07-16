@@ -43,11 +43,11 @@ use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::common::config::{Configuration, HADOOP_SECURITY_KEY_PROVIDER_PATH};
-use crate::hdfs::crypto::DataEncryptionKey;
+use crate::config::{Configuration, HADOOP_SECURITY_KEY_PROVIDER_PATH};
+use crate::encryption::codec::DataEncryptionKey;
 use crate::proto::hdfs::FileEncryptionInfoProto;
-use crate::security::gssapi::SpnegoSession;
 use crate::{HdfsError, Result};
+use hadoop_native::security::gssapi::SpnegoSession;
 
 const KMS_URI_PREFIX: &str = "kms://";
 const SPNEGO_SERVICE: &str = "HTTP";

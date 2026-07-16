@@ -11,12 +11,12 @@ use log::warn;
 use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 use tokio::runtime::Handle;
 
-use crate::common::config::Configuration;
+use crate::config::Configuration;
+use crate::datanode::reader::get_block_stream;
+use crate::datanode::writer::BlockWriter;
 use crate::ec::{EcSchema, resolve_ec_policy};
-use crate::hdfs::block_reader::get_block_stream;
-use crate::hdfs::block_writer::BlockWriter;
-use crate::hdfs::crypto::FileCryptoCodec;
-use crate::hdfs::protocol::{LeaseTracker, NamenodeProtocol};
+use crate::encryption::codec::FileCryptoCodec;
+use crate::namenode::protocol::{LeaseTracker, NamenodeProtocol};
 use crate::proto::hdfs;
 use crate::{HdfsError, Result};
 

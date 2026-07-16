@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::{HadoopError as HdfsError, Result};
+use crate::{HdfsError, Result};
 use regex::{Regex, RegexBuilder};
 
 /// A small tuple wrapper holding a pattern string and a character offset.

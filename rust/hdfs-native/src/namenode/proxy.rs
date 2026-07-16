@@ -12,8 +12,8 @@ use url::Url;
 
 use crate::{
     HdfsError, Result,
-    common::config::Configuration,
-    hdfs::connection::AlignmentContext,
+    config::Configuration,
+    namenode::alignment::AlignmentContext,
     proto::{common::HaServiceStateProto, hdfs},
 };
 

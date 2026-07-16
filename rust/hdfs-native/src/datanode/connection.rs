@@ -12,11 +12,11 @@ use tokio::net::TcpStream;
 use tokio::runtime::Handle;
 use uuid::Uuid;
 
-use crate::common::config::Configuration;
+use crate::config::Configuration;
+use crate::datanode::sasl::{SaslDatanodeConnection, SaslDatanodeReader, SaslDatanodeWriter};
 use crate::proto::common::TokenProto;
 use crate::proto::hdfs::{DataEncryptionKeyProto, DatanodeIdProto};
 use crate::proto::{common, hdfs};
-use crate::security::sasl::{SaslDatanodeConnection, SaslDatanodeReader, SaslDatanodeWriter};
 use crate::{HdfsError, Result};
 
 const DATA_TRANSFER_VERSION: u16 = 28;
@@ -50,77 +50,6 @@ async fn connect(addr: &str, handle: &Handle) -> Result<TcpStream> {
     sf.set_keepalive(true)?;
 
     Ok(stream)
-}
-
-#[derive(Debug)]
-pub(crate) struct AlignmentContext {
-    state_id: i64,
-    router_federated_state: Option<HashMap<String, i64>>,
-}
-
-impl AlignmentContext {
-    fn update(
-        &mut self,
-        state_id: Option<i64>,
-        router_federated_state: Option<Vec<u8>>,
-    ) -> hadoop_native::Result<()> {
-        if let Some(new_state_id) = state_id {
-            self.state_id = i64::max(new_state_id, self.state_id)
-        }
-
-        if let Some(new_router_state) = router_federated_state {
-            let new_map = hdfs::RouterFederatedStateProto::decode(Bytes::from(new_router_state))?
-                .namespace_state_ids;
-
-            let current_map = if let Some(cur) = self.router_federated_state.as_mut() {
-                cur
-            } else {
-                self.router_federated_state = Some(HashMap::new());
-                self.router_federated_state.as_mut().unwrap()
-            };
-
-            for (key, value) in new_map.into_iter() {
-                current_map.insert(
-                    key.clone(),
-                    i64::max(value, *current_map.get(&key).unwrap_or(&i64::MIN)),
-                );
-            }
-        }
-
-        Ok(())
-    }
-
-    fn encode_router_state(&self) -> Option<Vec<u8>> {
-        self.router_federated_state.as_ref().map(|state| {
-            hdfs::RouterFederatedStateProto {
-                namespace_state_ids: state.clone(),
-            }
-            .encode_to_vec()
-        })
-    }
-}
-
-impl Default for AlignmentContext {
-    fn default() -> Self {
-        Self {
-            state_id: i64::MIN,
-            router_federated_state: None,
-        }
-    }
-}
-
-impl hadoop_native::rpc::RpcAlignmentContext for AlignmentContext {
-    fn request_state(&self) -> (Option<i64>, Option<Vec<u8>>) {
-        (Some(self.state_id), self.encode_router_state())
-    }
-
-    fn update_response(
-        &mut self,
-        state_id: Option<i64>,
-        federated_state: Option<Vec<u8>>,
-    ) -> hadoop_native::Result<()> {
-        self.update(state_id, federated_state)
-    }
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -476,15 +405,11 @@ impl DatanodeConnectionCache {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
-
     use prost::Message;
 
-    use crate::{
-        common::config::Configuration, hdfs::connection::MAX_PACKET_HEADER_SIZE, proto::hdfs,
-    };
+    use crate::{config::Configuration, proto::hdfs};
 
-    use super::{AlignmentContext, datanode_url};
+    use super::{MAX_PACKET_HEADER_SIZE, datanode_url};
 
     #[test]
     fn test_max_packet_header_size() {
@@ -533,46 +458,5 @@ mod test {
         .unwrap();
 
         assert_eq!(datanode_url(&datanode_id, &config), "hdfs-datanode:9866");
-    }
-
-    fn encode_router_state(map: &HashMap<String, i64>) -> Vec<u8> {
-        hdfs::RouterFederatedStateProto {
-            namespace_state_ids: map.clone(),
-        }
-        .encode_to_vec()
-    }
-
-    #[test]
-    fn test_router_federated_state() {
-        let mut alignment_context = AlignmentContext::default();
-
-        assert!(alignment_context.router_federated_state.is_none());
-
-        let mut state_map = HashMap::<String, i64>::new();
-        state_map.insert("ns-1".to_string(), 3);
-
-        alignment_context
-            .update(None, Some(encode_router_state(&state_map)))
-            .unwrap();
-
-        assert!(alignment_context.router_federated_state.is_some());
-
-        let router_state = alignment_context.router_federated_state.as_ref().unwrap();
-
-        assert_eq!(router_state.len(), 1);
-        assert_eq!(*router_state.get("ns-1").unwrap(), 3);
-
-        state_map.insert("ns-1".to_string(), 5);
-        state_map.insert("ns-2".to_string(), 7);
-
-        alignment_context
-            .update(None, Some(encode_router_state(&state_map)))
-            .unwrap();
-
-        let router_state = alignment_context.router_federated_state.as_ref().unwrap();
-
-        assert_eq!(router_state.len(), 2);
-        assert_eq!(*router_state.get("ns-1").unwrap(), 5);
-        assert_eq!(*router_state.get("ns-2").unwrap(), 7);
     }
 }

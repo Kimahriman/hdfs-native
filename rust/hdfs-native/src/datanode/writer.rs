@@ -7,14 +7,14 @@ use tokio::{runtime::Handle, sync::mpsc, task::JoinHandle};
 
 use crate::{
     HdfsError, Result,
-    common::config::Configuration,
-    ec::{EcSchema, gf256::Coder},
-    hdfs::{
+    config::Configuration,
+    datanode::{
         connection::{DatanodeConnection, DatanodeReader, DatanodeWriter, Op, WritePacket},
-        crypto::{FileCipher, FileCryptoCodec},
-        protocol::NamenodeProtocol,
-        replace_datanode::ReplaceDatanodeOnFailure,
+        replacement::ReplaceDatanodeOnFailure,
     },
+    ec::{EcSchema, gf256::Coder},
+    encryption::codec::{FileCipher, FileCryptoCodec},
+    namenode::protocol::NamenodeProtocol,
     proto::{common, hdfs},
 };
 

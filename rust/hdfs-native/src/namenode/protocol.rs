@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::Result;
 use crate::acl::AclEntry;
-use crate::hdfs::proxy::NameServiceProxy;
+use crate::namenode::proxy::NameServiceProxy;
 use crate::proto::hdfs::{
     self, DataEncryptionKeyProto, FsServerDefaultsProto, GetDataEncryptionKeyResponseProto,
 };

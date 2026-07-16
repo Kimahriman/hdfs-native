@@ -11,8 +11,8 @@ use tokio::{
     net::tcp::{OwnedReadHalf, OwnedWriteHalf},
 };
 
-use super::user::BlockTokenIdentifier;
-use crate::common::config::Configuration;
+use super::token::BlockTokenIdentifier;
+use crate::config::Configuration;
 use crate::proto::hdfs::{CipherOptionProto, CipherSuiteProto, DataEncryptionKeyProto};
 use crate::proto::{
     common::TokenProto,

@@ -45,19 +45,20 @@
 //! ```
 pub mod acl;
 pub mod client;
-pub(crate) mod common;
+pub(crate) mod config;
+pub(crate) mod datanode;
 #[cfg(feature = "benchmark")]
 pub mod ec;
 #[cfg(not(feature = "benchmark"))]
 pub(crate) mod ec;
+pub(crate) mod encryption;
 pub(crate) mod error;
 pub mod file;
-pub(crate) use hadoop_native::glob;
-pub(crate) mod hdfs;
+pub(crate) mod glob;
 #[cfg(any(feature = "integration-test", feature = "benchmark"))]
 pub mod minidfs;
+pub(crate) mod namenode;
 pub(crate) mod proto;
-pub(crate) mod security;
 pub mod sync;
 
 pub use client::WriteOptions;

@@ -8,17 +8,17 @@ use tokio::runtime::{Handle, Runtime};
 use url::Url;
 
 use crate::acl::{AclEntry, AclStatus};
-use crate::common::config::{self, Configuration};
+use crate::config::{self, Configuration};
 use crate::ec::resolve_ec_policy;
+use crate::encryption::codec::FileCryptoCodec;
+#[cfg(feature = "kms")]
+use crate::encryption::kms::KmsClient;
 use crate::error::{HdfsError, Result};
 use crate::file::{FileReader, FileWriter};
-use crate::hdfs::crypto::FileCryptoCodec;
-use crate::hdfs::protocol::NamenodeProtocol;
-use crate::hdfs::proxy::NameServiceProxy;
+use crate::namenode::protocol::NamenodeProtocol;
+use crate::namenode::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
-#[cfg(feature = "kms")]
-use crate::security::kms::KmsClient;
-use crate::security::user::User;
+use hadoop_native::security::user::User;
 
 use crate::glob::{GlobPattern, expand_glob, get_path_components, unescape_component};
 use crate::proto::hdfs::{ContentSummaryProto, FileEncryptionInfoProto, HdfsFileStatusProto};
@@ -1444,8 +1444,8 @@ mod test {
 
     use crate::{
         client::ClientBuilder,
-        common::config::Configuration,
-        hdfs::{protocol::NamenodeProtocol, proxy::NameServiceProxy},
+        config::Configuration,
+        namenode::{protocol::NamenodeProtocol, proxy::NameServiceProxy},
     };
 
     use super::{MountLink, MountTable};

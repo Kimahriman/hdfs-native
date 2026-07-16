@@ -4,8 +4,6 @@ use prost::Message;
 use crate::Result;
 use crate::proto::hdfs::{AccessModeProto, BlockTokenSecretProto, StorageTypeProto};
 
-pub use hadoop_native::security::user::User;
-
 #[derive(Debug)]
 #[allow(dead_code)]
 pub(crate) struct BlockTokenIdentifier {
