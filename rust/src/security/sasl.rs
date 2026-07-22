@@ -594,7 +594,7 @@ impl SaslDatanodeConnection {
     ///    and use an encryption key from the NameNode for the negotiation. This will happen
     ///    if `encryption_key` is defined.
     /// 2. If there is no block token
-    ///    or the DataNode transfer port is privileged (<= 1024)
+    ///    or the DataNode transfer port is privileged (< 1024)
     ///    or `dfs.data.transfer.protection` not set,
     ///    we skip the SASL handshake and assume it is trusted.
     /// 3. Otherwise, we do a SAL handshake using the provided block token.
@@ -612,7 +612,7 @@ impl SaslDatanodeConnection {
             DigestSaslSession::from_encryption_key("hdfs".to_string(), "0".to_string(), key)
         } else if !config.security_enabled()
             || token.identifier.is_empty()
-            || datanode_id.xfer_port <= 1024
+            || datanode_id.xfer_port < 1024
             || !config.data_transfer_protection_enabled()
         {
             return self.split(None, None);
