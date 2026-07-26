@@ -217,7 +217,7 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
             .is_some_and(|handle| !handle.is_finished())
     }
 
-    pub async fn write_messages(&self, messages: &[&[u8]]) -> Result<()> {
+    async fn write_messages(&self, messages: &[&[u8]]) -> Result<()> {
         let mut size = 0u32;
         for msg in messages.iter() {
             size += msg.len() as u32;

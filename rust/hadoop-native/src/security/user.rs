@@ -65,11 +65,11 @@ impl TryFrom<Vec<u8>> for TokenIdentifier {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct Token {
-    pub alias: String,
-    pub identifier: Vec<u8>,
-    pub password: Vec<u8>,
-    pub kind: String,
-    pub service: String,
+    pub(crate) alias: String,
+    pub(crate) identifier: Vec<u8>,
+    pub(crate) password: Vec<u8>,
+    pub(crate) kind: String,
+    pub(crate) service: String,
 }
 
 impl Token {
@@ -241,12 +241,12 @@ pub struct User {
 }
 
 impl User {
-    pub fn get() -> Self {
+    pub(crate) fn get() -> Self {
         let tokens = Token::load_tokens();
         User { tokens }
     }
 
-    pub fn get_token(&self, kind: &str, service: &str) -> Option<&Token> {
+    pub(crate) fn get_token(&self, kind: &str, service: &str) -> Option<&Token> {
         self.tokens
             .iter()
             .filter(|t| t.kind == kind && t.service == service)
@@ -258,7 +258,7 @@ impl User {
             })
     }
 
-    pub fn get_user_info_from_principal(
+    pub(crate) fn get_user_info_from_principal(
         principal: &str,
         effective_user: Option<String>,
     ) -> UserInfo {
@@ -268,7 +268,7 @@ impl User {
         }
     }
 
-    pub fn get_simple_user(effective_user: Option<String>) -> UserInfo {
+    pub(crate) fn get_simple_user(effective_user: Option<String>) -> UserInfo {
         UserInfo {
             real_user: None,
             effective_user: Some(
@@ -288,7 +288,7 @@ impl User {
         User::get_simple_user(effective_user)
     }
 
-    pub fn get_user_from_principal(principal: &str) -> String {
+    fn get_user_from_principal(principal: &str) -> String {
         // If there's a /, take the part before it.
         if let Some(index) = principal.find('/') {
             principal[0..index].to_string()

@@ -510,7 +510,7 @@ fn check_gss_ok(mut major: u32, mut minor: u32) -> crate::Result<()> {
 }
 
 #[derive(Debug)]
-pub struct GssapiSession {
+pub(crate) struct GssapiSession {
     state: GssapiState,
     effective_user: Option<String>,
 }

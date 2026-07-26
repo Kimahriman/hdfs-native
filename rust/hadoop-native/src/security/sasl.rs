@@ -23,7 +23,7 @@ use super::user::{User, UserInfo};
 
 const SASL_CALL_ID: i32 = -33;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AuthMethod {
+pub(crate) enum AuthMethod {
     Simple,
     Kerberos,
     Token,
@@ -51,7 +51,7 @@ pub trait SaslSession: Send + Sync {
     fn get_user_info(&self) -> Result<UserInfo>;
 }
 
-pub async fn negotiate_sasl_session(
+pub(crate) async fn negotiate_sasl_session(
     stream: TcpStream,
     token_kind: &str,
     service: &str,
@@ -197,7 +197,7 @@ fn select_method(
     Err(HdfsError::NoSASLMechanism)
 }
 
-pub struct SaslReader {
+pub(crate) struct SaslReader {
     stream: OwnedReadHalf,
     session: Option<Arc<Mutex<Box<dyn SaslSession>>>>,
     buffer: Bytes,
@@ -249,7 +249,7 @@ impl SaslReader {
         Ok(sasl_response)
     }
 
-    pub async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
+    pub(crate) async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
         if let Some(session) = self.session.clone() {
             let read_len = buf.len();
             let mut bytes_remaining = read_len;
@@ -277,7 +277,7 @@ impl SaslReader {
     }
 }
 
-pub struct SaslWriter {
+pub(crate) struct SaslWriter {
     stream: OwnedWriteHalf,
     session: Option<Arc<Mutex<Box<dyn SaslSession>>>>,
 }
@@ -321,7 +321,7 @@ impl SaslWriter {
         Ok(())
     }
 
-    pub async fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+    pub(crate) async fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
         if let Some(session) = &self.session {
             let mut rpc_sasl = RpcSaslProto {
                 state: SaslState::Wrap as i32,
