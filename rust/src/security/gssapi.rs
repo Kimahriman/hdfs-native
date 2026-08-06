@@ -60,21 +60,33 @@ static LIBGSSAPI: Lazy<Option<bindings::GSSAPI>> = Lazy::new(|| {
     #[cfg(target_os = "linux")]
     let library_name = "libgssapi_krb5.so.2";
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    let library_name = libloading::library_filename("gssapi64");
+
+    #[cfg(target_os = "macos")]
     let library_name = libloading::library_filename("gssapi_krb5");
 
-    match unsafe { bindings::GSSAPI::new(library_name) } {
-        Ok(gssapi) => Some(gssapi),
-        Err(e) => {
-            #[cfg(target_os = "macos")]
-            let message = "Try installing via \"brew install krb5\"";
-            #[cfg(target_os = "linux")]
-            let message = "On Debian based systems, try \"apt-get install libgssapi-krb5-2\". On RHEL based systems, try \"yum install krb5-libs\"";
-            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-            let message = "Loading Kerberos libraries are not supported on this system";
-            log::warn!("Failed to libgssapi_krb5.\n{}.\n{:?}", message, e);
-            None
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    {
+        match unsafe { bindings::GSSAPI::new(library_name) } {
+            Ok(gssapi) => Some(gssapi),
+            Err(e) => {
+                #[cfg(target_os = "linux")]
+                let message = "On Debian based systems, try \"apt-get install libgssapi-krb5-2\". On RHEL based systems, try \"yum install krb5-libs\"";
+                #[cfg(target_os = "windows")]
+                let message = "Install Kerberos from https://web.mit.edu/kerberos/dist/";
+                #[cfg(target_os = "macos")]
+                let message = "Try installing via \"brew install krb5\"";
+                log::warn!("Failed to libgssapi_krb5.\n{}.\n{:?}", message, e);
+                None
+            }
         }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        log::warn!("Loading Kerberos libraries is not supported on this system");
+        None
     }
 });
 
