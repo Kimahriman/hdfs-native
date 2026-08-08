@@ -69,7 +69,7 @@ brew install krb5
 
 Download and install the Microsoft Kerberos package from https://web.mit.edu/kerberos/dist/
 
-Copy the `<INSTALL FOLDER>\MIT\Kerberos\bin\gssapi64.dll` file to a folder in %PATH% and change the name to `gssapi_krb5.dll`
+Make sure `<INSTALL FOLDER>\MIT\Kerberos\bin` is in `%PATH%` so `gssapi64.dll` can be loaded.
 
 ### Encryption at rest (KMS)
 
