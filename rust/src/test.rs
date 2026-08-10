@@ -1,6 +1,7 @@
 use std::sync::{Mutex, atomic::AtomicBool};
 
 pub static DATANODE_CONNECT_FAULT_INJECTOR: AtomicBool = AtomicBool::new(false);
+pub static NAMENODE_STANDBY_FAULT_INJECTOR: AtomicBool = AtomicBool::new(false);
 pub static DATANODE_READ_FAULT_INJECTOR: AtomicBool = AtomicBool::new(false);
 pub static EC_FAULT_INJECTOR: Mutex<Option<EcFaultInjection>> = Mutex::new(None);
 pub static WRITE_CONNECTION_FAULT_INJECTOR: AtomicBool = AtomicBool::new(false);

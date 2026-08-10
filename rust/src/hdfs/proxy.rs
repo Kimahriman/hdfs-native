@@ -2,10 +2,12 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
+use std::time::Duration;
 
 use bytes::Bytes;
 use log::{debug, warn};
 use prost::Message;
+use rand::RngExt;
 use tokio::runtime::Handle;
 use url::Url;
 
@@ -108,6 +110,9 @@ pub(crate) struct NameServiceProxy {
     find_observer: bool,
     current_observer: tokio::sync::Mutex<Option<usize>>,
     msynced: Option<tokio::sync::Mutex<bool>>,
+    failover_max_attempts: u32,
+    failover_sleep_base_millis: u64,
+    failover_sleep_max_millis: u64,
 }
 
 impl NameServiceProxy {
@@ -189,6 +194,9 @@ impl NameServiceProxy {
                 } else {
                     None
                 },
+                failover_max_attempts: config.failover_max_attempts(),
+                failover_sleep_base_millis: config.failover_sleep_base_millis(),
+                failover_sleep_max_millis: config.failover_sleep_max_millis(),
             })
         }
     }
@@ -297,22 +305,30 @@ impl NameServiceProxy {
                 Err(e) => warn!("Failed to call observer node, falling back to the active: {e:?}"),
             }
         }
-        let current_active = self.current_active.load(Ordering::SeqCst);
-        let rest = (0..self.proxy_connections.len()).filter(|i| *i != current_active);
-        let proxy_indices = [current_active].into_iter().chain(rest).collect::<Vec<_>>();
+        let mut proxy_index = self.current_active.load(Ordering::SeqCst);
+        let mut failovers: u32 = 0;
 
-        let mut attempts = 0;
         loop {
-            let proxy_index = proxy_indices[attempts];
-            let result = self.proxy_connections[proxy_index]
-                .call(method_name, message)
-                .await;
+            #[cfg(feature = "integration-test")]
+            let standby_injected =
+                crate::test::NAMENODE_STANDBY_FAULT_INJECTOR.load(Ordering::SeqCst);
+            #[cfg(not(feature = "integration-test"))]
+            let standby_injected = false;
+
+            let result = if standby_injected {
+                Err(HdfsError::RPCError(
+                    STANDBY_EXCEPTION.to_string(),
+                    "NameNode standby fault injection".to_string(),
+                ))
+            } else {
+                self.proxy_connections[proxy_index]
+                    .call(method_name, message)
+                    .await
+            };
 
             match result {
                 Ok(bytes) => {
-                    // We may have gotten a result from an observer node for a read, so only remember
-                    // the active if this is a write method
-                    if write {
+                    if write || !self.find_observer {
                         self.current_active.store(proxy_index, Ordering::SeqCst);
                     }
 
@@ -327,18 +343,31 @@ impl NameServiceProxy {
                 Err(HdfsError::RPCError(exception, msg)) if !Self::is_retriable(&exception) => {
                     return Err(Self::convert_rpc_error(exception, msg));
                 }
-                Err(_) if attempts >= self.proxy_connections.len() - 1 => return result,
-                // Retriable error, do nothing and try the next connection
-                Err(HdfsError::RPCError(exception, _))
-                | Err(HdfsError::FatalRPCError(exception, _))
-                    if Self::is_retriable(&exception) => {}
+                Err(e) if failovers >= self.failover_max_attempts => return Err(e),
                 Err(e) => {
-                    // Some other error, we will retry but log the error
-                    warn!("{:?}", e);
+                    match &e {
+                        // Retriable error, just try the next connection
+                        HdfsError::RPCError(exception, _)
+                        | HdfsError::FatalRPCError(exception, _)
+                            if Self::is_retriable(exception) => {}
+                        // Some other error, we will retry but log the error
+                        _ => warn!("{:?}", e),
+                    }
+
+                    failovers += 1;
+                    let num_proxies = self.proxy_connections.len() as u32;
+                    if failovers.is_multiple_of(num_proxies) {
+                        tokio::time::sleep(exponential_failover_sleep(
+                            self.failover_sleep_base_millis,
+                            self.failover_sleep_max_millis,
+                            failovers / num_proxies,
+                        ))
+                        .await;
+                    }
+
+                    proxy_index = (proxy_index + 1) % self.proxy_connections.len();
                 }
             }
-
-            attempts += 1;
         }
     }
 
@@ -349,6 +378,31 @@ impl NameServiceProxy {
                 HdfsError::AlreadyExists(msg)
             }
             _ => HdfsError::RPCError(exception, msg),
+        }
+    }
+}
+
+fn exponential_failover_sleep(base_millis: u64, max_millis: u64, failovers: u32) -> Duration {
+    let uncapped = base_millis.saturating_mul(1u64 << failovers.min(32));
+    let jittered = (uncapped as f64 * rand::rng().random_range(0.5..1.5)) as u64;
+    Duration::from_millis(jittered.min(max_millis))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_exponential_failover_sleep() {
+        for _ in 0..100 {
+            let first_backoff = exponential_failover_sleep(500, 15000, 1);
+
+            assert!(first_backoff >= Duration::from_millis(500));
+            assert!(first_backoff <= Duration::from_millis(1500));
+            assert_eq!(
+                exponential_failover_sleep(500, 15000, 20),
+                Duration::from_millis(15000)
+            );
         }
     }
 }
