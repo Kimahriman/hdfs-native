@@ -139,6 +139,7 @@ impl RpcConnection {
         alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
         nameservice: Option<&str>,
         effective_user: Option<String>,
+        kerberos_credentials: Option<&crate::KerberosCredentials>,
         config: &Configuration,
         handle: &Handle,
     ) -> Result<Self> {
@@ -162,8 +163,14 @@ impl RpcConnection {
         let service = nameservice
             .map(|ns| format!("ha-hdfs:{ns}"))
             .unwrap_or(url.to_string());
-        let (user_info, reader, writer) =
-            negotiate_sasl_session(stream, &service, config, effective_user).await?;
+        let (user_info, reader, writer) = negotiate_sasl_session(
+            stream,
+            &service,
+            config,
+            effective_user,
+            kerberos_credentials,
+        )
+        .await?;
         let (sender, receiver) = mpsc::channel::<Vec<u8>>(1000);
 
         let mut conn = RpcConnection {

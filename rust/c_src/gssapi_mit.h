@@ -1,6 +1,23 @@
 #include <gssapi/gssapi.h>
 #include <gssapi/gssapi_krb5.h>
 
+// RFC 5587 credential-store extension. Declare the small subset used here
+// directly because some platforms do not install gssapi_ext.h.
+typedef struct gss_key_value_element_struct {
+    const char *key;
+    const char *value;
+} gss_key_value_element_desc;
+
+typedef struct gss_key_value_set_struct {
+    size_t count;
+    gss_key_value_element_desc *elements;
+} gss_key_value_set_desc, *gss_key_value_set_t;
+typedef const gss_key_value_set_desc *gss_const_key_value_set_t;
+
+OM_uint32 gss_acquire_cred_from(
+    OM_uint32 *, gss_name_t, OM_uint32, gss_OID_set, gss_cred_usage_t,
+    gss_const_key_value_set_t, gss_cred_id_t *, gss_OID_set *, OM_uint32 *);
+
 const OM_uint32 _GSS_C_INDEFINITE = GSS_C_INDEFINITE;
 const OM_uint32 _GSS_C_CALLING_ERROR_MASK = GSS_C_CALLING_ERROR_MASK;
 const OM_uint32 _GSS_C_ROUTINE_ERROR_MASK = GSS_C_ROUTINE_ERROR_MASK;
