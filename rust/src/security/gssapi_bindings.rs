@@ -84,7 +84,7 @@ pub type gss_key_value_element_desc = gss_key_value_element_struct;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct gss_key_value_set_struct {
-    pub count: usize,
+    pub count: OM_uint32,
     pub elements: *mut gss_key_value_element_desc,
 }
 pub type gss_key_value_set_desc = gss_key_value_set_struct;

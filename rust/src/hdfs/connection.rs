@@ -139,7 +139,7 @@ impl RpcConnection {
         alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
         nameservice: Option<&str>,
         effective_user: Option<String>,
-        kerberos_credentials: Option<&crate::KerberosCredentials>,
+        kerberos_credentials: Option<&crate::security::ResolvedKerberosCredentials>,
         config: &Configuration,
         handle: &Handle,
     ) -> Result<Self> {

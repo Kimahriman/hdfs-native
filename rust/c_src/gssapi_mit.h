@@ -1,7 +1,7 @@
 #include <gssapi/gssapi.h>
 #include <gssapi/gssapi_krb5.h>
 
-// RFC 5587 credential-store extension. Declare the small subset used here
+// MIT Kerberos credential-store extension. Declare the small subset used here
 // directly because some platforms do not install gssapi_ext.h.
 typedef struct gss_key_value_element_struct {
     const char *key;
@@ -9,7 +9,7 @@ typedef struct gss_key_value_element_struct {
 } gss_key_value_element_desc;
 
 typedef struct gss_key_value_set_struct {
-    size_t count;
+    OM_uint32 count;
     gss_key_value_element_desc *elements;
 } gss_key_value_set_desc, *gss_key_value_set_t;
 typedef const gss_key_value_set_desc *gss_const_key_value_set_t;

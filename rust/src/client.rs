@@ -221,6 +221,20 @@ impl IORuntime {
 ///     .unwrap();
 /// ```
 ///
+/// Create a client that acquires credentials directly from a keytab:
+///
+/// ```rust,no_run
+/// # use hdfs_native::{ClientBuilder, KerberosCredentials};
+/// let client = ClientBuilder::new()
+///     .with_url("hdfs://namenode.example.com:9000")
+///     .with_kerberos_credentials(KerberosCredentials::Keytab {
+///         principal: "client@EXAMPLE.COM".into(),
+///         keytab: "/run/secrets/client.keytab".into(),
+///     })
+///     .build()
+///     .unwrap();
+/// ```
+///
 /// Create a new client with the environment variable
 ///
 /// ```rust,no_run
@@ -282,7 +296,7 @@ pub struct ClientBuilder {
     config_dir: Option<String>,
     runtime: Option<IORuntime>,
     user: Option<String>,
-    kerberos_credentials: Option<Arc<crate::KerberosCredentials>>,
+    kerberos_credentials: Option<crate::KerberosCredentials>,
 }
 
 impl ClientBuilder {
@@ -333,9 +347,11 @@ impl ClientBuilder {
     /// Set Kerberos credentials scoped to this client instance.
     ///
     /// When unset, Kerberos authentication continues to use the process-default
-    /// GSSAPI credential for backward compatibility.
+    /// GSSAPI credential for backward compatibility. Explicit credential stores
+    /// require a runtime GSSAPI implementation that exports
+    /// `gss_acquire_cred_from` (such as MIT Kerberos).
     pub fn with_kerberos_credentials(mut self, credentials: crate::KerberosCredentials) -> Self {
-        self.kerberos_credentials = Some(Arc::new(credentials));
+        self.kerberos_credentials = Some(credentials);
         self
     }
 
@@ -353,7 +369,9 @@ impl ClientBuilder {
             config,
             self.runtime,
             self.user,
-            self.kerberos_credentials,
+            self.kerberos_credentials
+                .map(crate::KerberosCredentials::resolve)
+                .map(Arc::new),
         )
     }
 }
@@ -417,7 +435,7 @@ impl Client {
         config: Configuration,
         rt: Option<IORuntime>,
         user: Option<String>,
-        kerberos_credentials: Option<Arc<crate::KerberosCredentials>>,
+        kerberos_credentials: Option<Arc<crate::security::ResolvedKerberosCredentials>>,
     ) -> Result<Self> {
         let resolved_url = if !url.has_host() {
             let default_url = Self::default_fs(&config)?;
@@ -504,7 +522,7 @@ impl Client {
         config: Arc<Configuration>,
         handle: Handle,
         effective_user: Option<String>,
-        kerberos_credentials: Option<Arc<crate::KerberosCredentials>>,
+        kerberos_credentials: Option<Arc<crate::security::ResolvedKerberosCredentials>>,
         home_dir: String,
     ) -> Result<MountTable> {
         let mut mounts: Vec<MountLink> = Vec::new();

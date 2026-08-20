@@ -31,7 +31,7 @@ struct ProxyConnection {
     alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
     nameservice: Option<String>,
     effective_user: Option<String>,
-    kerberos_credentials: Option<Arc<crate::KerberosCredentials>>,
+    kerberos_credentials: Option<Arc<crate::security::ResolvedKerberosCredentials>>,
     config: Arc<Configuration>,
     handle: Handle,
 }
@@ -42,7 +42,7 @@ impl ProxyConnection {
         alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
         nameservice: Option<String>,
         effective_user: Option<String>,
-        kerberos_credentials: Option<Arc<crate::KerberosCredentials>>,
+        kerberos_credentials: Option<Arc<crate::security::ResolvedKerberosCredentials>>,
         config: Arc<Configuration>,
         handle: Handle,
     ) -> Self {
@@ -127,7 +127,7 @@ impl NameServiceProxy {
         config: Arc<Configuration>,
         handle: Handle,
         effective_user: Option<String>,
-        kerberos_credentials: Option<Arc<crate::KerberosCredentials>>,
+        kerberos_credentials: Option<Arc<crate::security::ResolvedKerberosCredentials>>,
     ) -> Result<Self> {
         let host = nameservice.host_str().ok_or(HdfsError::InvalidArgument(
             "No host for name service".to_string(),

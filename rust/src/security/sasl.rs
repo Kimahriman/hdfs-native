@@ -73,7 +73,7 @@ pub(crate) async fn negotiate_sasl_session(
     service: &str,
     config: &Configuration,
     effective_user: Option<String>,
-    kerberos_credentials: Option<&crate::KerberosCredentials>,
+    kerberos_credentials: Option<&crate::security::ResolvedKerberosCredentials>,
 ) -> Result<(UserInfo, SaslReader, SaslWriter)> {
     let (reader, writer) = stream.into_split();
     let mut reader = SaslReader::new(reader);
@@ -187,7 +187,7 @@ fn select_method(
     auths: &[SaslAuth],
     service: &str,
     effective_user: Option<String>,
-    kerberos_credentials: Option<&crate::KerberosCredentials>,
+    kerberos_credentials: Option<&crate::security::ResolvedKerberosCredentials>,
 ) -> Result<(SaslAuth, Option<Box<dyn SaslSession>>)> {
     let user = User::get();
     for auth in auths.iter() {

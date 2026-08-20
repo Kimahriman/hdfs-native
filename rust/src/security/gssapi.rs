@@ -263,24 +263,48 @@ impl GssCred {
         Ok(Self { cred })
     }
 
-    fn acquire_from_cache(principal: &str, cache: &str) -> crate::Result<Self> {
+    fn acquire(credentials: &crate::security::ResolvedKerberosCredentials) -> crate::Result<Self> {
         if libgssapi()?.gss_acquire_cred_from.is_err() {
             return Err(HdfsError::OperationFailed(
                 "The installed GSSAPI library does not support credential stores".to_string(),
             ));
         }
-        let desired_name = GssName::with_principal(principal)?;
-        let key = CString::new("ccache").expect("static string does not contain NUL");
-        let value = CString::new(cache).map_err(|_| {
+        let desired_name = GssName::with_principal(credentials.principal())?;
+        let ccache_key = CString::new("ccache").expect("static string does not contain NUL");
+        let keytab_key = CString::new("client_keytab").expect("static string does not contain NUL");
+        let (ccache, keytab) = match credentials {
+            crate::security::ResolvedKerberosCredentials::CredentialCache { cache, .. } => {
+                (cache, None)
+            }
+            crate::security::ResolvedKerberosCredentials::Keytab { keytab, cache, .. } => {
+                (cache, Some(keytab))
+            }
+        };
+        let ccache = CString::new(ccache.as_str()).map_err(|_| {
             HdfsError::InvalidArgument("Kerberos credential cache contains a NUL byte".to_string())
         })?;
-        let mut element = bindings::gss_key_value_element_desc {
-            key: key.as_ptr(),
-            value: value.as_ptr(),
-        };
+        let keytab = keytab
+            .map(|keytab| {
+                CString::new(keytab.as_str()).map_err(|_| {
+                    HdfsError::InvalidArgument(
+                        "Kerberos keytab path contains a NUL byte".to_string(),
+                    )
+                })
+            })
+            .transpose()?;
+        let mut elements = vec![bindings::gss_key_value_element_desc {
+            key: ccache_key.as_ptr(),
+            value: ccache.as_ptr(),
+        }];
+        if let Some(keytab) = keytab.as_ref() {
+            elements.push(bindings::gss_key_value_element_desc {
+                key: keytab_key.as_ptr(),
+                value: keytab.as_ptr(),
+            });
+        }
         let store = bindings::gss_key_value_set_desc {
-            count: 1,
-            elements: &mut element,
+            count: elements.len() as bindings::OM_uint32,
+            elements: elements.as_mut_ptr(),
         };
         let mut minor = 0;
         let mut cred = ptr::null_mut();
@@ -621,15 +645,13 @@ impl GssapiSession {
         service: &str,
         hostname: &str,
         effective_user: Option<String>,
-        kerberos_credentials: Option<&crate::KerberosCredentials>,
+        kerberos_credentials: Option<&crate::security::ResolvedKerberosCredentials>,
     ) -> crate::Result<Self> {
         let targ_name = format!("{service}@{hostname}");
 
         let target = GssName::with_target(&targ_name)?;
         let credential = match kerberos_credentials {
-            Some(crate::KerberosCredentials::CredentialCache { principal, cache }) => {
-                Some(GssCred::acquire_from_cache(principal, cache)?)
-            }
+            Some(credentials) => Some(GssCred::acquire(credentials)?),
             None => None,
         };
         let state = GssapiState::Pending(GssClientCtx::with_credential(target, credential));
