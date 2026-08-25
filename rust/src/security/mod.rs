@@ -7,90 +7,58 @@ pub mod user;
 
 /// Kerberos credentials to use for a single HDFS client.
 ///
-/// Explicit credentials avoid relying on process-global state such as
-/// `KRB5CCNAME`, allowing clients with different identities to coexist.
-#[derive(Clone)]
-pub enum KerberosCredentials {
-    /// Acquire credentials for `principal` from the named credential cache.
-    ///
-    /// `cache` uses the Kerberos credential-cache syntax, for example
-    /// `FILE:/run/krb5/client.ccache` or `DIR:/run/krb5/ccaches`.
-    CredentialCache { principal: String, cache: String },
-    /// Acquire credentials for `principal` directly from a keytab.
-    ///
-    /// A private in-memory credential cache is allocated for the client so
-    /// that credential acquisition and renewal do not use process-global state.
-    Keytab { principal: String, keytab: String },
+/// The fields are independent: a keytab and cache may be supplied together so
+/// acquired tickets are written to that cache. If a keytab is supplied without
+/// a cache, the client allocates a private in-memory cache. Supplying only a
+/// principal selects that identity from the process-default credential store.
+#[derive(Clone, Default)]
+pub(crate) struct KerberosCredentials {
+    pub principal: Option<String>,
+    pub keytab: Option<String>,
+    pub cache: Option<String>,
 }
 
 #[derive(Clone)]
-pub(crate) enum ResolvedKerberosCredentials {
-    CredentialCache {
-        principal: String,
-        cache: String,
-    },
-    Keytab {
-        principal: String,
-        keytab: String,
-        cache: String,
-    },
+pub(crate) struct ResolvedKerberosCredentials {
+    pub(crate) principal: Option<String>,
+    pub(crate) keytab: Option<String>,
+    pub(crate) cache: Option<String>,
 }
 
 impl KerberosCredentials {
-    pub(crate) fn resolve(self) -> ResolvedKerberosCredentials {
-        match self {
-            Self::CredentialCache { principal, cache } => {
-                ResolvedKerberosCredentials::CredentialCache { principal, cache }
-            }
-            Self::Keytab { principal, keytab } => ResolvedKerberosCredentials::Keytab {
-                principal,
-                keytab,
-                cache: format!("MEMORY:hdfs-native-{}", uuid::Uuid::new_v4()),
-            },
+    pub(crate) fn resolve(self) -> Option<ResolvedKerberosCredentials> {
+        if self.principal.is_none() && self.keytab.is_none() && self.cache.is_none() {
+            return None;
         }
-    }
-}
-
-impl ResolvedKerberosCredentials {
-    pub(crate) fn principal(&self) -> &str {
-        match self {
-            Self::CredentialCache { principal, .. } | Self::Keytab { principal, .. } => principal,
-        }
-    }
-}
-
-impl std::fmt::Debug for ResolvedKerberosCredentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::CredentialCache { principal, .. } => f
-                .debug_struct("CredentialCache")
-                .field("principal", principal)
-                .field("cache", &"[REDACTED]")
-                .finish(),
-            Self::Keytab { principal, .. } => f
-                .debug_struct("Keytab")
-                .field("principal", principal)
-                .field("keytab", &"[REDACTED]")
-                .field("cache", &"[REDACTED]")
-                .finish(),
-        }
+        let cache = match (&self.keytab, self.cache) {
+            (Some(_), None) => Some(format!("MEMORY:hdfs-native-{}", uuid::Uuid::new_v4())),
+            (_, cache) => cache,
+        };
+        Some(ResolvedKerberosCredentials {
+            principal: self.principal,
+            keytab: self.keytab,
+            cache,
+        })
     }
 }
 
 impl std::fmt::Debug for KerberosCredentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::CredentialCache { principal, .. } => f
-                .debug_struct("CredentialCache")
-                .field("principal", principal)
-                .field("cache", &"[REDACTED]")
-                .finish(),
-            Self::Keytab { principal, .. } => f
-                .debug_struct("Keytab")
-                .field("principal", principal)
-                .field("keytab", &"[REDACTED]")
-                .finish(),
-        }
+        f.debug_struct("KerberosCredentials")
+            .field("principal", &self.principal)
+            .field("keytab", &self.keytab.as_ref().map(|_| "[REDACTED]"))
+            .field("cache", &self.cache.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ResolvedKerberosCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvedKerberosCredentials")
+            .field("principal", &self.principal)
+            .field("keytab", &self.keytab.as_ref().map(|_| "[REDACTED]"))
+            .field("cache", &self.cache.as_ref().map(|_| "[REDACTED]"))
+            .finish()
     }
 }
 
@@ -99,28 +67,44 @@ mod tests {
     use super::KerberosCredentials;
 
     #[test]
-    fn kerberos_credentials_debug_redacts_cache() {
-        let credentials = KerberosCredentials::CredentialCache {
-            principal: "alice@EXAMPLE.COM".to_string(),
-            cache: "FILE:/run/secrets/alice.ccache".to_string(),
+    fn kerberos_credentials_are_composable_and_redacted() {
+        let credentials = KerberosCredentials {
+            principal: Some("alice@EXAMPLE.COM".to_string()),
+            keytab: Some("/run/secrets/alice.keytab".to_string()),
+            cache: Some("FILE:/run/krb5/alice.ccache".to_string()),
         };
 
         let debug = format!("{credentials:?}");
         assert!(debug.contains("alice@EXAMPLE.COM"));
-        assert!(debug.contains("[REDACTED]"));
-        assert!(!debug.contains("/run/secrets/alice.ccache"));
+        assert!(!debug.contains("/run/secrets/alice.keytab"));
+        assert!(!debug.contains("/run/krb5/alice.ccache"));
+
+        let resolved = credentials.resolve().unwrap();
+        assert_eq!(
+            resolved.keytab.as_deref(),
+            Some("/run/secrets/alice.keytab")
+        );
+        assert_eq!(
+            resolved.cache.as_deref(),
+            Some("FILE:/run/krb5/alice.ccache")
+        );
     }
 
     #[test]
-    fn kerberos_credentials_debug_redacts_keytab() {
-        let credentials = KerberosCredentials::Keytab {
-            principal: "alice@EXAMPLE.COM".to_string(),
-            keytab: "/run/secrets/alice.keytab".to_string(),
-        };
+    fn keytab_without_cache_gets_private_memory_cache() {
+        let resolved = KerberosCredentials {
+            principal: None,
+            keytab: Some("/run/secrets/alice.keytab".to_string()),
+            cache: None,
+        }
+        .resolve()
+        .unwrap();
 
-        let debug = format!("{credentials:?}");
-        assert!(debug.contains("alice@EXAMPLE.COM"));
-        assert!(debug.contains("[REDACTED]"));
-        assert!(!debug.contains("/run/secrets/alice.keytab"));
+        assert!(resolved.cache.unwrap().starts_with("MEMORY:hdfs-native-"));
+    }
+
+    #[test]
+    fn empty_credentials_use_default_path() {
+        assert!(KerberosCredentials::default().resolve().is_none());
     }
 }

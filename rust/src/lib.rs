@@ -64,7 +64,6 @@ pub use client::WriteOptions;
 pub use client::{Client, ClientBuilder};
 pub use error::HdfsError;
 pub use error::Result;
-pub use security::KerberosCredentials;
 
 // Module for testing hooks into non-test code
 #[cfg(feature = "integration-test")]

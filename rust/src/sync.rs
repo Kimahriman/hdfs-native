@@ -63,8 +63,15 @@ impl ClientBuilder {
     }
 
     /// Set Kerberos credentials scoped to this client instance.
-    pub fn with_kerberos_credentials(mut self, credentials: crate::KerberosCredentials) -> Self {
-        self.inner = self.inner.with_kerberos_credentials(credentials);
+    pub fn with_kerberos_credentials(
+        mut self,
+        principal: Option<String>,
+        keytab: Option<String>,
+        cache: Option<String>,
+    ) -> Self {
+        self.inner = self
+            .inner
+            .with_kerberos_credentials(principal, keytab, cache);
         self
     }
 

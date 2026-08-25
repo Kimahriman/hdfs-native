@@ -1,4 +1,4 @@
-use hdfs_native::{ClientBuilder, KerberosCredentials, WriteOptions};
+use hdfs_native::{ClientBuilder, WriteOptions};
 
 #[tokio::main]
 async fn main() {
@@ -17,7 +17,7 @@ async fn main() {
     let client = ClientBuilder::new()
         .with_url(url)
         .with_config_dir(config_dir)
-        .with_kerberos_credentials(KerberosCredentials::Keytab { principal, keytab })
+        .with_kerberos_credentials(Some(principal), Some(keytab), None)
         .build()
         .expect("build keytab-backed client");
 

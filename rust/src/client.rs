@@ -224,13 +224,14 @@ impl IORuntime {
 /// Create a client that acquires credentials directly from a keytab:
 ///
 /// ```rust,no_run
-/// # use hdfs_native::{ClientBuilder, KerberosCredentials};
+/// # use hdfs_native::ClientBuilder;
 /// let client = ClientBuilder::new()
 ///     .with_url("hdfs://namenode.example.com:9000")
-///     .with_kerberos_credentials(KerberosCredentials::Keytab {
-///         principal: "client@EXAMPLE.COM".into(),
-///         keytab: "/run/secrets/client.keytab".into(),
-///     })
+///     .with_kerberos_credentials(
+///         Some("client@EXAMPLE.COM".into()),
+///         Some("/run/secrets/client.keytab".into()),
+///         None,
+///     )
 ///     .build()
 ///     .unwrap();
 /// ```
@@ -279,13 +280,14 @@ impl IORuntime {
 /// Create a client with an explicit Kerberos credential cache:
 ///
 /// ```rust,no_run
-/// # use hdfs_native::{ClientBuilder, KerberosCredentials};
+/// # use hdfs_native::ClientBuilder;
 /// let client = ClientBuilder::new()
 ///     .with_url("hdfs://namenode.example.com:9000")
-///     .with_kerberos_credentials(KerberosCredentials::CredentialCache {
-///         principal: "client@EXAMPLE.COM".into(),
-///         cache: "FILE:/run/krb5/client.ccache".into(),
-///     })
+///     .with_kerberos_credentials(
+///         Some("client@EXAMPLE.COM".into()),
+///         None,
+///         Some("FILE:/run/krb5/client.ccache".into()),
+///     )
 ///     .build()
 ///     .unwrap();
 /// ```
@@ -296,7 +298,7 @@ pub struct ClientBuilder {
     config_dir: Option<String>,
     runtime: Option<IORuntime>,
     user: Option<String>,
-    kerberos_credentials: Option<crate::KerberosCredentials>,
+    kerberos_credentials: Option<crate::security::KerberosCredentials>,
 }
 
 impl ClientBuilder {
@@ -347,11 +349,22 @@ impl ClientBuilder {
     /// Set Kerberos credentials scoped to this client instance.
     ///
     /// When unset, Kerberos authentication continues to use the process-default
-    /// GSSAPI credential for backward compatibility. Explicit credential stores
-    /// require a runtime GSSAPI implementation that exports
+    /// GSSAPI credential for backward compatibility. `keytab` and `cache` are
+    /// independent and may be provided together. A keytab without a cache gets
+    /// a private in-memory cache. Explicit credential stores require a runtime
+    /// GSSAPI implementation that exports
     /// `gss_acquire_cred_from` (such as MIT Kerberos).
-    pub fn with_kerberos_credentials(mut self, credentials: crate::KerberosCredentials) -> Self {
-        self.kerberos_credentials = Some(credentials);
+    pub fn with_kerberos_credentials(
+        mut self,
+        principal: Option<String>,
+        keytab: Option<String>,
+        cache: Option<String>,
+    ) -> Self {
+        self.kerberos_credentials = Some(crate::security::KerberosCredentials {
+            principal,
+            keytab,
+            cache,
+        });
         self
     }
 
@@ -370,7 +383,7 @@ impl ClientBuilder {
             self.runtime,
             self.user,
             self.kerberos_credentials
-                .map(crate::KerberosCredentials::resolve)
+                .and_then(crate::security::KerberosCredentials::resolve)
                 .map(Arc::new),
         )
     }
@@ -454,9 +467,11 @@ impl Client {
         let rt_holder = RuntimeHolder::new(rt);
 
         let user_info = if config.security_enabled()
-            && let Some(credentials) = kerberos_credentials.as_deref()
+            && let Some(principal) = kerberos_credentials
+                .as_deref()
+                .and_then(|credentials| credentials.principal.as_deref())
         {
-            User::get_user_info_from_principal(credentials.principal(), user.clone())
+            User::get_user_info_from_principal(principal, user.clone())
         } else {
             User::get_user_info(user.clone(), config.security_enabled())
         };
@@ -1502,7 +1517,6 @@ mod test {
     use url::Url;
 
     use crate::{
-        KerberosCredentials,
         client::ClientBuilder,
         common::config::Configuration,
         hdfs::{protocol::NamenodeProtocol, proxy::NameServiceProxy},
@@ -1707,10 +1721,11 @@ mod test {
         let client = ClientBuilder::new()
             .with_url("hdfs://127.0.0.1:9000")
             .with_config([("hadoop.security.authentication", "kerberos")])
-            .with_kerberos_credentials(KerberosCredentials::CredentialCache {
-                principal: "alice@EXAMPLE.COM".to_string(),
-                cache: "FILE:/run/krb5/alice.ccache".to_string(),
-            })
+            .with_kerberos_credentials(
+                Some("alice@EXAMPLE.COM".to_string()),
+                None,
+                Some("FILE:/run/krb5/alice.ccache".to_string()),
+            )
             .build()
             .unwrap();
 

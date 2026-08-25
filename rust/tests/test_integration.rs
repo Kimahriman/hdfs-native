@@ -6,7 +6,7 @@ mod test {
     use crate::common::{EnvVarGuard, TEST_FILE_INTS, assert_bufs_equal};
     use bytes::{BufMut, Bytes, BytesMut};
     use hdfs_native::{
-        Client, KerberosCredentials, Result, WriteOptions,
+        Client, Result, WriteOptions,
         acl::AclEntry,
         client::{ClientBuilder, FileStatus},
         minidfs::{DfsFeatures, MiniDfs},
@@ -41,10 +41,11 @@ mod test {
 
         let client = ClientBuilder::new()
             .with_url(&dfs.url)
-            .with_kerberos_credentials(KerberosCredentials::Keytab {
-                principal: "hdfs/localhost".to_string(),
-                keytab: "target/test/hdfs.keytab".to_string(),
-            })
+            .with_kerberos_credentials(
+                Some("hdfs/localhost".to_string()),
+                Some("target/test/hdfs.keytab".to_string()),
+                None,
+            )
             .build()
             .unwrap();
         assert_explicit_kerberos_io(&client, "/explicit-keytab").await;
@@ -58,13 +59,32 @@ mod test {
 
         let client = ClientBuilder::new()
             .with_url(&dfs.url)
-            .with_kerberos_credentials(KerberosCredentials::CredentialCache {
-                principal: "hdfs/localhost".to_string(),
-                cache: "FILE:target/test/krbcache".to_string(),
-            })
+            .with_kerberos_credentials(
+                Some("hdfs/localhost".to_string()),
+                None,
+                Some("FILE:target/test/krbcache".to_string()),
+            )
             .build()
             .unwrap();
         assert_explicit_kerberos_io(&client, "/explicit-cache").await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_security_kerberos_keytab_populates_explicit_cache() {
+        let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::Security]));
+        let _cache_guard = EnvVarGuard::set("KRB5CCNAME", "FILE:target/test/nonexistent-cache");
+
+        let client = ClientBuilder::new()
+            .with_url(&dfs.url)
+            .with_kerberos_credentials(
+                Some("hdfs/localhost".to_string()),
+                Some("target/test/hdfs.keytab".to_string()),
+                Some("FILE:target/test/explicit-keytab-cache".to_string()),
+            )
+            .build()
+            .unwrap();
+        assert_explicit_kerberos_io(&client, "/explicit-keytab-cache").await;
     }
 
     async fn assert_explicit_kerberos_io(client: &Client, path: &str) {

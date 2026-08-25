@@ -264,38 +264,67 @@ impl GssCred {
     }
 
     fn acquire(credentials: &crate::security::ResolvedKerberosCredentials) -> crate::Result<Self> {
+        let mut desired_name = credentials
+            .principal
+            .as_deref()
+            .map(GssName::with_principal)
+            .transpose()?;
+        if credentials.keytab.is_none() && credentials.cache.is_none() {
+            let mut minor = 0;
+            let mut cred = ptr::null_mut();
+            let major = unsafe {
+                libgssapi()?.gss_acquire_cred(
+                    &mut minor,
+                    desired_name
+                        .as_mut()
+                        .map_or(ptr::null_mut(), |name| name.name),
+                    bindings::_GSS_C_INDEFINITE,
+                    ptr::null_mut(),
+                    bindings::GSS_C_INITIATE as bindings::gss_cred_usage_t,
+                    &mut cred,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            };
+            check_gss_ok(major, minor)?;
+            return Ok(Self { cred });
+        }
         if libgssapi()?.gss_acquire_cred_from.is_err() {
             return Err(HdfsError::OperationFailed(
                 "The installed GSSAPI library does not support credential stores".to_string(),
             ));
         }
-        let desired_name = GssName::with_principal(credentials.principal())?;
         let ccache_key = CString::new("ccache").expect("static string does not contain NUL");
         let keytab_key = CString::new("client_keytab").expect("static string does not contain NUL");
-        let (ccache, keytab) = match credentials {
-            crate::security::ResolvedKerberosCredentials::CredentialCache { cache, .. } => {
-                (cache, None)
-            }
-            crate::security::ResolvedKerberosCredentials::Keytab { keytab, cache, .. } => {
-                (cache, Some(keytab))
-            }
-        };
-        let ccache = CString::new(ccache.as_str()).map_err(|_| {
-            HdfsError::InvalidArgument("Kerberos credential cache contains a NUL byte".to_string())
-        })?;
-        let keytab = keytab
+        let ccache = credentials
+            .cache
+            .as_deref()
+            .map(|cache| {
+                CString::new(cache).map_err(|_| {
+                    HdfsError::InvalidArgument(
+                        "Kerberos credential cache contains a NUL byte".to_string(),
+                    )
+                })
+            })
+            .transpose()?;
+        let keytab = credentials
+            .keytab
+            .as_deref()
             .map(|keytab| {
-                CString::new(keytab.as_str()).map_err(|_| {
+                CString::new(keytab).map_err(|_| {
                     HdfsError::InvalidArgument(
                         "Kerberos keytab path contains a NUL byte".to_string(),
                     )
                 })
             })
             .transpose()?;
-        let mut elements = vec![bindings::gss_key_value_element_desc {
-            key: ccache_key.as_ptr(),
-            value: ccache.as_ptr(),
-        }];
+        let mut elements = Vec::new();
+        if let Some(ccache) = ccache.as_ref() {
+            elements.push(bindings::gss_key_value_element_desc {
+                key: ccache_key.as_ptr(),
+                value: ccache.as_ptr(),
+            });
+        }
         if let Some(keytab) = keytab.as_ref() {
             elements.push(bindings::gss_key_value_element_desc {
                 key: keytab_key.as_ptr(),
@@ -311,7 +340,9 @@ impl GssCred {
         let major = unsafe {
             libgssapi()?.gss_acquire_cred_from(
                 &mut minor,
-                desired_name.name,
+                desired_name
+                    .as_mut()
+                    .map_or(ptr::null_mut(), |name| name.name),
                 bindings::_GSS_C_INDEFINITE,
                 ptr::null_mut(),
                 bindings::GSS_C_INITIATE as bindings::gss_cred_usage_t,

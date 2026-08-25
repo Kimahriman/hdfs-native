@@ -9,7 +9,7 @@ mod test {
     use std::time::Duration;
 
     use hdfs_native::{
-        Client, ClientBuilder, KerberosCredentials, Result,
+        Client, ClientBuilder, Result,
         minidfs::{DfsFeatures, MiniDfs},
         test::NAMENODE_STANDBY_FAULT_INJECTOR,
     };
@@ -49,10 +49,11 @@ mod test {
         let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::Security, DfsFeatures::HA]));
         let _cache_guard = EnvVarGuard::set("KRB5CCNAME", "FILE:target/test/nonexistent-cache");
         let client = ClientBuilder::new()
-            .with_kerberos_credentials(KerberosCredentials::Keytab {
-                principal: "hdfs/localhost".to_string(),
-                keytab: "target/test/hdfs.keytab".to_string(),
-            })
+            .with_kerberos_credentials(
+                Some("hdfs/localhost".to_string()),
+                Some("target/test/hdfs.keytab".to_string()),
+                None,
+            )
             .build()?;
 
         client
