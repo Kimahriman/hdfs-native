@@ -363,29 +363,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Set all Kerberos credential fields at once.
-    ///
-    /// Prefer the individual `with_kerberos_*` methods when constructing a
-    /// client incrementally. When unset, Kerberos authentication continues to
-    /// use the process-default GSSAPI credential for backward compatibility.
-    /// `keytab` and `cache` are independent and may be provided together, but
-    /// an explicit principal is required whenever either is set. A keytab
-    /// without a cache gets an in-memory cache. The all-`None` form is
-    /// equivalent to leaving this method unset. Explicit credential stores
-    /// require a runtime GSSAPI implementation that exports
-    /// `gss_acquire_cred_from` (such as MIT Kerberos).
-    pub fn with_kerberos_credentials(
-        mut self,
-        principal: Option<String>,
-        keytab: Option<String>,
-        cache: Option<String>,
-    ) -> Self {
-        self.kerberos_principal = principal;
-        self.kerberos_keytab = keytab;
-        self.kerberos_cache = cache;
-        self
-    }
-
     /// Create the [Client] instance from the provided settings
     pub fn build(self) -> Result<Client> {
         let config = Configuration::new(self.config_dir, self.config)?;
@@ -1753,7 +1730,7 @@ mod test {
     fn test_explicit_kerberos_credentials_require_principal() {
         let error = ClientBuilder::new()
             .with_url("hdfs://127.0.0.1:9000")
-            .with_kerberos_credentials(None, Some("client.keytab".to_string()), None)
+            .with_kerberos_keytab("client.keytab")
             .build()
             .unwrap_err();
 

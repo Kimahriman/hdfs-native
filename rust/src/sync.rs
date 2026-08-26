@@ -80,25 +80,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Set all Kerberos credential fields at once.
-    ///
-    /// Prefer the individual `with_kerberos_*` methods when constructing a
-    /// client incrementally. An explicit principal is required with a keytab
-    /// or cache. A keytab without a cache uses a native `MEMORY:` cache. The
-    /// all-`None` form of the compatibility method preserves the
-    /// process-default GSSAPI behavior.
-    pub fn with_kerberos_credentials(
-        mut self,
-        principal: Option<String>,
-        keytab: Option<String>,
-        cache: Option<String>,
-    ) -> Self {
-        self.inner = self
-            .inner
-            .with_kerberos_credentials(principal, keytab, cache);
-        self
-    }
-
     /// Create the synchronous [`Client`] from the provided settings.
     pub fn build(self) -> Result<Client> {
         let rt = Arc::new(Runtime::new()?);
