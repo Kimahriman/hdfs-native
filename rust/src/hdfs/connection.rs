@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use chrono::{TimeDelta, prelude::*};
-use crc::{CRC_32_CKSUM, CRC_32_ISCSI, Crc, Table};
+use crc::{CRC_32_ISCSI, CRC_32_ISO_HDLC, Crc, Table};
 use log::{debug, warn};
 use once_cell::sync::Lazy;
 use prost::Message;
@@ -34,7 +34,7 @@ const DATA_TRANSFER_VERSION: u16 = 28;
 const MAX_PACKET_HEADER_SIZE: usize = 33;
 const DATANODE_CACHE_EXPIRY: TimeDelta = TimeDelta::seconds(3);
 
-const CRC32: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_CKSUM);
+const CRC32: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_ISO_HDLC);
 const CRC32C: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_ISCSI);
 
 pub(crate) static DATANODE_CACHE: Lazy<DatanodeConnectionCache> =
@@ -820,7 +820,9 @@ mod test {
         security::user::UserInfo,
     };
 
-    use super::{AlignmentContext, RpcConnection, datanode_url};
+    use super::{AlignmentContext, CRC32, ReadPacket, RpcConnection, datanode_url};
+    use crate::HdfsError;
+    use bytes::{BufMut, Bytes, BytesMut};
 
     #[test]
     fn test_max_packet_header_size() {
@@ -932,5 +934,72 @@ mod test {
         let user_info = context.user_info.unwrap();
         assert_eq!(user_info.real_user.as_deref(), Some("real-user"));
         assert_eq!(user_info.effective_user.as_deref(), Some("alice"));
+    }
+
+    fn read_packet(data: &'static [u8], checksums: &[u32]) -> ReadPacket {
+        let mut checksum_bytes = BytesMut::new();
+        for checksum in checksums {
+            checksum_bytes.put_u32(*checksum);
+        }
+        ReadPacket::new(
+            hdfs::PacketHeaderProto::default(),
+            checksum_bytes.freeze(),
+            Bytes::from_static(data),
+        )
+    }
+
+    fn checksum_info(
+        checksum_type: hdfs::ChecksumTypeProto,
+        bytes_per_checksum: u32,
+    ) -> Option<hdfs::ReadOpChecksumInfoProto> {
+        Some(hdfs::ReadOpChecksumInfoProto {
+            checksum: hdfs::ChecksumProto {
+                r#type: checksum_type as i32,
+                bytes_per_checksum,
+            },
+            chunk_offset: 0,
+        })
+    }
+
+    #[test]
+    fn test_crc32_verification() {
+        // 0xCBF43926 is the java.util.zip.CRC32 value Hadoop stores for "123456789"
+        let info = checksum_info(hdfs::ChecksumTypeProto::ChecksumCrc32, 512);
+        let data = read_packet(b"123456789", &[0xCBF43926])
+            .get_data(&info)
+            .unwrap();
+        assert_eq!(data, Bytes::from_static(b"123456789"));
+    }
+
+    #[test]
+    fn test_crc32c_verification() {
+        let info = checksum_info(hdfs::ChecksumTypeProto::ChecksumCrc32c, 512);
+        let data = read_packet(b"123456789", &[0xE3069283])
+            .get_data(&info)
+            .unwrap();
+        assert_eq!(data, Bytes::from_static(b"123456789"));
+    }
+
+    #[test]
+    fn test_crc32_multiple_chunks() {
+        let info = checksum_info(hdfs::ChecksumTypeProto::ChecksumCrc32, 4);
+        let checksums = [
+            CRC32.checksum(b"1234"),
+            CRC32.checksum(b"5678"),
+            CRC32.checksum(b"9"),
+        ];
+        let data = read_packet(b"123456789", &checksums)
+            .get_data(&info)
+            .unwrap();
+        assert_eq!(data, Bytes::from_static(b"123456789"));
+    }
+
+    #[test]
+    fn test_checksum_mismatch() {
+        let info = checksum_info(hdfs::ChecksumTypeProto::ChecksumCrc32c, 512);
+        let err = read_packet(b"123456789", &[0xE3069284])
+            .get_data(&info)
+            .unwrap_err();
+        assert!(matches!(err, HdfsError::ChecksumError));
     }
 }

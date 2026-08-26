@@ -54,6 +54,9 @@ public class Main {
         if (flags.contains("trash")) {
             conf.set(FS_TRASH_INTERVAL_KEY, "60");
         }
+        if (flags.contains("crc32")) {
+            conf.set(DFS_CHECKSUM_TYPE_KEY, "CRC32");
+        }
 
         if (flags.contains("security")) {
             kdc = new MiniKdc(MiniKdc.createConf(), new File("target/test/kdc"));
@@ -173,6 +176,15 @@ public class Main {
                 fs.setErasureCodingPolicy(new Path("/ec-3-2"), "RS-3-2-1024k");
                 fs.setErasureCodingPolicy(new Path("/ec-6-3"), "RS-6-3-1024k");
                 fs.setErasureCodingPolicy(new Path("/ec-10-4"), "RS-10-4-1024k");
+            }
+
+            if (flags.contains("crc32")) {
+                DistributedFileSystem fs = dfs.getFileSystem(activeNamenode);
+                try (FSDataOutputStream out = fs.create(new Path("/testfile-crc32"))) {
+                    for (int i = 0; i < 1024; i++) {
+                        out.writeInt(i);
+                    }
+                }
             }
 
             if (flags.contains("kms")) {
