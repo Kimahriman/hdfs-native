@@ -134,8 +134,19 @@ class Client:
         url: Optional[str] = None,
         config: Optional[Dict[str, str]] = None,
         config_dir: Optional[str] = None,
+        *,
+        kerberos_principal: Optional[str] = None,
+        kerberos_keytab: Optional[str] = None,
+        kerberos_cache: Optional[str] = None,
     ):
-        self.inner = RawClient(url, config, config_dir)
+        self.inner = RawClient(
+            url,
+            config,
+            config_dir,
+            kerberos_principal,
+            kerberos_keytab,
+            kerberos_cache,
+        )
 
     def get_file_info(self, path: str) -> FileStatus:
         """Gets the file status for the file at `path`"""
@@ -373,8 +384,19 @@ class AsyncClient:
         url: Optional[str] = None,
         config: Optional[Dict[str, str]] = None,
         config_dir: Optional[str] = None,
+        *,
+        kerberos_principal: Optional[str] = None,
+        kerberos_keytab: Optional[str] = None,
+        kerberos_cache: Optional[str] = None,
     ):
-        self.inner = AsyncRawClient(url, config, config_dir)
+        self.inner = AsyncRawClient(
+            url,
+            config,
+            config_dir,
+            kerberos_principal,
+            kerberos_keytab,
+            kerberos_cache,
+        )
 
     async def get_file_info(self, path: str) -> FileStatus:
         """Gets the file status for the file at `path`"""

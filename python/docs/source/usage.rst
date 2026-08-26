@@ -21,6 +21,29 @@ Simply create a :py:class:`Client <hdfs_native.Client>`.
 
 See :py:class:`Client <hdfs_native.Client>` for supported methods on a client.
 
+Kerberos Credentials
+~~~~~~~~~~~~~~~~~~~~
+
+Pass explicit Kerberos credentials to either client class using keyword
+arguments. A principal is required when a keytab or credential cache is
+provided; a keytab without an explicit cache uses a native in-memory cache.
+
+.. code-block:: python
+
+    from hdfs_native import AsyncClient, Client
+
+    client = Client(
+        "hdfs://namenode.example.com:9000",
+        kerberos_principal="client@EXAMPLE.COM",
+        kerberos_keytab="/run/secrets/client.keytab",
+    )
+
+    cached_client = AsyncClient(
+        "hdfs://namenode.example.com:9000",
+        kerberos_principal="client@EXAMPLE.COM",
+        kerberos_cache="FILE:/run/krb5/client.ccache",
+    )
+
 Common Operations
 ~~~~~~~~~~~~~~~~~
 

@@ -101,6 +101,9 @@ class RawClient:
         url: Optional[str],
         config: Optional[Dict[str, str]],
         config_dir: Optional[str],
+        kerberos_principal: Optional[str] = None,
+        kerberos_keytab: Optional[str] = None,
+        kerberos_cache: Optional[str] = None,
     ) -> None: ...
     def get_file_info(self, path: str) -> FileStatus: ...
     def list_status(self, path: str, recursive: bool) -> Iterator[FileStatus]: ...
@@ -164,6 +167,9 @@ class AsyncRawClient:
         url: Optional[str],
         config: Optional[Dict[str, str]],
         config_dir: Optional[str],
+        kerberos_principal: Optional[str] = None,
+        kerberos_keytab: Optional[str] = None,
+        kerberos_cache: Optional[str] = None,
     ) -> None: ...
     async def get_file_info(self, path: str) -> FileStatus: ...
     def list_status(self, path: str, recursive: bool) -> AsyncIterator[FileStatus]: ...

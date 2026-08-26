@@ -400,11 +400,14 @@ struct RawClient {
 #[pymethods]
 impl RawClient {
     #[new]
-    #[pyo3(signature = (url, config, config_dir))]
+    #[pyo3(signature = (url, config, config_dir, kerberos_principal=None, kerberos_keytab=None, kerberos_cache=None))]
     pub fn new(
         url: Option<&str>,
         config: Option<HashMap<String, String>>,
         config_dir: Option<&str>,
+        kerberos_principal: Option<&str>,
+        kerberos_keytab: Option<&str>,
+        kerberos_cache: Option<&str>,
     ) -> PyResult<Self> {
         // Initialize logging, ignore errors if this is called multiple times
         let _ = env_logger::try_init();
@@ -419,6 +422,18 @@ impl RawClient {
 
         if let Some(config_dir) = config_dir {
             builder = builder.with_config_dir(config_dir);
+        }
+
+        if let Some(principal) = kerberos_principal {
+            builder = builder.with_kerberos_principal(principal);
+        }
+
+        if let Some(keytab) = kerberos_keytab {
+            builder = builder.with_kerberos_keytab(keytab);
+        }
+
+        if let Some(cache) = kerberos_cache {
+            builder = builder.with_kerberos_cache(cache);
         }
 
         let inner = builder.build().map_err(PythonHdfsError::from)?;
@@ -679,11 +694,14 @@ struct AsyncRawClient {
 #[pymethods]
 impl AsyncRawClient {
     #[new]
-    #[pyo3(signature = (url, config, config_dir))]
+    #[pyo3(signature = (url, config, config_dir, kerberos_principal=None, kerberos_keytab=None, kerberos_cache=None))]
     pub fn new(
         url: Option<&str>,
         config: Option<HashMap<String, String>>,
         config_dir: Option<&str>,
+        kerberos_principal: Option<&str>,
+        kerberos_keytab: Option<&str>,
+        kerberos_cache: Option<&str>,
     ) -> PyResult<Self> {
         // Initialize logging, ignore errors if this is called multiple times
         let _ = env_logger::try_init();
@@ -698,6 +716,18 @@ impl AsyncRawClient {
 
         if let Some(config_dir) = config_dir {
             builder = builder.with_config_dir(config_dir);
+        }
+
+        if let Some(principal) = kerberos_principal {
+            builder = builder.with_kerberos_principal(principal);
+        }
+
+        if let Some(keytab) = kerberos_keytab {
+            builder = builder.with_kerberos_keytab(keytab);
+        }
+
+        if let Some(cache) = kerberos_cache {
+            builder = builder.with_kerberos_cache(cache);
         }
 
         let inner = builder.build().map_err(PythonHdfsError::from)?;
