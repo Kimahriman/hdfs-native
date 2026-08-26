@@ -21,6 +21,7 @@ pub enum DfsFeatures {
     RBF,
     Trash,
     Kms,
+    Crc32,
 }
 
 impl DfsFeatures {
@@ -38,6 +39,7 @@ impl DfsFeatures {
             DfsFeatures::RBF => "rbf",
             DfsFeatures::Trash => "trash",
             DfsFeatures::Kms => "kms",
+            DfsFeatures::Crc32 => "crc32",
         }
     }
 
@@ -50,6 +52,7 @@ impl DfsFeatures {
             "token" => Some(DfsFeatures::Token),
             "trash" => Some(DfsFeatures::Trash),
             "kms" => Some(DfsFeatures::Kms),
+            "crc32" => Some(DfsFeatures::Crc32),
             _ => None,
         }
     }
