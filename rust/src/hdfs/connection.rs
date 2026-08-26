@@ -400,6 +400,14 @@ impl RpcListener {
 
         debug!("RPC header response: {:?}", rpc_response);
 
+        #[cfg(feature = "integration-test")]
+        if crate::test::NAMENODE_RESPONSE_FAULT_INJECTOR.swap(false, Ordering::SeqCst) {
+            return Err(HdfsError::IOError(std::io::Error::new(
+                ErrorKind::ConnectionAborted,
+                "Injected NameNode response failure",
+            )));
+        }
+
         let call_id = rpc_response.call_id as i32;
 
         let call = self
