@@ -73,7 +73,7 @@ pub(crate) async fn negotiate_sasl_session(
     service: &str,
     config: &Configuration,
     effective_user: Option<String>,
-    kerberos_credentials: Option<&crate::security::ResolvedKerberosCredentials>,
+    auth: Option<std::sync::Arc<crate::security::ClientAuth>>,
 ) -> Result<(UserInfo, SaslReader, SaslWriter)> {
     let (reader, writer) = stream.into_split();
     let mut reader = SaslReader::new(reader);
@@ -102,7 +102,7 @@ pub(crate) async fn negotiate_sasl_session(
                     &message.auths,
                     service,
                     effective_user.clone(),
-                    kerberos_credentials,
+                    auth.clone(),
                 )?;
                 session = selected_session;
 
@@ -187,7 +187,7 @@ fn select_method(
     auths: &[SaslAuth],
     service: &str,
     effective_user: Option<String>,
-    kerberos_credentials: Option<&crate::security::ResolvedKerberosCredentials>,
+    client_auth: Option<std::sync::Arc<crate::security::ClientAuth>>,
 ) -> Result<(SaslAuth, Option<Box<dyn SaslSession>>)> {
     let user = User::get();
     for auth in auths.iter() {
@@ -203,11 +203,11 @@ fn select_method(
                     auth.protocol(),
                     auth.server_id(),
                     effective_user,
-                    kerberos_credentials,
+                    client_auth.clone(),
                 )?;
                 return Ok((auth.clone(), Some(Box::new(session))));
             }
-            (Some(AuthMethod::Token), Some(token)) if kerberos_credentials.is_none() => {
+            (Some(AuthMethod::Token), Some(token)) if client_auth.is_none() => {
                 let session = DigestSaslSession::from_token(
                     auth.protocol().to_string(),
                     auth.server_id().to_string(),

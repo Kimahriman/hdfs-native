@@ -46,6 +46,7 @@ use url::Url;
 use crate::common::config::{Configuration, HADOOP_SECURITY_KEY_PROVIDER_PATH};
 use crate::hdfs::crypto::DataEncryptionKey;
 use crate::proto::hdfs::FileEncryptionInfoProto;
+use crate::security::ClientAuth;
 use crate::security::gssapi::SpnegoSession;
 use crate::{HdfsError, Result};
 
@@ -63,6 +64,7 @@ pub(crate) struct KmsClient {
     /// is cached (KMS simple-auth mode). Also the renewer requested when we
     /// fetch a delegation token under Kerberos.
     user: String,
+    auth: Option<Arc<ClientAuth>>,
     /// Cached delegation token. `None` until the first time a request is
     /// rejected with 401 (Kerberos KMS) and then populated for the lifetime of
     /// the client. The mutex serialises concurrent first-time fetches.
@@ -76,6 +78,7 @@ impl KmsClient {
         config: &Configuration,
         server_default_uri: Option<&str>,
         user: String,
+        auth: Option<Arc<ClientAuth>>,
     ) -> Result<Option<Arc<Self>>> {
         let raw = config
             .get(HADOOP_SECURITY_KEY_PROVIDER_PATH)
@@ -105,6 +108,7 @@ impl KmsClient {
             http,
             next: AtomicUsize::new(0),
             user,
+            auth,
             delegation_token: tokio::sync::Mutex::new(None),
         })))
     }
@@ -276,7 +280,7 @@ impl KmsClient {
     /// Drive a SPNEGO challenge/response handshake against a `GET` endpoint,
     /// returning the final non-401 response.
     async fn spnego_get(&self, url: &Url, host: &str) -> Result<reqwest::Response> {
-        let mut session = SpnegoSession::new(SPNEGO_SERVICE, host)?;
+        let mut session = SpnegoSession::new(SPNEGO_SERVICE, host, self.auth.clone())?;
         let mut server_token: Option<Vec<u8>> = None;
 
         // Bound the loop so a misbehaving server can't spin forever.
@@ -565,7 +569,7 @@ mod tests {
     #[test]
     fn from_config_returns_none_when_unset() {
         let cfg = config_with(HashMap::new());
-        let client = KmsClient::from_config(&cfg, None, "testuser".to_string()).unwrap();
+        let client = KmsClient::from_config(&cfg, None, "testuser".to_string(), None).unwrap();
         assert!(client.is_none());
     }
 
@@ -577,7 +581,7 @@ mod tests {
             "kms://http@kms.example.com:9292/kms".to_string(),
         );
         let cfg = config_with(map);
-        let client = KmsClient::from_config(&cfg, None, "testuser".to_string())
+        let client = KmsClient::from_config(&cfg, None, "testuser".to_string(), None)
             .unwrap()
             .unwrap();
         assert_eq!(client.endpoints.len(), 1);
@@ -590,6 +594,7 @@ mod tests {
             &cfg,
             Some("kms://http@kms:9292/kms"),
             "testuser".to_string(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -627,7 +632,7 @@ mod tests {
         let mut map = HashMap::new();
         map.insert(HADOOP_SECURITY_KEY_PROVIDER_PATH.to_string(), uri);
         let cfg = config_with(map);
-        let client = KmsClient::from_config(&cfg, None, "testuser".to_string())
+        let client = KmsClient::from_config(&cfg, None, "testuser".to_string(), None)
             .unwrap()
             .unwrap();
 
@@ -669,6 +674,7 @@ mod tests {
                 .unwrap(),
             next: AtomicUsize::new(0),
             user: "testuser".to_string(),
+            auth: None,
             delegation_token: tokio::sync::Mutex::new(None),
         };
 
@@ -687,7 +693,7 @@ mod tests {
         let uri = format!("kms://http@{}/kms", server.address());
         let mut map = HashMap::new();
         map.insert(HADOOP_SECURITY_KEY_PROVIDER_PATH.to_string(), uri);
-        let client = KmsClient::from_config(&config_with(map), None, "testuser".to_string())
+        let client = KmsClient::from_config(&config_with(map), None, "testuser".to_string(), None)
             .unwrap()
             .unwrap();
 
@@ -717,6 +723,7 @@ mod tests {
                 .unwrap(),
             next: AtomicUsize::new(0),
             user: "testuser".to_string(),
+            auth: None,
             delegation_token: tokio::sync::Mutex::new(Some("deadbeef".to_string())),
         };
 
@@ -760,7 +767,7 @@ mod tests {
         let uri = format!("kms://http@{}/kms", server.address());
         let mut map = HashMap::new();
         map.insert(HADOOP_SECURITY_KEY_PROVIDER_PATH.to_string(), uri);
-        let client = KmsClient::from_config(&config_with(map), None, "testuser".to_string())
+        let client = KmsClient::from_config(&config_with(map), None, "testuser".to_string(), None)
             .unwrap()
             .unwrap();
 
@@ -788,7 +795,7 @@ mod tests {
         let uri = format!("kms://http@{}/kms", server.address());
         let mut map = HashMap::new();
         map.insert(HADOOP_SECURITY_KEY_PROVIDER_PATH.to_string(), uri);
-        let client = KmsClient::from_config(&config_with(map), None, "testuser".to_string())
+        let client = KmsClient::from_config(&config_with(map), None, "testuser".to_string(), None)
             .unwrap()
             .unwrap();
 
