@@ -10,12 +10,9 @@ pub const GSS_C_ANON_FLAG: u32 = 64;
 pub const GSS_C_PROT_READY_FLAG: u32 = 128;
 pub const GSS_C_TRANS_FLAG: u32 = 256;
 pub const GSS_C_DELEG_POLICY_FLAG: u32 = 32768;
-pub const GSS_C_NO_UI_FLAG: u32 = 2147483648;
 pub const GSS_C_BOTH: u32 = 0;
 pub const GSS_C_INITIATE: u32 = 1;
 pub const GSS_C_ACCEPT: u32 = 2;
-pub const GSS_C_OPTION_MASK: u32 = 65535;
-pub const GSS_C_CRED_NO_UI: u32 = 65536;
 pub const GSS_C_GSS_CODE: u32 = 1;
 pub const GSS_C_MECH_CODE: u32 = 2;
 pub const GSS_C_AF_UNSPEC: u32 = 0;
@@ -38,6 +35,7 @@ pub const GSS_C_AF_APPLETALK: u32 = 16;
 pub const GSS_C_AF_BSC: u32 = 17;
 pub const GSS_C_AF_DSS: u32 = 18;
 pub const GSS_C_AF_OSI: u32 = 19;
+pub const GSS_C_AF_NETBIOS: u32 = 20;
 pub const GSS_C_AF_X25: u32 = 21;
 pub const GSS_C_AF_NULLADDR: u32 = 255;
 pub const GSS_C_QOP_DEFAULT: u32 = 0;
@@ -50,23 +48,40 @@ pub const GSS_S_DUPLICATE_TOKEN: u32 = 2;
 pub const GSS_S_OLD_TOKEN: u32 = 4;
 pub const GSS_S_UNSEQ_TOKEN: u32 = 8;
 pub const GSS_S_GAP_TOKEN: u32 = 16;
-pub const GSS_KRB5_UI_ALLOW: u32 = 1;
-pub const GSS_KRB5_UI_DENY: u32 = 2;
-pub const GSS_KRB5_UI_PROBE: u32 = 3;
+pub const GSS_C_PRF_KEY_FULL: u32 = 0;
+pub const GSS_C_PRF_KEY_PARTIAL: u32 = 1;
+pub const GSS_C_DCE_STYLE: u32 = 4096;
+pub const GSS_C_IDENTIFY_FLAG: u32 = 8192;
+pub const GSS_C_EXTENDED_ERROR_FLAG: u32 = 16384;
+pub const GSS_IOV_BUFFER_TYPE_EMPTY: u32 = 0;
+pub const GSS_IOV_BUFFER_TYPE_DATA: u32 = 1;
+pub const GSS_IOV_BUFFER_TYPE_HEADER: u32 = 2;
+pub const GSS_IOV_BUFFER_TYPE_MECH_PARAMS: u32 = 3;
+pub const GSS_IOV_BUFFER_TYPE_TRAILER: u32 = 7;
+pub const GSS_IOV_BUFFER_TYPE_PADDING: u32 = 9;
+pub const GSS_IOV_BUFFER_TYPE_STREAM: u32 = 10;
+pub const GSS_IOV_BUFFER_TYPE_SIGN_ONLY: u32 = 11;
+pub const GSS_IOV_BUFFER_TYPE_MIC_TOKEN: u32 = 12;
+pub const GSS_IOV_BUFFER_FLAG_MASK: u32 = 4294901760;
+pub const GSS_IOV_BUFFER_FLAG_ALLOCATE: u32 = 65536;
+pub const GSS_IOV_BUFFER_FLAG_ALLOCATED: u32 = 131072;
+pub const GSS_C_CHANNEL_BOUND_FLAG: u32 = 2048;
+pub type __uid_t = ::std::os::raw::c_uint;
+pub type uid_t = __uid_t;
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug)]
 pub struct gss_name_struct {
     _unused: [u8; 0],
 }
 pub type gss_name_t = *mut gss_name_struct;
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug)]
 pub struct gss_cred_id_struct {
     _unused: [u8; 0],
 }
 pub type gss_cred_id_t = *mut gss_cred_id_struct;
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug)]
 pub struct gss_ctx_id_struct {
     _unused: [u8; 0],
 }
@@ -74,22 +89,6 @@ pub type gss_ctx_id_t = *mut gss_ctx_id_struct;
 pub type gss_uint32 = u32;
 pub type gss_int32 = i32;
 pub type OM_uint32 = gss_uint32;
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct gss_key_value_element_struct {
-    pub key: *const ::std::os::raw::c_char,
-    pub value: *const ::std::os::raw::c_char,
-}
-pub type gss_key_value_element_desc = gss_key_value_element_struct;
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct gss_key_value_set_struct {
-    pub count: OM_uint32,
-    pub elements: *mut gss_key_value_element_desc,
-}
-pub type gss_key_value_set_desc = gss_key_value_set_struct;
-pub type gss_key_value_set_t = *mut gss_key_value_set_struct;
-pub type gss_const_key_value_set_t = *const gss_key_value_set_struct;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct gss_OID_desc_struct {
@@ -126,16 +125,91 @@ pub struct gss_channel_bindings_struct {
 pub type gss_channel_bindings_t = *mut gss_channel_bindings_struct;
 pub type gss_qop_t = OM_uint32;
 pub type gss_cred_usage_t = ::std::os::raw::c_int;
-pub type krb5_int32 = ::std::os::raw::c_int;
-pub type krb5_enctype = krb5_int32;
-pub type krb5_flags = krb5_int32;
+pub type gss_const_buffer_t = *const gss_buffer_desc;
+pub type gss_const_channel_bindings_t = *const gss_channel_bindings_struct;
+pub type gss_const_ctx_id_t = *const gss_ctx_id_struct;
+pub type gss_const_cred_id_t = *const gss_cred_id_struct;
+pub type gss_const_name_t = *const gss_name_struct;
+pub type gss_const_OID = *const gss_OID_desc;
+pub type gss_const_OID_set = *const gss_OID_set_desc;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct gss_buffer_set_desc_struct {
+    pub count: usize,
+    pub elements: *mut gss_buffer_desc,
+}
+pub type gss_buffer_set_desc = gss_buffer_set_desc_struct;
+pub type gss_buffer_set_t = *mut gss_buffer_set_desc_struct;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct gss_iov_buffer_desc_struct {
+    pub type_: OM_uint32,
+    pub buffer: gss_buffer_desc,
+}
+pub type gss_iov_buffer_desc = gss_iov_buffer_desc_struct;
+pub type gss_iov_buffer_t = *mut gss_iov_buffer_desc_struct;
+#[repr(C)]
+#[derive(Debug)]
+pub struct gss_any {
+    _unused: [u8; 0],
+}
+pub type gss_any_t = *mut gss_any;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct gss_key_value_element_struct {
+    pub key: *const ::std::os::raw::c_char,
+    pub value: *const ::std::os::raw::c_char,
+}
+pub type gss_key_value_element_desc = gss_key_value_element_struct;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct gss_key_value_set_struct {
+    pub count: OM_uint32,
+    pub elements: *mut gss_key_value_element_desc,
+}
+pub type gss_key_value_set_desc = gss_key_value_set_struct;
+pub type gss_const_key_value_set_t = *const gss_key_value_set_desc;
+pub type krb5_int32 = i32;
+pub type krb5_enctype = krb5_int32;
+pub type krb5_flags = krb5_int32;
+pub type krb5_error_code = krb5_int32;
+pub type krb5_magic = krb5_error_code;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _krb5_data {
+    pub magic: krb5_magic,
+    pub length: ::std::os::raw::c_uint,
+    pub data: *mut ::std::os::raw::c_char,
+}
+pub type krb5_data = _krb5_data;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct krb5_principal_data {
+    pub magic: krb5_magic,
+    pub realm: krb5_data,
+    pub data: *mut krb5_data,
+    pub length: krb5_int32,
+    pub type_: krb5_int32,
+}
+pub type krb5_principal = *mut krb5_principal_data;
+#[repr(C)]
+#[derive(Debug)]
 pub struct _krb5_ccache {
     _unused: [u8; 0],
 }
 pub type krb5_ccache = *mut _krb5_ccache;
-pub type gss_uint64 = u64;
+#[repr(C)]
+#[derive(Debug)]
+pub struct krb5_rc_st {
+    _unused: [u8; 0],
+}
+pub type krb5_rcache = *mut krb5_rc_st;
+#[repr(C)]
+#[derive(Debug)]
+pub struct _krb5_kt {
+    _unused: [u8; 0],
+}
+pub type krb5_keytab = *mut _krb5_kt;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct gss_krb5_lucid_key {
@@ -166,8 +240,8 @@ pub struct gss_krb5_lucid_context_v1 {
     pub version: OM_uint32,
     pub initiate: OM_uint32,
     pub endtime: OM_uint32,
-    pub send_seq: gss_uint64,
-    pub recv_seq: gss_uint64,
+    pub send_seq: u64,
+    pub recv_seq: u64,
     pub protocol: OM_uint32,
     pub rfc1964_kd: gss_krb5_rfc1964_keydata_t,
     pub cfx_kd: gss_krb5_cfx_keydata_t,
@@ -229,20 +303,6 @@ pub struct GSSAPI {
             arg6: *mut gss_cred_id_t,
             arg7: *mut gss_OID_set,
             arg8: *mut OM_uint32,
-        ) -> OM_uint32,
-        ::libloading::Error,
-    >,
-    pub gss_acquire_cred_from: Result<
-        unsafe extern "C" fn(
-            arg1: *mut OM_uint32,
-            arg2: gss_name_t,
-            arg3: OM_uint32,
-            arg4: gss_OID_set,
-            arg5: gss_cred_usage_t,
-            arg6: gss_const_key_value_set_t,
-            arg7: *mut gss_cred_id_t,
-            arg8: *mut gss_OID_set,
-            arg9: *mut OM_uint32,
         ) -> OM_uint32,
         ::libloading::Error,
     >,
@@ -441,6 +501,15 @@ pub struct GSSAPI {
         ) -> OM_uint32,
         ::libloading::Error,
     >,
+    pub gss_import_name_object: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: *mut ::std::os::raw::c_void,
+            arg3: gss_OID,
+            arg4: *mut gss_name_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
     pub gss_export_name_object: Result<
         unsafe extern "C" fn(
             arg1: *mut OM_uint32,
@@ -615,14 +684,543 @@ pub struct GSSAPI {
         ) -> OM_uint32,
         ::libloading::Error,
     >,
-    pub GSS_KRB5_NT_PRINCIPAL_NAME: Result<*mut *const gss_OID_desc, ::libloading::Error>,
-    pub gss_mech_krb5: Result<*mut *const gss_OID_desc, ::libloading::Error>,
-    pub gss_mech_krb5_old: Result<*mut *const gss_OID_desc, ::libloading::Error>,
-    pub gss_mech_set_krb5: Result<*mut *const gss_OID_set_desc, ::libloading::Error>,
-    pub gss_mech_set_krb5_old: Result<*mut *const gss_OID_set_desc, ::libloading::Error>,
-    pub gss_mech_set_krb5_both: Result<*mut *const gss_OID_set_desc, ::libloading::Error>,
-    pub gss_nt_krb5_name: Result<*mut *const gss_OID_desc, ::libloading::Error>,
-    pub gss_nt_krb5_principal: Result<*mut *const gss_OID_desc, ::libloading::Error>,
+    pub gss_pseudo_random: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_ctx_id_t,
+            arg3: ::std::os::raw::c_int,
+            arg4: gss_buffer_t,
+            arg5: isize,
+            arg6: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_store_cred: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_cred_id_t,
+            arg3: gss_cred_usage_t,
+            arg4: gss_OID,
+            arg5: OM_uint32,
+            arg6: OM_uint32,
+            arg7: *mut gss_OID_set,
+            arg8: *mut gss_cred_usage_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_set_neg_mechs: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_cred_id_t,
+            arg3: gss_OID_set,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_indicate_mechs_by_attrs: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_const_OID_set,
+            arg3: gss_const_OID_set,
+            arg4: gss_const_OID_set,
+            arg5: *mut gss_OID_set,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_inquire_attrs_for_mech: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_const_OID,
+            arg3: *mut gss_OID_set,
+            arg4: *mut gss_OID_set,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_display_mech_attr: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_const_OID,
+            arg3: gss_buffer_t,
+            arg4: gss_buffer_t,
+            arg5: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub GSS_C_MA_MECH_CONCRETE: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_MECH_PSEUDO: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_MECH_COMPOSITE: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_MECH_NEGO: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_MECH_GLUE: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_NOT_MECH: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_DEPRECATED: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_NOT_DFLT_MECH: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_ITOK_FRAMED: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_AUTH_INIT: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_AUTH_TARG: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_AUTH_INIT_INIT: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_AUTH_TARG_INIT: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_AUTH_INIT_ANON: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_AUTH_TARG_ANON: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_DELEG_CRED: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_INTEG_PROT: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_CONF_PROT: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_MIC: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_WRAP: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_PROT_READY: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_REPLAY_DET: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_OOS_DET: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_CBINDINGS: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_PFS: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_COMPRESS: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_MA_CTX_TRANS: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub gss_inquire_saslname_for_mech: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_OID,
+            arg3: gss_buffer_t,
+            arg4: gss_buffer_t,
+            arg5: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_inquire_mech_for_saslname: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_buffer_t,
+            arg3: *mut gss_OID,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_pname_to_uid: Result<
+        unsafe extern "C" fn(
+            minor: *mut OM_uint32,
+            name: gss_name_t,
+            mech_type: gss_OID,
+            uidOut: *mut uid_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_localname: Result<
+        unsafe extern "C" fn(
+            minor: *mut OM_uint32,
+            name: gss_name_t,
+            mech_type: gss_const_OID,
+            localname: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_userok: Result<
+        unsafe extern "C" fn(
+            name: gss_name_t,
+            username: *const ::std::os::raw::c_char,
+        ) -> ::std::os::raw::c_int,
+        ::libloading::Error,
+    >,
+    pub gss_authorize_localname: Result<
+        unsafe extern "C" fn(
+            minor: *mut OM_uint32,
+            name: gss_name_t,
+            user: gss_name_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_acquire_cred_with_password: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_name_t,
+            arg3: gss_buffer_t,
+            arg4: OM_uint32,
+            arg5: gss_OID_set,
+            arg6: gss_cred_usage_t,
+            arg7: *mut gss_cred_id_t,
+            arg8: *mut gss_OID_set,
+            arg9: *mut OM_uint32,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_add_cred_with_password: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_cred_id_t,
+            arg3: gss_name_t,
+            arg4: gss_OID,
+            arg5: gss_buffer_t,
+            arg6: gss_cred_usage_t,
+            arg7: OM_uint32,
+            arg8: OM_uint32,
+            arg9: *mut gss_cred_id_t,
+            arg10: *mut gss_OID_set,
+            arg11: *mut OM_uint32,
+            arg12: *mut OM_uint32,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_create_empty_buffer_set: Result<
+        unsafe extern "C" fn(arg1: *mut OM_uint32, arg2: *mut gss_buffer_set_t) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_add_buffer_set_member: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_buffer_t,
+            arg3: *mut gss_buffer_set_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_release_buffer_set: Result<
+        unsafe extern "C" fn(arg1: *mut OM_uint32, arg2: *mut gss_buffer_set_t) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_inquire_sec_context_by_oid: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_ctx_id_t,
+            arg3: gss_OID,
+            arg4: *mut gss_buffer_set_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_inquire_cred_by_oid: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_cred_id_t,
+            arg3: gss_OID,
+            arg4: *mut gss_buffer_set_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_set_sec_context_option: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: *mut gss_ctx_id_t,
+            arg3: gss_OID,
+            arg4: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_export_cred: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_cred_id_t,
+            arg3: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_import_cred: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_buffer_t,
+            arg3: *mut gss_cred_id_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_set_cred_option: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: *mut gss_cred_id_t,
+            arg3: gss_OID,
+            arg4: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_wrap_aead: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_ctx_id_t,
+            arg3: ::std::os::raw::c_int,
+            arg4: gss_qop_t,
+            arg5: gss_buffer_t,
+            arg6: gss_buffer_t,
+            arg7: *mut ::std::os::raw::c_int,
+            arg8: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_unwrap_aead: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_ctx_id_t,
+            arg3: gss_buffer_t,
+            arg4: gss_buffer_t,
+            arg5: gss_buffer_t,
+            arg6: *mut ::std::os::raw::c_int,
+            arg7: *mut gss_qop_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub GSS_C_INQ_SSPI_SESSION_KEY: Result<*mut gss_OID, ::libloading::Error>,
+    pub GSS_C_INQ_NEGOEX_KEY: Result<*mut gss_OID, ::libloading::Error>,
+    pub GSS_C_INQ_NEGOEX_VERIFY_KEY: Result<*mut gss_OID, ::libloading::Error>,
+    pub gss_complete_auth_token: Result<
+        unsafe extern "C" fn(
+            minor_status: *mut OM_uint32,
+            context_handle: gss_ctx_id_t,
+            input_message_buffer: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_wrap_iov: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_ctx_id_t,
+            arg3: ::std::os::raw::c_int,
+            arg4: gss_qop_t,
+            arg5: *mut ::std::os::raw::c_int,
+            arg6: *mut gss_iov_buffer_desc,
+            arg7: ::std::os::raw::c_int,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_unwrap_iov: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_ctx_id_t,
+            arg3: *mut ::std::os::raw::c_int,
+            arg4: *mut gss_qop_t,
+            arg5: *mut gss_iov_buffer_desc,
+            arg6: ::std::os::raw::c_int,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_wrap_iov_length: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_ctx_id_t,
+            arg3: ::std::os::raw::c_int,
+            arg4: gss_qop_t,
+            arg5: *mut ::std::os::raw::c_int,
+            arg6: *mut gss_iov_buffer_desc,
+            arg7: ::std::os::raw::c_int,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_get_mic_iov: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_ctx_id_t,
+            arg3: gss_qop_t,
+            arg4: *mut gss_iov_buffer_desc,
+            arg5: ::std::os::raw::c_int,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_get_mic_iov_length: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_ctx_id_t,
+            arg3: gss_qop_t,
+            arg4: *mut gss_iov_buffer_desc,
+            arg5: ::std::os::raw::c_int,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_verify_mic_iov: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_ctx_id_t,
+            arg3: *mut gss_qop_t,
+            arg4: *mut gss_iov_buffer_desc,
+            arg5: ::std::os::raw::c_int,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_release_iov_buffer: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: *mut gss_iov_buffer_desc,
+            arg3: ::std::os::raw::c_int,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_acquire_cred_impersonate_name: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_cred_id_t,
+            arg3: gss_name_t,
+            arg4: OM_uint32,
+            arg5: gss_OID_set,
+            arg6: gss_cred_usage_t,
+            arg7: *mut gss_cred_id_t,
+            arg8: *mut gss_OID_set,
+            arg9: *mut OM_uint32,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_add_cred_impersonate_name: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_cred_id_t,
+            arg3: gss_cred_id_t,
+            arg4: gss_name_t,
+            arg5: gss_OID,
+            arg6: gss_cred_usage_t,
+            arg7: OM_uint32,
+            arg8: OM_uint32,
+            arg9: *mut gss_cred_id_t,
+            arg10: *mut gss_OID_set,
+            arg11: *mut OM_uint32,
+            arg12: *mut OM_uint32,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub GSS_C_ATTR_LOCAL_LOGIN_USER: Result<*mut gss_buffer_t, ::libloading::Error>,
+    pub GSS_C_NT_COMPOSITE_EXPORT: Result<*mut gss_OID, ::libloading::Error>,
+    pub gss_display_name_ext: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_name_t,
+            arg3: gss_OID,
+            arg4: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_inquire_name: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_name_t,
+            arg3: *mut ::std::os::raw::c_int,
+            arg4: *mut gss_OID,
+            arg5: *mut gss_buffer_set_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_get_name_attribute: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_name_t,
+            arg3: gss_buffer_t,
+            arg4: *mut ::std::os::raw::c_int,
+            arg5: *mut ::std::os::raw::c_int,
+            arg6: gss_buffer_t,
+            arg7: gss_buffer_t,
+            arg8: *mut ::std::os::raw::c_int,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_set_name_attribute: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_name_t,
+            arg3: ::std::os::raw::c_int,
+            arg4: gss_buffer_t,
+            arg5: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_delete_name_attribute: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_name_t,
+            arg3: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_export_name_composite: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_name_t,
+            arg3: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_map_name_to_any: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_name_t,
+            arg3: ::std::os::raw::c_int,
+            arg4: gss_buffer_t,
+            arg5: *mut gss_any_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_release_any_name_mapping: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_name_t,
+            arg3: gss_buffer_t,
+            arg4: *mut gss_any_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_encapsulate_token: Result<
+        unsafe extern "C" fn(
+            arg1: gss_const_buffer_t,
+            arg2: gss_const_OID,
+            arg3: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_decapsulate_token: Result<
+        unsafe extern "C" fn(
+            arg1: gss_const_buffer_t,
+            arg2: gss_const_OID,
+            arg3: gss_buffer_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_oid_equal: Result<
+        unsafe extern "C" fn(arg1: gss_const_OID, arg2: gss_const_OID) -> ::std::os::raw::c_int,
+        ::libloading::Error,
+    >,
+    pub gss_acquire_cred_from: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_name_t,
+            arg3: OM_uint32,
+            arg4: gss_OID_set,
+            arg5: gss_cred_usage_t,
+            arg6: gss_const_key_value_set_t,
+            arg7: *mut gss_cred_id_t,
+            arg8: *mut gss_OID_set,
+            arg9: *mut OM_uint32,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_add_cred_from: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_cred_id_t,
+            arg3: gss_name_t,
+            arg4: gss_OID,
+            arg5: gss_cred_usage_t,
+            arg6: OM_uint32,
+            arg7: OM_uint32,
+            arg8: gss_const_key_value_set_t,
+            arg9: *mut gss_cred_id_t,
+            arg10: *mut gss_OID_set,
+            arg11: *mut OM_uint32,
+            arg12: *mut OM_uint32,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_store_cred_into: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_cred_id_t,
+            arg3: gss_cred_usage_t,
+            arg4: gss_OID,
+            arg5: OM_uint32,
+            arg6: OM_uint32,
+            arg7: gss_const_key_value_set_t,
+            arg8: *mut gss_OID_set,
+            arg9: *mut gss_cred_usage_t,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub GSS_C_MA_NEGOEX_AND_SPNEGO: Result<*mut gss_const_OID, ::libloading::Error>,
+    pub GSS_C_SEC_CONTEXT_SASL_SSF: Result<*mut gss_OID, ::libloading::Error>,
+    pub GSS_KRB5_NT_PRINCIPAL_NAME: Result<*mut gss_OID, ::libloading::Error>,
+    pub GSS_KRB5_NT_ENTERPRISE_NAME: Result<*mut gss_OID, ::libloading::Error>,
+    pub gss_mech_krb5: Result<*mut gss_OID, ::libloading::Error>,
+    pub gss_mech_krb5_old: Result<*mut gss_OID, ::libloading::Error>,
+    pub gss_mech_krb5_wrong: Result<*mut gss_OID, ::libloading::Error>,
+    pub gss_mech_iakerb: Result<*mut gss_OID, ::libloading::Error>,
+    pub gss_mech_set_krb5: Result<*mut gss_OID_set, ::libloading::Error>,
+    pub gss_mech_set_krb5_old: Result<*mut gss_OID_set, ::libloading::Error>,
+    pub gss_mech_set_krb5_both: Result<*mut gss_OID_set, ::libloading::Error>,
+    pub gss_nt_krb5_name: Result<*mut gss_OID, ::libloading::Error>,
+    pub gss_nt_krb5_principal: Result<*mut gss_OID, ::libloading::Error>,
+    pub GSS_KRB5_CRED_NO_CI_FLAGS_X: Result<*mut gss_OID, ::libloading::Error>,
+    pub GSS_KRB5_GET_CRED_IMPERSONATOR: Result<*mut gss_OID, ::libloading::Error>,
     pub gss_krb5_get_tkt_flags: Result<
         unsafe extern "C" fn(
             minor_status: *mut OM_uint32,
@@ -672,8 +1270,22 @@ pub struct GSSAPI {
         ) -> OM_uint32,
         ::libloading::Error,
     >,
-    pub gss_krb5_ui: Result<
-        unsafe extern "C" fn(arg1: *mut OM_uint32, arg2: OM_uint32) -> OM_uint32,
+    pub gss_krb5_set_cred_rcache: Result<
+        unsafe extern "C" fn(
+            minor_status: *mut OM_uint32,
+            cred: gss_cred_id_t,
+            rcache: krb5_rcache,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_krb5_import_cred: Result<
+        unsafe extern "C" fn(
+            minor_status: *mut OM_uint32,
+            id: krb5_ccache,
+            keytab_principal: krb5_principal,
+            keytab: krb5_keytab,
+            cred: *mut gss_cred_id_t,
+        ) -> OM_uint32,
         ::libloading::Error,
     >,
 }
@@ -713,9 +1325,6 @@ impl GSSAPI {
             .get::<*mut gss_OID>(b"GSS_C_NT_EXPORT_NAME\0")
             .map(|sym| *sym);
         let gss_acquire_cred = __library.get(b"gss_acquire_cred\0").map(|sym| *sym);
-        let gss_acquire_cred_from = __library
-            .get(b"gss_acquire_cred_from\0")
-            .map(|sym| *sym);
         let gss_release_cred = __library.get(b"gss_release_cred\0").map(|sym| *sym);
         let gss_init_sec_context = __library.get(b"gss_init_sec_context\0").map(|sym| *sym);
         let gss_accept_sec_context = __library.get(b"gss_accept_sec_context\0").map(|sym| *sym);
@@ -739,6 +1348,7 @@ impl GSSAPI {
         let gss_inquire_cred = __library.get(b"gss_inquire_cred\0").map(|sym| *sym);
         let gss_inquire_context = __library.get(b"gss_inquire_context\0").map(|sym| *sym);
         let gss_wrap_size_limit = __library.get(b"gss_wrap_size_limit\0").map(|sym| *sym);
+        let gss_import_name_object = __library.get(b"gss_import_name_object\0").map(|sym| *sym);
         let gss_export_name_object = __library.get(b"gss_export_name_object\0").map(|sym| *sym);
         let gss_add_cred = __library.get(b"gss_add_cred\0").map(|sym| *sym);
         let gss_inquire_cred_by_mech = __library.get(b"gss_inquire_cred_by_mech\0").map(|sym| *sym);
@@ -763,29 +1373,225 @@ impl GSSAPI {
         let gss_export_name = __library.get(b"gss_export_name\0").map(|sym| *sym);
         let gss_duplicate_name = __library.get(b"gss_duplicate_name\0").map(|sym| *sym);
         let gss_canonicalize_name = __library.get(b"gss_canonicalize_name\0").map(|sym| *sym);
+        let gss_pseudo_random = __library.get(b"gss_pseudo_random\0").map(|sym| *sym);
+        let gss_store_cred = __library.get(b"gss_store_cred\0").map(|sym| *sym);
+        let gss_set_neg_mechs = __library.get(b"gss_set_neg_mechs\0").map(|sym| *sym);
+        let gss_indicate_mechs_by_attrs = __library
+            .get(b"gss_indicate_mechs_by_attrs\0")
+            .map(|sym| *sym);
+        let gss_inquire_attrs_for_mech = __library
+            .get(b"gss_inquire_attrs_for_mech\0")
+            .map(|sym| *sym);
+        let gss_display_mech_attr = __library.get(b"gss_display_mech_attr\0").map(|sym| *sym);
+        let GSS_C_MA_MECH_CONCRETE = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_MECH_CONCRETE\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_MECH_PSEUDO = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_MECH_PSEUDO\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_MECH_COMPOSITE = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_MECH_COMPOSITE\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_MECH_NEGO = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_MECH_NEGO\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_MECH_GLUE = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_MECH_GLUE\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_NOT_MECH = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_NOT_MECH\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_DEPRECATED = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_DEPRECATED\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_NOT_DFLT_MECH = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_NOT_DFLT_MECH\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_ITOK_FRAMED = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_ITOK_FRAMED\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_AUTH_INIT = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_AUTH_INIT\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_AUTH_TARG = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_AUTH_TARG\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_AUTH_INIT_INIT = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_AUTH_INIT_INIT\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_AUTH_TARG_INIT = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_AUTH_TARG_INIT\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_AUTH_INIT_ANON = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_AUTH_INIT_ANON\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_AUTH_TARG_ANON = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_AUTH_TARG_ANON\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_DELEG_CRED = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_DELEG_CRED\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_INTEG_PROT = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_INTEG_PROT\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_CONF_PROT = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_CONF_PROT\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_MIC = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_MIC\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_WRAP = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_WRAP\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_PROT_READY = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_PROT_READY\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_REPLAY_DET = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_REPLAY_DET\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_OOS_DET = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_OOS_DET\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_CBINDINGS = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_CBINDINGS\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_PFS = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_PFS\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_COMPRESS = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_COMPRESS\0")
+            .map(|sym| *sym);
+        let GSS_C_MA_CTX_TRANS = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_CTX_TRANS\0")
+            .map(|sym| *sym);
+        let gss_inquire_saslname_for_mech = __library
+            .get(b"gss_inquire_saslname_for_mech\0")
+            .map(|sym| *sym);
+        let gss_inquire_mech_for_saslname = __library
+            .get(b"gss_inquire_mech_for_saslname\0")
+            .map(|sym| *sym);
+        let gss_pname_to_uid = __library.get(b"gss_pname_to_uid\0").map(|sym| *sym);
+        let gss_localname = __library.get(b"gss_localname\0").map(|sym| *sym);
+        let gss_userok = __library.get(b"gss_userok\0").map(|sym| *sym);
+        let gss_authorize_localname = __library.get(b"gss_authorize_localname\0").map(|sym| *sym);
+        let gss_acquire_cred_with_password = __library
+            .get(b"gss_acquire_cred_with_password\0")
+            .map(|sym| *sym);
+        let gss_add_cred_with_password = __library
+            .get(b"gss_add_cred_with_password\0")
+            .map(|sym| *sym);
+        let gss_create_empty_buffer_set = __library
+            .get(b"gss_create_empty_buffer_set\0")
+            .map(|sym| *sym);
+        let gss_add_buffer_set_member = __library
+            .get(b"gss_add_buffer_set_member\0")
+            .map(|sym| *sym);
+        let gss_release_buffer_set = __library.get(b"gss_release_buffer_set\0").map(|sym| *sym);
+        let gss_inquire_sec_context_by_oid = __library
+            .get(b"gss_inquire_sec_context_by_oid\0")
+            .map(|sym| *sym);
+        let gss_inquire_cred_by_oid = __library.get(b"gss_inquire_cred_by_oid\0").map(|sym| *sym);
+        let gss_set_sec_context_option = __library
+            .get(b"gss_set_sec_context_option\0")
+            .map(|sym| *sym);
+        let gss_export_cred = __library.get(b"gss_export_cred\0").map(|sym| *sym);
+        let gss_import_cred = __library.get(b"gss_import_cred\0").map(|sym| *sym);
+        let gss_set_cred_option = __library.get(b"gss_set_cred_option\0").map(|sym| *sym);
+        let gss_wrap_aead = __library.get(b"gss_wrap_aead\0").map(|sym| *sym);
+        let gss_unwrap_aead = __library.get(b"gss_unwrap_aead\0").map(|sym| *sym);
+        let GSS_C_INQ_SSPI_SESSION_KEY = __library
+            .get::<*mut gss_OID>(b"GSS_C_INQ_SSPI_SESSION_KEY\0")
+            .map(|sym| *sym);
+        let GSS_C_INQ_NEGOEX_KEY = __library
+            .get::<*mut gss_OID>(b"GSS_C_INQ_NEGOEX_KEY\0")
+            .map(|sym| *sym);
+        let GSS_C_INQ_NEGOEX_VERIFY_KEY = __library
+            .get::<*mut gss_OID>(b"GSS_C_INQ_NEGOEX_VERIFY_KEY\0")
+            .map(|sym| *sym);
+        let gss_complete_auth_token = __library.get(b"gss_complete_auth_token\0").map(|sym| *sym);
+        let gss_wrap_iov = __library.get(b"gss_wrap_iov\0").map(|sym| *sym);
+        let gss_unwrap_iov = __library.get(b"gss_unwrap_iov\0").map(|sym| *sym);
+        let gss_wrap_iov_length = __library.get(b"gss_wrap_iov_length\0").map(|sym| *sym);
+        let gss_get_mic_iov = __library.get(b"gss_get_mic_iov\0").map(|sym| *sym);
+        let gss_get_mic_iov_length = __library.get(b"gss_get_mic_iov_length\0").map(|sym| *sym);
+        let gss_verify_mic_iov = __library.get(b"gss_verify_mic_iov\0").map(|sym| *sym);
+        let gss_release_iov_buffer = __library.get(b"gss_release_iov_buffer\0").map(|sym| *sym);
+        let gss_acquire_cred_impersonate_name = __library
+            .get(b"gss_acquire_cred_impersonate_name\0")
+            .map(|sym| *sym);
+        let gss_add_cred_impersonate_name = __library
+            .get(b"gss_add_cred_impersonate_name\0")
+            .map(|sym| *sym);
+        let GSS_C_ATTR_LOCAL_LOGIN_USER = __library
+            .get::<*mut gss_buffer_t>(b"GSS_C_ATTR_LOCAL_LOGIN_USER\0")
+            .map(|sym| *sym);
+        let GSS_C_NT_COMPOSITE_EXPORT = __library
+            .get::<*mut gss_OID>(b"GSS_C_NT_COMPOSITE_EXPORT\0")
+            .map(|sym| *sym);
+        let gss_display_name_ext = __library.get(b"gss_display_name_ext\0").map(|sym| *sym);
+        let gss_inquire_name = __library.get(b"gss_inquire_name\0").map(|sym| *sym);
+        let gss_get_name_attribute = __library.get(b"gss_get_name_attribute\0").map(|sym| *sym);
+        let gss_set_name_attribute = __library.get(b"gss_set_name_attribute\0").map(|sym| *sym);
+        let gss_delete_name_attribute = __library
+            .get(b"gss_delete_name_attribute\0")
+            .map(|sym| *sym);
+        let gss_export_name_composite = __library
+            .get(b"gss_export_name_composite\0")
+            .map(|sym| *sym);
+        let gss_map_name_to_any = __library.get(b"gss_map_name_to_any\0").map(|sym| *sym);
+        let gss_release_any_name_mapping = __library
+            .get(b"gss_release_any_name_mapping\0")
+            .map(|sym| *sym);
+        let gss_encapsulate_token = __library.get(b"gss_encapsulate_token\0").map(|sym| *sym);
+        let gss_decapsulate_token = __library.get(b"gss_decapsulate_token\0").map(|sym| *sym);
+        let gss_oid_equal = __library.get(b"gss_oid_equal\0").map(|sym| *sym);
+        let gss_acquire_cred_from = __library.get(b"gss_acquire_cred_from\0").map(|sym| *sym);
+        let gss_add_cred_from = __library.get(b"gss_add_cred_from\0").map(|sym| *sym);
+        let gss_store_cred_into = __library.get(b"gss_store_cred_into\0").map(|sym| *sym);
+        let GSS_C_MA_NEGOEX_AND_SPNEGO = __library
+            .get::<*mut gss_const_OID>(b"GSS_C_MA_NEGOEX_AND_SPNEGO\0")
+            .map(|sym| *sym);
+        let GSS_C_SEC_CONTEXT_SASL_SSF = __library
+            .get::<*mut gss_OID>(b"GSS_C_SEC_CONTEXT_SASL_SSF\0")
+            .map(|sym| *sym);
         let GSS_KRB5_NT_PRINCIPAL_NAME = __library
-            .get::<*mut *const gss_OID_desc>(b"GSS_KRB5_NT_PRINCIPAL_NAME\0")
+            .get::<*mut gss_OID>(b"GSS_KRB5_NT_PRINCIPAL_NAME\0")
+            .map(|sym| *sym);
+        let GSS_KRB5_NT_ENTERPRISE_NAME = __library
+            .get::<*mut gss_OID>(b"GSS_KRB5_NT_ENTERPRISE_NAME\0")
             .map(|sym| *sym);
         let gss_mech_krb5 = __library
-            .get::<*mut *const gss_OID_desc>(b"gss_mech_krb5\0")
+            .get::<*mut gss_OID>(b"gss_mech_krb5\0")
             .map(|sym| *sym);
         let gss_mech_krb5_old = __library
-            .get::<*mut *const gss_OID_desc>(b"gss_mech_krb5_old\0")
+            .get::<*mut gss_OID>(b"gss_mech_krb5_old\0")
+            .map(|sym| *sym);
+        let gss_mech_krb5_wrong = __library
+            .get::<*mut gss_OID>(b"gss_mech_krb5_wrong\0")
+            .map(|sym| *sym);
+        let gss_mech_iakerb = __library
+            .get::<*mut gss_OID>(b"gss_mech_iakerb\0")
             .map(|sym| *sym);
         let gss_mech_set_krb5 = __library
-            .get::<*mut *const gss_OID_set_desc>(b"gss_mech_set_krb5\0")
+            .get::<*mut gss_OID_set>(b"gss_mech_set_krb5\0")
             .map(|sym| *sym);
         let gss_mech_set_krb5_old = __library
-            .get::<*mut *const gss_OID_set_desc>(b"gss_mech_set_krb5_old\0")
+            .get::<*mut gss_OID_set>(b"gss_mech_set_krb5_old\0")
             .map(|sym| *sym);
         let gss_mech_set_krb5_both = __library
-            .get::<*mut *const gss_OID_set_desc>(b"gss_mech_set_krb5_both\0")
+            .get::<*mut gss_OID_set>(b"gss_mech_set_krb5_both\0")
             .map(|sym| *sym);
         let gss_nt_krb5_name = __library
-            .get::<*mut *const gss_OID_desc>(b"gss_nt_krb5_name\0")
+            .get::<*mut gss_OID>(b"gss_nt_krb5_name\0")
             .map(|sym| *sym);
         let gss_nt_krb5_principal = __library
-            .get::<*mut *const gss_OID_desc>(b"gss_nt_krb5_principal\0")
+            .get::<*mut gss_OID>(b"gss_nt_krb5_principal\0")
+            .map(|sym| *sym);
+        let GSS_KRB5_CRED_NO_CI_FLAGS_X = __library
+            .get::<*mut gss_OID>(b"GSS_KRB5_CRED_NO_CI_FLAGS_X\0")
+            .map(|sym| *sym);
+        let GSS_KRB5_GET_CRED_IMPERSONATOR = __library
+            .get::<*mut gss_OID>(b"GSS_KRB5_GET_CRED_IMPERSONATOR\0")
             .map(|sym| *sym);
         let gss_krb5_get_tkt_flags = __library.get(b"gss_krb5_get_tkt_flags\0").map(|sym| *sym);
         let gss_krb5_copy_ccache = __library.get(b"gss_krb5_copy_ccache\0").map(|sym| *sym);
@@ -799,7 +1605,8 @@ impl GSSAPI {
         let gss_krb5_free_lucid_sec_context = __library
             .get(b"gss_krb5_free_lucid_sec_context\0")
             .map(|sym| *sym);
-        let gss_krb5_ui = __library.get(b"gss_krb5_ui\0").map(|sym| *sym);
+        let gss_krb5_set_cred_rcache = __library.get(b"gss_krb5_set_cred_rcache\0").map(|sym| *sym);
+        let gss_krb5_import_cred = __library.get(b"gss_krb5_import_cred\0").map(|sym| *sym);
         Ok(GSSAPI {
             __library,
             GSS_C_NT_USER_NAME,
@@ -810,7 +1617,6 @@ impl GSSAPI {
             GSS_C_NT_ANONYMOUS,
             GSS_C_NT_EXPORT_NAME,
             gss_acquire_cred,
-            gss_acquire_cred_from,
             gss_release_cred,
             gss_init_sec_context,
             gss_accept_sec_context,
@@ -832,6 +1638,7 @@ impl GSSAPI {
             gss_inquire_cred,
             gss_inquire_context,
             gss_wrap_size_limit,
+            gss_import_name_object,
             gss_export_name_object,
             gss_add_cred,
             gss_inquire_cred_by_mech,
@@ -852,21 +1659,110 @@ impl GSSAPI {
             gss_export_name,
             gss_duplicate_name,
             gss_canonicalize_name,
+            gss_pseudo_random,
+            gss_store_cred,
+            gss_set_neg_mechs,
+            gss_indicate_mechs_by_attrs,
+            gss_inquire_attrs_for_mech,
+            gss_display_mech_attr,
+            GSS_C_MA_MECH_CONCRETE,
+            GSS_C_MA_MECH_PSEUDO,
+            GSS_C_MA_MECH_COMPOSITE,
+            GSS_C_MA_MECH_NEGO,
+            GSS_C_MA_MECH_GLUE,
+            GSS_C_MA_NOT_MECH,
+            GSS_C_MA_DEPRECATED,
+            GSS_C_MA_NOT_DFLT_MECH,
+            GSS_C_MA_ITOK_FRAMED,
+            GSS_C_MA_AUTH_INIT,
+            GSS_C_MA_AUTH_TARG,
+            GSS_C_MA_AUTH_INIT_INIT,
+            GSS_C_MA_AUTH_TARG_INIT,
+            GSS_C_MA_AUTH_INIT_ANON,
+            GSS_C_MA_AUTH_TARG_ANON,
+            GSS_C_MA_DELEG_CRED,
+            GSS_C_MA_INTEG_PROT,
+            GSS_C_MA_CONF_PROT,
+            GSS_C_MA_MIC,
+            GSS_C_MA_WRAP,
+            GSS_C_MA_PROT_READY,
+            GSS_C_MA_REPLAY_DET,
+            GSS_C_MA_OOS_DET,
+            GSS_C_MA_CBINDINGS,
+            GSS_C_MA_PFS,
+            GSS_C_MA_COMPRESS,
+            GSS_C_MA_CTX_TRANS,
+            gss_inquire_saslname_for_mech,
+            gss_inquire_mech_for_saslname,
+            gss_pname_to_uid,
+            gss_localname,
+            gss_userok,
+            gss_authorize_localname,
+            gss_acquire_cred_with_password,
+            gss_add_cred_with_password,
+            gss_create_empty_buffer_set,
+            gss_add_buffer_set_member,
+            gss_release_buffer_set,
+            gss_inquire_sec_context_by_oid,
+            gss_inquire_cred_by_oid,
+            gss_set_sec_context_option,
+            gss_export_cred,
+            gss_import_cred,
+            gss_set_cred_option,
+            gss_wrap_aead,
+            gss_unwrap_aead,
+            GSS_C_INQ_SSPI_SESSION_KEY,
+            GSS_C_INQ_NEGOEX_KEY,
+            GSS_C_INQ_NEGOEX_VERIFY_KEY,
+            gss_complete_auth_token,
+            gss_wrap_iov,
+            gss_unwrap_iov,
+            gss_wrap_iov_length,
+            gss_get_mic_iov,
+            gss_get_mic_iov_length,
+            gss_verify_mic_iov,
+            gss_release_iov_buffer,
+            gss_acquire_cred_impersonate_name,
+            gss_add_cred_impersonate_name,
+            GSS_C_ATTR_LOCAL_LOGIN_USER,
+            GSS_C_NT_COMPOSITE_EXPORT,
+            gss_display_name_ext,
+            gss_inquire_name,
+            gss_get_name_attribute,
+            gss_set_name_attribute,
+            gss_delete_name_attribute,
+            gss_export_name_composite,
+            gss_map_name_to_any,
+            gss_release_any_name_mapping,
+            gss_encapsulate_token,
+            gss_decapsulate_token,
+            gss_oid_equal,
+            gss_acquire_cred_from,
+            gss_add_cred_from,
+            gss_store_cred_into,
+            GSS_C_MA_NEGOEX_AND_SPNEGO,
+            GSS_C_SEC_CONTEXT_SASL_SSF,
             GSS_KRB5_NT_PRINCIPAL_NAME,
+            GSS_KRB5_NT_ENTERPRISE_NAME,
             gss_mech_krb5,
             gss_mech_krb5_old,
+            gss_mech_krb5_wrong,
+            gss_mech_iakerb,
             gss_mech_set_krb5,
             gss_mech_set_krb5_old,
             gss_mech_set_krb5_both,
             gss_nt_krb5_name,
             gss_nt_krb5_principal,
+            GSS_KRB5_CRED_NO_CI_FLAGS_X,
+            GSS_KRB5_GET_CRED_IMPERSONATOR,
             gss_krb5_get_tkt_flags,
             gss_krb5_copy_ccache,
             gss_krb5_ccache_name,
             gss_krb5_set_allowable_enctypes,
             gss_krb5_export_lucid_sec_context,
             gss_krb5_free_lucid_sec_context,
-            gss_krb5_ui,
+            gss_krb5_set_cred_rcache,
+            gss_krb5_import_cred,
         })
     }
     pub unsafe fn GSS_C_NT_USER_NAME(&self) -> *mut gss_OID {
@@ -927,25 +1823,6 @@ impl GSSAPI {
             .as_ref()
             .expect("Expected function, got error."))(
             arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8,
-        )
-    }
-    pub unsafe fn gss_acquire_cred_from(
-        &self,
-        arg1: *mut OM_uint32,
-        arg2: gss_name_t,
-        arg3: OM_uint32,
-        arg4: gss_OID_set,
-        arg5: gss_cred_usage_t,
-        arg6: gss_const_key_value_set_t,
-        arg7: *mut gss_cred_id_t,
-        arg8: *mut gss_OID_set,
-        arg9: *mut OM_uint32,
-    ) -> OM_uint32 {
-        (self
-            .gss_acquire_cred_from
-            .as_ref()
-            .expect("Expected function, got error."))(
-            arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9,
         )
     }
     pub unsafe fn gss_release_cred(
@@ -1225,6 +2102,18 @@ impl GSSAPI {
             .as_ref()
             .expect("Expected function, got error."))(arg1, arg2, arg3, arg4, arg5, arg6)
     }
+    pub unsafe fn gss_import_name_object(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: *mut ::std::os::raw::c_void,
+        arg3: gss_OID,
+        arg4: *mut gss_name_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_import_name_object
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4)
+    }
     pub unsafe fn gss_export_name_object(
         &self,
         arg1: *mut OM_uint32,
@@ -1471,51 +2360,961 @@ impl GSSAPI {
             .as_ref()
             .expect("Expected function, got error."))(arg1, arg2, arg3, arg4)
     }
-    pub unsafe fn GSS_KRB5_NT_PRINCIPAL_NAME(&self) -> *mut *const gss_OID_desc {
+    pub unsafe fn gss_pseudo_random(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_ctx_id_t,
+        arg3: ::std::os::raw::c_int,
+        arg4: gss_buffer_t,
+        arg5: isize,
+        arg6: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_pseudo_random
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4, arg5, arg6)
+    }
+    pub unsafe fn gss_store_cred(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_cred_id_t,
+        arg3: gss_cred_usage_t,
+        arg4: gss_OID,
+        arg5: OM_uint32,
+        arg6: OM_uint32,
+        arg7: *mut gss_OID_set,
+        arg8: *mut gss_cred_usage_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_store_cred
+            .as_ref()
+            .expect("Expected function, got error."))(
+            arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8,
+        )
+    }
+    pub unsafe fn gss_set_neg_mechs(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_cred_id_t,
+        arg3: gss_OID_set,
+    ) -> OM_uint32 {
+        (self
+            .gss_set_neg_mechs
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3)
+    }
+    pub unsafe fn gss_indicate_mechs_by_attrs(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_const_OID_set,
+        arg3: gss_const_OID_set,
+        arg4: gss_const_OID_set,
+        arg5: *mut gss_OID_set,
+    ) -> OM_uint32 {
+        (self
+            .gss_indicate_mechs_by_attrs
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4, arg5)
+    }
+    pub unsafe fn gss_inquire_attrs_for_mech(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_const_OID,
+        arg3: *mut gss_OID_set,
+        arg4: *mut gss_OID_set,
+    ) -> OM_uint32 {
+        (self
+            .gss_inquire_attrs_for_mech
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4)
+    }
+    pub unsafe fn gss_display_mech_attr(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_const_OID,
+        arg3: gss_buffer_t,
+        arg4: gss_buffer_t,
+        arg5: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_display_mech_attr
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4, arg5)
+    }
+    pub unsafe fn GSS_C_MA_MECH_CONCRETE(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_MECH_CONCRETE
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_MECH_PSEUDO(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_MECH_PSEUDO
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_MECH_COMPOSITE(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_MECH_COMPOSITE
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_MECH_NEGO(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_MECH_NEGO
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_MECH_GLUE(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_MECH_GLUE
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_NOT_MECH(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_NOT_MECH
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_DEPRECATED(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_DEPRECATED
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_NOT_DFLT_MECH(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_NOT_DFLT_MECH
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_ITOK_FRAMED(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_ITOK_FRAMED
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_AUTH_INIT(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_AUTH_INIT
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_AUTH_TARG(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_AUTH_TARG
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_AUTH_INIT_INIT(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_AUTH_INIT_INIT
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_AUTH_TARG_INIT(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_AUTH_TARG_INIT
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_AUTH_INIT_ANON(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_AUTH_INIT_ANON
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_AUTH_TARG_ANON(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_AUTH_TARG_ANON
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_DELEG_CRED(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_DELEG_CRED
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_INTEG_PROT(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_INTEG_PROT
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_CONF_PROT(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_CONF_PROT
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_MIC(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_MIC
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_WRAP(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_WRAP
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_PROT_READY(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_PROT_READY
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_REPLAY_DET(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_REPLAY_DET
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_OOS_DET(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_OOS_DET
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_CBINDINGS(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_CBINDINGS
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_PFS(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_PFS
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_COMPRESS(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_COMPRESS
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_MA_CTX_TRANS(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_CTX_TRANS
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn gss_inquire_saslname_for_mech(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_OID,
+        arg3: gss_buffer_t,
+        arg4: gss_buffer_t,
+        arg5: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_inquire_saslname_for_mech
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4, arg5)
+    }
+    pub unsafe fn gss_inquire_mech_for_saslname(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_buffer_t,
+        arg3: *mut gss_OID,
+    ) -> OM_uint32 {
+        (self
+            .gss_inquire_mech_for_saslname
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3)
+    }
+    pub unsafe fn gss_pname_to_uid(
+        &self,
+        minor: *mut OM_uint32,
+        name: gss_name_t,
+        mech_type: gss_OID,
+        uidOut: *mut uid_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_pname_to_uid
+            .as_ref()
+            .expect("Expected function, got error."))(minor, name, mech_type, uidOut)
+    }
+    pub unsafe fn gss_localname(
+        &self,
+        minor: *mut OM_uint32,
+        name: gss_name_t,
+        mech_type: gss_const_OID,
+        localname: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_localname
+            .as_ref()
+            .expect("Expected function, got error."))(minor, name, mech_type, localname)
+    }
+    pub unsafe fn gss_userok(
+        &self,
+        name: gss_name_t,
+        username: *const ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int {
+        (self
+            .gss_userok
+            .as_ref()
+            .expect("Expected function, got error."))(name, username)
+    }
+    pub unsafe fn gss_authorize_localname(
+        &self,
+        minor: *mut OM_uint32,
+        name: gss_name_t,
+        user: gss_name_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_authorize_localname
+            .as_ref()
+            .expect("Expected function, got error."))(minor, name, user)
+    }
+    pub unsafe fn gss_acquire_cred_with_password(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_name_t,
+        arg3: gss_buffer_t,
+        arg4: OM_uint32,
+        arg5: gss_OID_set,
+        arg6: gss_cred_usage_t,
+        arg7: *mut gss_cred_id_t,
+        arg8: *mut gss_OID_set,
+        arg9: *mut OM_uint32,
+    ) -> OM_uint32 {
+        (self
+            .gss_acquire_cred_with_password
+            .as_ref()
+            .expect("Expected function, got error."))(
+            arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9,
+        )
+    }
+    pub unsafe fn gss_add_cred_with_password(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_cred_id_t,
+        arg3: gss_name_t,
+        arg4: gss_OID,
+        arg5: gss_buffer_t,
+        arg6: gss_cred_usage_t,
+        arg7: OM_uint32,
+        arg8: OM_uint32,
+        arg9: *mut gss_cred_id_t,
+        arg10: *mut gss_OID_set,
+        arg11: *mut OM_uint32,
+        arg12: *mut OM_uint32,
+    ) -> OM_uint32 {
+        (self
+            .gss_add_cred_with_password
+            .as_ref()
+            .expect("Expected function, got error."))(
+            arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12,
+        )
+    }
+    pub unsafe fn gss_create_empty_buffer_set(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: *mut gss_buffer_set_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_create_empty_buffer_set
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2)
+    }
+    pub unsafe fn gss_add_buffer_set_member(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_buffer_t,
+        arg3: *mut gss_buffer_set_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_add_buffer_set_member
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3)
+    }
+    pub unsafe fn gss_release_buffer_set(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: *mut gss_buffer_set_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_release_buffer_set
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2)
+    }
+    pub unsafe fn gss_inquire_sec_context_by_oid(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_ctx_id_t,
+        arg3: gss_OID,
+        arg4: *mut gss_buffer_set_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_inquire_sec_context_by_oid
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4)
+    }
+    pub unsafe fn gss_inquire_cred_by_oid(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_cred_id_t,
+        arg3: gss_OID,
+        arg4: *mut gss_buffer_set_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_inquire_cred_by_oid
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4)
+    }
+    pub unsafe fn gss_set_sec_context_option(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: *mut gss_ctx_id_t,
+        arg3: gss_OID,
+        arg4: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_set_sec_context_option
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4)
+    }
+    pub unsafe fn gss_export_cred(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_cred_id_t,
+        arg3: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_export_cred
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3)
+    }
+    pub unsafe fn gss_import_cred(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_buffer_t,
+        arg3: *mut gss_cred_id_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_import_cred
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3)
+    }
+    pub unsafe fn gss_set_cred_option(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: *mut gss_cred_id_t,
+        arg3: gss_OID,
+        arg4: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_set_cred_option
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4)
+    }
+    pub unsafe fn gss_wrap_aead(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_ctx_id_t,
+        arg3: ::std::os::raw::c_int,
+        arg4: gss_qop_t,
+        arg5: gss_buffer_t,
+        arg6: gss_buffer_t,
+        arg7: *mut ::std::os::raw::c_int,
+        arg8: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_wrap_aead
+            .as_ref()
+            .expect("Expected function, got error."))(
+            arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8,
+        )
+    }
+    pub unsafe fn gss_unwrap_aead(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_ctx_id_t,
+        arg3: gss_buffer_t,
+        arg4: gss_buffer_t,
+        arg5: gss_buffer_t,
+        arg6: *mut ::std::os::raw::c_int,
+        arg7: *mut gss_qop_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_unwrap_aead
+            .as_ref()
+            .expect("Expected function, got error."))(
+            arg1, arg2, arg3, arg4, arg5, arg6, arg7
+        )
+    }
+    pub unsafe fn GSS_C_INQ_SSPI_SESSION_KEY(&self) -> *mut gss_OID {
+        *self
+            .GSS_C_INQ_SSPI_SESSION_KEY
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_INQ_NEGOEX_KEY(&self) -> *mut gss_OID {
+        *self
+            .GSS_C_INQ_NEGOEX_KEY
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_INQ_NEGOEX_VERIFY_KEY(&self) -> *mut gss_OID {
+        *self
+            .GSS_C_INQ_NEGOEX_VERIFY_KEY
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn gss_complete_auth_token(
+        &self,
+        minor_status: *mut OM_uint32,
+        context_handle: gss_ctx_id_t,
+        input_message_buffer: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_complete_auth_token
+            .as_ref()
+            .expect("Expected function, got error."))(
+            minor_status,
+            context_handle,
+            input_message_buffer,
+        )
+    }
+    pub unsafe fn gss_wrap_iov(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_ctx_id_t,
+        arg3: ::std::os::raw::c_int,
+        arg4: gss_qop_t,
+        arg5: *mut ::std::os::raw::c_int,
+        arg6: *mut gss_iov_buffer_desc,
+        arg7: ::std::os::raw::c_int,
+    ) -> OM_uint32 {
+        (self
+            .gss_wrap_iov
+            .as_ref()
+            .expect("Expected function, got error."))(
+            arg1, arg2, arg3, arg4, arg5, arg6, arg7
+        )
+    }
+    pub unsafe fn gss_unwrap_iov(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_ctx_id_t,
+        arg3: *mut ::std::os::raw::c_int,
+        arg4: *mut gss_qop_t,
+        arg5: *mut gss_iov_buffer_desc,
+        arg6: ::std::os::raw::c_int,
+    ) -> OM_uint32 {
+        (self
+            .gss_unwrap_iov
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4, arg5, arg6)
+    }
+    pub unsafe fn gss_wrap_iov_length(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_ctx_id_t,
+        arg3: ::std::os::raw::c_int,
+        arg4: gss_qop_t,
+        arg5: *mut ::std::os::raw::c_int,
+        arg6: *mut gss_iov_buffer_desc,
+        arg7: ::std::os::raw::c_int,
+    ) -> OM_uint32 {
+        (self
+            .gss_wrap_iov_length
+            .as_ref()
+            .expect("Expected function, got error."))(
+            arg1, arg2, arg3, arg4, arg5, arg6, arg7
+        )
+    }
+    pub unsafe fn gss_get_mic_iov(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_ctx_id_t,
+        arg3: gss_qop_t,
+        arg4: *mut gss_iov_buffer_desc,
+        arg5: ::std::os::raw::c_int,
+    ) -> OM_uint32 {
+        (self
+            .gss_get_mic_iov
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4, arg5)
+    }
+    pub unsafe fn gss_get_mic_iov_length(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_ctx_id_t,
+        arg3: gss_qop_t,
+        arg4: *mut gss_iov_buffer_desc,
+        arg5: ::std::os::raw::c_int,
+    ) -> OM_uint32 {
+        (self
+            .gss_get_mic_iov_length
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4, arg5)
+    }
+    pub unsafe fn gss_verify_mic_iov(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_ctx_id_t,
+        arg3: *mut gss_qop_t,
+        arg4: *mut gss_iov_buffer_desc,
+        arg5: ::std::os::raw::c_int,
+    ) -> OM_uint32 {
+        (self
+            .gss_verify_mic_iov
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4, arg5)
+    }
+    pub unsafe fn gss_release_iov_buffer(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: *mut gss_iov_buffer_desc,
+        arg3: ::std::os::raw::c_int,
+    ) -> OM_uint32 {
+        (self
+            .gss_release_iov_buffer
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3)
+    }
+    pub unsafe fn gss_acquire_cred_impersonate_name(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_cred_id_t,
+        arg3: gss_name_t,
+        arg4: OM_uint32,
+        arg5: gss_OID_set,
+        arg6: gss_cred_usage_t,
+        arg7: *mut gss_cred_id_t,
+        arg8: *mut gss_OID_set,
+        arg9: *mut OM_uint32,
+    ) -> OM_uint32 {
+        (self
+            .gss_acquire_cred_impersonate_name
+            .as_ref()
+            .expect("Expected function, got error."))(
+            arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9,
+        )
+    }
+    pub unsafe fn gss_add_cred_impersonate_name(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_cred_id_t,
+        arg3: gss_cred_id_t,
+        arg4: gss_name_t,
+        arg5: gss_OID,
+        arg6: gss_cred_usage_t,
+        arg7: OM_uint32,
+        arg8: OM_uint32,
+        arg9: *mut gss_cred_id_t,
+        arg10: *mut gss_OID_set,
+        arg11: *mut OM_uint32,
+        arg12: *mut OM_uint32,
+    ) -> OM_uint32 {
+        (self
+            .gss_add_cred_impersonate_name
+            .as_ref()
+            .expect("Expected function, got error."))(
+            arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12,
+        )
+    }
+    pub unsafe fn GSS_C_ATTR_LOCAL_LOGIN_USER(&self) -> *mut gss_buffer_t {
+        *self
+            .GSS_C_ATTR_LOCAL_LOGIN_USER
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_NT_COMPOSITE_EXPORT(&self) -> *mut gss_OID {
+        *self
+            .GSS_C_NT_COMPOSITE_EXPORT
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn gss_display_name_ext(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_name_t,
+        arg3: gss_OID,
+        arg4: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_display_name_ext
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4)
+    }
+    pub unsafe fn gss_inquire_name(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_name_t,
+        arg3: *mut ::std::os::raw::c_int,
+        arg4: *mut gss_OID,
+        arg5: *mut gss_buffer_set_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_inquire_name
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4, arg5)
+    }
+    pub unsafe fn gss_get_name_attribute(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_name_t,
+        arg3: gss_buffer_t,
+        arg4: *mut ::std::os::raw::c_int,
+        arg5: *mut ::std::os::raw::c_int,
+        arg6: gss_buffer_t,
+        arg7: gss_buffer_t,
+        arg8: *mut ::std::os::raw::c_int,
+    ) -> OM_uint32 {
+        (self
+            .gss_get_name_attribute
+            .as_ref()
+            .expect("Expected function, got error."))(
+            arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8,
+        )
+    }
+    pub unsafe fn gss_set_name_attribute(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_name_t,
+        arg3: ::std::os::raw::c_int,
+        arg4: gss_buffer_t,
+        arg5: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_set_name_attribute
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4, arg5)
+    }
+    pub unsafe fn gss_delete_name_attribute(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_name_t,
+        arg3: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_delete_name_attribute
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3)
+    }
+    pub unsafe fn gss_export_name_composite(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_name_t,
+        arg3: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_export_name_composite
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3)
+    }
+    pub unsafe fn gss_map_name_to_any(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_name_t,
+        arg3: ::std::os::raw::c_int,
+        arg4: gss_buffer_t,
+        arg5: *mut gss_any_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_map_name_to_any
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4, arg5)
+    }
+    pub unsafe fn gss_release_any_name_mapping(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_name_t,
+        arg3: gss_buffer_t,
+        arg4: *mut gss_any_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_release_any_name_mapping
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3, arg4)
+    }
+    pub unsafe fn gss_encapsulate_token(
+        &self,
+        arg1: gss_const_buffer_t,
+        arg2: gss_const_OID,
+        arg3: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_encapsulate_token
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3)
+    }
+    pub unsafe fn gss_decapsulate_token(
+        &self,
+        arg1: gss_const_buffer_t,
+        arg2: gss_const_OID,
+        arg3: gss_buffer_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_decapsulate_token
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2, arg3)
+    }
+    pub unsafe fn gss_oid_equal(
+        &self,
+        arg1: gss_const_OID,
+        arg2: gss_const_OID,
+    ) -> ::std::os::raw::c_int {
+        (self
+            .gss_oid_equal
+            .as_ref()
+            .expect("Expected function, got error."))(arg1, arg2)
+    }
+    pub unsafe fn gss_acquire_cred_from(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_name_t,
+        arg3: OM_uint32,
+        arg4: gss_OID_set,
+        arg5: gss_cred_usage_t,
+        arg6: gss_const_key_value_set_t,
+        arg7: *mut gss_cred_id_t,
+        arg8: *mut gss_OID_set,
+        arg9: *mut OM_uint32,
+    ) -> OM_uint32 {
+        (self
+            .gss_acquire_cred_from
+            .as_ref()
+            .expect("Expected function, got error."))(
+            arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9,
+        )
+    }
+    pub unsafe fn gss_add_cred_from(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_cred_id_t,
+        arg3: gss_name_t,
+        arg4: gss_OID,
+        arg5: gss_cred_usage_t,
+        arg6: OM_uint32,
+        arg7: OM_uint32,
+        arg8: gss_const_key_value_set_t,
+        arg9: *mut gss_cred_id_t,
+        arg10: *mut gss_OID_set,
+        arg11: *mut OM_uint32,
+        arg12: *mut OM_uint32,
+    ) -> OM_uint32 {
+        (self
+            .gss_add_cred_from
+            .as_ref()
+            .expect("Expected function, got error."))(
+            arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12,
+        )
+    }
+    pub unsafe fn gss_store_cred_into(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_cred_id_t,
+        arg3: gss_cred_usage_t,
+        arg4: gss_OID,
+        arg5: OM_uint32,
+        arg6: OM_uint32,
+        arg7: gss_const_key_value_set_t,
+        arg8: *mut gss_OID_set,
+        arg9: *mut gss_cred_usage_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_store_cred_into
+            .as_ref()
+            .expect("Expected function, got error."))(
+            arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9,
+        )
+    }
+    pub unsafe fn GSS_C_MA_NEGOEX_AND_SPNEGO(&self) -> *mut gss_const_OID {
+        *self
+            .GSS_C_MA_NEGOEX_AND_SPNEGO
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_C_SEC_CONTEXT_SASL_SSF(&self) -> *mut gss_OID {
+        *self
+            .GSS_C_SEC_CONTEXT_SASL_SSF
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_KRB5_NT_PRINCIPAL_NAME(&self) -> *mut gss_OID {
         *self
             .GSS_KRB5_NT_PRINCIPAL_NAME
             .as_ref()
             .expect("Expected variable, got error.")
     }
-    pub unsafe fn gss_mech_krb5(&self) -> *mut *const gss_OID_desc {
+    pub unsafe fn GSS_KRB5_NT_ENTERPRISE_NAME(&self) -> *mut gss_OID {
+        *self
+            .GSS_KRB5_NT_ENTERPRISE_NAME
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn gss_mech_krb5(&self) -> *mut gss_OID {
         *self
             .gss_mech_krb5
             .as_ref()
             .expect("Expected variable, got error.")
     }
-    pub unsafe fn gss_mech_krb5_old(&self) -> *mut *const gss_OID_desc {
+    pub unsafe fn gss_mech_krb5_old(&self) -> *mut gss_OID {
         *self
             .gss_mech_krb5_old
             .as_ref()
             .expect("Expected variable, got error.")
     }
-    pub unsafe fn gss_mech_set_krb5(&self) -> *mut *const gss_OID_set_desc {
+    pub unsafe fn gss_mech_krb5_wrong(&self) -> *mut gss_OID {
+        *self
+            .gss_mech_krb5_wrong
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn gss_mech_iakerb(&self) -> *mut gss_OID {
+        *self
+            .gss_mech_iakerb
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn gss_mech_set_krb5(&self) -> *mut gss_OID_set {
         *self
             .gss_mech_set_krb5
             .as_ref()
             .expect("Expected variable, got error.")
     }
-    pub unsafe fn gss_mech_set_krb5_old(&self) -> *mut *const gss_OID_set_desc {
+    pub unsafe fn gss_mech_set_krb5_old(&self) -> *mut gss_OID_set {
         *self
             .gss_mech_set_krb5_old
             .as_ref()
             .expect("Expected variable, got error.")
     }
-    pub unsafe fn gss_mech_set_krb5_both(&self) -> *mut *const gss_OID_set_desc {
+    pub unsafe fn gss_mech_set_krb5_both(&self) -> *mut gss_OID_set {
         *self
             .gss_mech_set_krb5_both
             .as_ref()
             .expect("Expected variable, got error.")
     }
-    pub unsafe fn gss_nt_krb5_name(&self) -> *mut *const gss_OID_desc {
+    pub unsafe fn gss_nt_krb5_name(&self) -> *mut gss_OID {
         *self
             .gss_nt_krb5_name
             .as_ref()
             .expect("Expected variable, got error.")
     }
-    pub unsafe fn gss_nt_krb5_principal(&self) -> *mut *const gss_OID_desc {
+    pub unsafe fn gss_nt_krb5_principal(&self) -> *mut gss_OID {
         *self
             .gss_nt_krb5_principal
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_KRB5_CRED_NO_CI_FLAGS_X(&self) -> *mut gss_OID {
+        *self
+            .GSS_KRB5_CRED_NO_CI_FLAGS_X
+            .as_ref()
+            .expect("Expected variable, got error.")
+    }
+    pub unsafe fn GSS_KRB5_GET_CRED_IMPERSONATOR(&self) -> *mut gss_OID {
+        *self
+            .GSS_KRB5_GET_CRED_IMPERSONATOR
             .as_ref()
             .expect("Expected variable, got error.")
     }
@@ -1590,10 +3389,34 @@ impl GSSAPI {
             .as_ref()
             .expect("Expected function, got error."))(minor_status, kctx)
     }
-    pub unsafe fn gss_krb5_ui(&self, arg1: *mut OM_uint32, arg2: OM_uint32) -> OM_uint32 {
+    pub unsafe fn gss_krb5_set_cred_rcache(
+        &self,
+        minor_status: *mut OM_uint32,
+        cred: gss_cred_id_t,
+        rcache: krb5_rcache,
+    ) -> OM_uint32 {
         (self
-            .gss_krb5_ui
+            .gss_krb5_set_cred_rcache
             .as_ref()
-            .expect("Expected function, got error."))(arg1, arg2)
+            .expect("Expected function, got error."))(minor_status, cred, rcache)
+    }
+    pub unsafe fn gss_krb5_import_cred(
+        &self,
+        minor_status: *mut OM_uint32,
+        id: krb5_ccache,
+        keytab_principal: krb5_principal,
+        keytab: krb5_keytab,
+        cred: *mut gss_cred_id_t,
+    ) -> OM_uint32 {
+        (self
+            .gss_krb5_import_cred
+            .as_ref()
+            .expect("Expected function, got error."))(
+            minor_status,
+            id,
+            keytab_principal,
+            keytab,
+            cred,
+        )
     }
 }
