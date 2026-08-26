@@ -1,3 +1,4 @@
+use std::io::ErrorKind;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -22,6 +23,14 @@ use crate::{
 const STANDBY_EXCEPTION: &str = "org.apache.hadoop.ipc.StandbyException";
 const OBSERVER_RETRY_EXCEPTION: &str = "org.apache.hadoop.ipc.ObserverRetryOnActiveException";
 
+// Authentication and authorization failures are local to the client
+// credentials and cannot be fixed by connecting to another HA endpoint.
+const SASL_EXCEPTION: &str = "javax.security.sasl.SaslException";
+const GSS_EXCEPTION: &str = "org.ietf.jgss.GSSException";
+const ACCESS_CONTROL_EXCEPTION: &str = "org.apache.hadoop.security.AccessControlException";
+const AUTHORIZATION_EXCEPTION: &str = "org.apache.hadoop.security.authorize.AuthorizationException";
+const INVALID_TOKEN_EXCEPTION: &str = "org.apache.hadoop.security.token.SecretManager$InvalidToken";
+
 /// Lazily creates a connection to a host, and recreates the connection
 /// on fatal errors.
 #[derive(Debug)]
@@ -34,6 +43,38 @@ struct ProxyConnection {
     kerberos_credentials: Option<Arc<crate::security::ResolvedKerberosCredentials>>,
     config: Arc<Configuration>,
     handle: Handle,
+}
+
+#[derive(Debug)]
+enum ProxyCallError {
+    BeforeRequest(HdfsError),
+    AfterRequest(HdfsError),
+}
+
+impl ProxyCallError {
+    fn before_request(error: HdfsError) -> Self {
+        Self::BeforeRequest(error)
+    }
+
+    fn after_request(error: HdfsError) -> Self {
+        Self::AfterRequest(error)
+    }
+
+    fn error(&self) -> &HdfsError {
+        match self {
+            Self::BeforeRequest(error) | Self::AfterRequest(error) => error,
+        }
+    }
+
+    fn into_error(self) -> HdfsError {
+        match self {
+            Self::BeforeRequest(error) | Self::AfterRequest(error) => error,
+        }
+    }
+
+    fn is_pre_request_connection_error(&self) -> bool {
+        matches!(self, Self::BeforeRequest(HdfsError::IOError(_)))
+    }
 }
 
 impl ProxyConnection {
@@ -58,7 +99,12 @@ impl ProxyConnection {
         }
     }
 
-    async fn call(&self, method_name: &str, message: &[u8]) -> Result<Bytes> {
+    async fn call(
+        &self,
+        method_name: &str,
+        message: &[u8],
+        write: bool,
+    ) -> std::result::Result<Bytes, ProxyCallError> {
         for attempt in 0..2 {
             let receiver = {
                 let mut connection = self.inner.lock().await;
@@ -75,7 +121,8 @@ impl ProxyConnection {
                                 &self.config,
                                 &self.handle,
                             )
-                            .await?,
+                            .await
+                            .map_err(ProxyCallError::before_request)?,
                         );
                     }
                 }
@@ -84,23 +131,26 @@ impl ProxyConnection {
                     .as_ref()
                     .unwrap()
                     .call(method_name, message)
-                    .await?
+                    .await
+                    .map_err(ProxyCallError::after_request)?
             };
             let result = receiver.await.map_err(|_| {
-                HdfsError::IOError(std::io::Error::new(
+                ProxyCallError::after_request(HdfsError::IOError(std::io::Error::new(
                     std::io::ErrorKind::ConnectionAborted,
                     "RPC listener disconnected",
-                ))
+                )))
             })?;
 
             match result {
                 Ok(bytes) => return Ok(bytes),
-                Err(HdfsError::IOError(ref e)) if attempt == 0 => {
+                // An ambiguous response can be retried for reads, but retrying a write could
+                // replay a mutation that the NameNode already committed.
+                Err(HdfsError::IOError(ref e)) if !write && attempt == 0 => {
                     warn!("IO error on RPC call, retrying: {:?}", e);
                     *self.inner.lock().await = None;
                     continue;
                 }
-                err => return err,
+                Err(error) => return Err(ProxyCallError::after_request(error)),
             }
         }
         unreachable!()
@@ -226,6 +276,55 @@ impl NameServiceProxy {
         exception == STANDBY_EXCEPTION || exception == OBSERVER_RETRY_EXCEPTION
     }
 
+    fn is_authentication_error(error: &HdfsError) -> bool {
+        match error {
+            HdfsError::SASLError(_) | HdfsError::GSSAPIError(..) | HdfsError::NoSASLMechanism => {
+                true
+            }
+            HdfsError::RPCError(exception, _) | HdfsError::FatalRPCError(exception, _) => {
+                matches!(
+                    exception.as_str(),
+                    SASL_EXCEPTION
+                        | GSS_EXCEPTION
+                        | ACCESS_CONTROL_EXCEPTION
+                        | AUTHORIZATION_EXCEPTION
+                        | INVALID_TOKEN_EXCEPTION
+                )
+            }
+            _ => false,
+        }
+    }
+
+    fn is_safe_failover_error(error: &HdfsError) -> bool {
+        match error {
+            HdfsError::RPCError(exception, _) | HdfsError::FatalRPCError(exception, _) => {
+                Self::is_retriable(exception)
+            }
+            _ => false,
+        }
+    }
+
+    fn is_safe_io_error(error: &HdfsError) -> bool {
+        matches!(
+            error,
+            HdfsError::IOError(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::AddrNotAvailable
+                        | ErrorKind::ConnectionRefused
+                        | ErrorKind::HostUnreachable
+                        | ErrorKind::NetworkUnreachable
+                        | ErrorKind::NotConnected
+                )
+        )
+    }
+
+    fn is_safe_write_failover_error(error: &ProxyCallError) -> bool {
+        Self::is_safe_failover_error(error.error())
+            || error.is_pre_request_connection_error()
+            || Self::is_safe_io_error(error.error())
+    }
+
     pub(crate) async fn call(
         &self,
         method_name: &'static str,
@@ -238,13 +337,14 @@ impl NameServiceProxy {
         self.call_inner(method_name, message, write).await
     }
 
-    async fn find_observer(&self) -> Option<usize> {
+    async fn find_observer(&self) -> std::result::Result<Option<usize>, ProxyCallError> {
         for i in 0..self.proxy_connections.len() {
             let ha_state_msg = hdfs::HaServiceStateRequestProto::default();
             let response = self.proxy_connections[i]
                 .call(
                     "getHAServiceState",
                     &ha_state_msg.encode_length_delimited_to_vec(),
+                    false,
                 )
                 .await;
 
@@ -254,34 +354,41 @@ impl NameServiceProxy {
                         hdfs::HaServiceStateResponseProto::decode_length_delimited(response)
                         && matches!(ha_state.state(), HaServiceStateProto::Observer)
                     {
-                        return Some(i);
+                        return Ok(Some(i));
                     }
                 }
                 Err(e) => {
-                    debug!("Couldn't get HA service status: {e:?}");
+                    if Self::is_authentication_error(e.error()) {
+                        return Err(e);
+                    }
+                    debug!("Couldn't get HA service status: {:?}", e.error());
                     continue;
                 }
             }
         }
-        None
+        Ok(None)
     }
 
-    async fn call_observer(&self, method_name: &'static str, message: &[u8]) -> Result<Bytes> {
+    async fn call_observer(
+        &self,
+        method_name: &'static str,
+        message: &[u8],
+    ) -> std::result::Result<Bytes, ProxyCallError> {
         let observer_index = {
             let mut observer = self.current_observer.lock().await;
             if let Some(index) = *observer {
                 index
-            } else if let Some(index) = self.find_observer().await {
+            } else if let Some(index) = self.find_observer().await? {
                 *observer = Some(index);
                 index
             } else {
-                return Err(HdfsError::InternalError(
+                return Err(ProxyCallError::before_request(HdfsError::InternalError(
                     "Unable to find observer node".to_string(),
-                ));
+                )));
             }
         };
         let result = self.proxy_connections[observer_index]
-            .call(method_name, message)
+            .call(method_name, message, false)
             .await;
 
         #[cfg(feature = "integration-test")]
@@ -309,7 +416,13 @@ impl NameServiceProxy {
             // If it succeeds, return that result, otherwise just fallback to the active
             match result {
                 Ok(res) => return Ok(res),
-                Err(e) => warn!("Failed to call observer node, falling back to the active: {e:?}"),
+                Err(e) if Self::is_authentication_error(e.error()) => {
+                    return Err(e.into_error());
+                }
+                Err(e) => warn!(
+                    "Failed to call observer node, falling back to the active: {:?}",
+                    e.error()
+                ),
             }
         }
         let mut proxy_index = self.current_active.load(Ordering::SeqCst);
@@ -323,13 +436,13 @@ impl NameServiceProxy {
             let standby_injected = false;
 
             let result = if standby_injected {
-                Err(HdfsError::RPCError(
+                Err(ProxyCallError::after_request(HdfsError::RPCError(
                     STANDBY_EXCEPTION.to_string(),
                     "NameNode standby fault injection".to_string(),
-                ))
+                )))
             } else {
                 self.proxy_connections[proxy_index]
-                    .call(method_name, message)
+                    .call(method_name, message, write)
                     .await
             };
 
@@ -346,19 +459,43 @@ impl NameServiceProxy {
 
                     return Ok(bytes);
                 }
-                // RPCError indicates the call was successfully attempted but had an error, so should be returned immediately
-                Err(HdfsError::RPCError(exception, msg)) if !Self::is_retriable(&exception) => {
-                    return Err(Self::convert_rpc_error(exception, msg));
+                // Authentication failures are caused by the client's credentials, not by
+                // the endpoint, so matching Hadoop's FailoverOnNetworkExceptionRetry means
+                // returning them without trying another NameNode.
+                Err(e) if Self::is_authentication_error(e.error()) => {
+                    return Err(e.into_error());
                 }
-                Err(e) if failovers >= self.failover_max_attempts => return Err(e),
+                // RPCError indicates the call was successfully attempted but had an error, so should be returned immediately
+                Err(e)
+                    if matches!(
+                        e.error(),
+                        HdfsError::RPCError(exception, _) if !Self::is_retriable(exception)
+                    ) =>
+                {
+                    match e.into_error() {
+                        HdfsError::RPCError(exception, msg) => {
+                            return Err(Self::convert_rpc_error(exception, msg));
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                // A write may already have been committed when the response is lost. Only a
+                // standby-style response proves that the request was not handled by this node.
+                // A connection failure before the RPC was sent is also safe to fail over.
+                Err(e) if write && !Self::is_safe_write_failover_error(&e) => {
+                    return Err(e.into_error());
+                }
+                Err(e) if failovers >= self.failover_max_attempts => {
+                    return Err(e.into_error());
+                }
                 Err(e) => {
-                    match &e {
+                    match e.error() {
                         // Retriable error, just try the next connection
                         HdfsError::RPCError(exception, _)
                         | HdfsError::FatalRPCError(exception, _)
                             if Self::is_retriable(exception) => {}
                         // Some other error, we will retry but log the error
-                        _ => warn!("{:?}", e),
+                        _ => warn!("{:?}", e.error()),
                     }
 
                     failovers += 1;
@@ -398,6 +535,136 @@ fn exponential_failover_sleep(base_millis: u64, max_millis: u64, failovers: u32)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::security::gssapi::GssMajorCodes;
+
+    #[test]
+    fn test_authentication_errors_are_not_failed_over() {
+        let authentication_errors = [
+            HdfsError::SASLError("Kerberos authentication failed".to_string()),
+            HdfsError::GSSAPIError(
+                GssMajorCodes::GSS_S_FAILURE,
+                0,
+                "No credentials".to_string(),
+            ),
+            HdfsError::NoSASLMechanism,
+            HdfsError::FatalRPCError(
+                SASL_EXCEPTION.to_string(),
+                "SASL authentication failed".to_string(),
+            ),
+            HdfsError::FatalRPCError(
+                ACCESS_CONTROL_EXCEPTION.to_string(),
+                "Access denied".to_string(),
+            ),
+            HdfsError::FatalRPCError(
+                INVALID_TOKEN_EXCEPTION.to_string(),
+                "Invalid token".to_string(),
+            ),
+        ];
+
+        assert!(
+            authentication_errors
+                .iter()
+                .all(NameServiceProxy::is_authentication_error)
+        );
+    }
+
+    #[test]
+    fn test_transport_errors_can_still_fail_over() {
+        let transport_errors = [
+            HdfsError::IOError(std::io::Error::other("connection refused")),
+            HdfsError::RPCError(
+                STANDBY_EXCEPTION.to_string(),
+                "NameNode is standby".to_string(),
+            ),
+            HdfsError::FatalRPCError(
+                OBSERVER_RETRY_EXCEPTION.to_string(),
+                "Retry on active NameNode".to_string(),
+            ),
+        ];
+
+        assert!(
+            transport_errors
+                .iter()
+                .all(|error| !NameServiceProxy::is_authentication_error(error))
+        );
+    }
+
+    #[test]
+    fn test_writes_only_fail_over_on_explicit_standby_errors() {
+        let safe_failover_errors = [
+            HdfsError::RPCError(
+                STANDBY_EXCEPTION.to_string(),
+                "NameNode is standby".to_string(),
+            ),
+            HdfsError::FatalRPCError(
+                OBSERVER_RETRY_EXCEPTION.to_string(),
+                "Retry on active NameNode".to_string(),
+            ),
+        ];
+        assert!(
+            safe_failover_errors
+                .iter()
+                .all(NameServiceProxy::is_safe_failover_error)
+        );
+
+        let ambiguous_errors = [
+            HdfsError::IOError(std::io::Error::other("connection aborted")),
+            HdfsError::FatalRPCError(
+                "org.apache.hadoop.ipc.FatalConnectionException".to_string(),
+                "request may have been processed".to_string(),
+            ),
+            HdfsError::SASLError("authentication failed".to_string()),
+        ];
+        assert!(
+            ambiguous_errors
+                .iter()
+                .all(|error| !NameServiceProxy::is_safe_failover_error(error))
+        );
+    }
+
+    #[test]
+    fn test_pre_request_connection_errors_can_fail_over_writes() {
+        let connection_error = ProxyCallError::before_request(HdfsError::IOError(
+            std::io::Error::other("connection refused"),
+        ));
+        assert!(NameServiceProxy::is_safe_write_failover_error(
+            &connection_error
+        ));
+
+        let ambiguous_error = ProxyCallError::after_request(HdfsError::IOError(
+            std::io::Error::other("connection aborted"),
+        ));
+        assert!(!NameServiceProxy::is_safe_write_failover_error(
+            &ambiguous_error
+        ));
+    }
+
+    #[test]
+    fn test_known_unreachable_io_errors_can_fail_over_writes() {
+        let safe_errors = [
+            ErrorKind::AddrNotAvailable,
+            ErrorKind::ConnectionRefused,
+            ErrorKind::HostUnreachable,
+            ErrorKind::NetworkUnreachable,
+            ErrorKind::NotConnected,
+        ];
+        for kind in safe_errors {
+            let error = ProxyCallError::after_request(HdfsError::IOError(kind.into()));
+            assert!(NameServiceProxy::is_safe_write_failover_error(&error));
+        }
+
+        let ambiguous_errors = [
+            ErrorKind::BrokenPipe,
+            ErrorKind::ConnectionAborted,
+            ErrorKind::ConnectionReset,
+            ErrorKind::TimedOut,
+            ErrorKind::UnexpectedEof,
+        ];
+        for kind in ambiguous_errors {
+            let error = ProxyCallError::after_request(HdfsError::IOError(kind.into()));
+            assert!(!NameServiceProxy::is_safe_write_failover_error(&error));
+        }
+    }
 
     #[test]
     fn test_exponential_failover_sleep() {
