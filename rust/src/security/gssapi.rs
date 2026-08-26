@@ -1,6 +1,7 @@
 use core::fmt;
 use log::warn;
 use once_cell::sync::Lazy;
+use std::ffi::CString;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::os::raw::c_void;
@@ -162,16 +163,33 @@ impl GssName {
     }
 
     fn with_target(target_name: &str) -> crate::Result<Self> {
+        Self::import(target_name, unsafe {
+            *libgssapi()?.GSS_C_NT_HOSTBASED_SERVICE()
+        })
+    }
+
+    fn with_principal(principal: &str) -> crate::Result<Self> {
+        if libgssapi()?.GSS_KRB5_NT_PRINCIPAL_NAME.is_err() {
+            return Err(HdfsError::OperationFailed(
+                "The installed GSSAPI library cannot import Kerberos principal names".to_string(),
+            ));
+        }
+        Self::import(principal, unsafe {
+            *libgssapi()?.GSS_KRB5_NT_PRINCIPAL_NAME() as bindings::gss_OID
+        })
+    }
+
+    fn import(name_value: &str, name_type: bindings::gss_OID) -> crate::Result<Self> {
         let mut minor = bindings::GSS_S_COMPLETE;
         let mut name = ptr::null_mut::<bindings::gss_name_struct>();
 
-        let mut name_buf = GssBuf::from(target_name);
+        let mut name_buf = GssBuf::from(name_value);
 
         let major = unsafe {
             libgssapi()?.gss_import_name(
                 &mut minor,
                 name_buf.as_ptr(),
-                *libgssapi()?.GSS_C_NT_HOSTBASED_SERVICE(),
+                name_type,
                 &mut name as *mut bindings::gss_name_t,
             )
         };
@@ -245,6 +263,99 @@ impl GssCred {
         Ok(Self { cred })
     }
 
+    fn acquire(credentials: &crate::security::ResolvedKerberosCredentials) -> crate::Result<Self> {
+        let mut desired_name = credentials
+            .principal
+            .as_deref()
+            .map(GssName::with_principal)
+            .transpose()?;
+        if credentials.keytab.is_none() && credentials.cache.is_none() {
+            let mut minor = 0;
+            let mut cred = ptr::null_mut();
+            let major = unsafe {
+                libgssapi()?.gss_acquire_cred(
+                    &mut minor,
+                    desired_name
+                        .as_mut()
+                        .map_or(ptr::null_mut(), |name| name.name),
+                    bindings::_GSS_C_INDEFINITE,
+                    ptr::null_mut(),
+                    bindings::GSS_C_INITIATE as bindings::gss_cred_usage_t,
+                    &mut cred,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            };
+            check_gss_ok(major, minor)?;
+            return Ok(Self { cred });
+        }
+        if libgssapi()?.gss_acquire_cred_from.is_err() {
+            return Err(HdfsError::OperationFailed(
+                "The installed GSSAPI library does not support credential stores".to_string(),
+            ));
+        }
+        let ccache_key = CString::new("ccache").expect("static string does not contain NUL");
+        let keytab_key = CString::new("client_keytab").expect("static string does not contain NUL");
+        let ccache = credentials
+            .cache
+            .as_deref()
+            .map(|cache| {
+                CString::new(cache).map_err(|_| {
+                    HdfsError::InvalidArgument(
+                        "Kerberos credential cache contains a NUL byte".to_string(),
+                    )
+                })
+            })
+            .transpose()?;
+        let keytab = credentials
+            .keytab
+            .as_deref()
+            .map(|keytab| {
+                CString::new(keytab).map_err(|_| {
+                    HdfsError::InvalidArgument(
+                        "Kerberos keytab path contains a NUL byte".to_string(),
+                    )
+                })
+            })
+            .transpose()?;
+        let mut elements = Vec::new();
+        if let Some(ccache) = ccache.as_ref() {
+            elements.push(bindings::gss_key_value_element_desc {
+                key: ccache_key.as_ptr(),
+                value: ccache.as_ptr(),
+            });
+        }
+        if let Some(keytab) = keytab.as_ref() {
+            elements.push(bindings::gss_key_value_element_desc {
+                key: keytab_key.as_ptr(),
+                value: keytab.as_ptr(),
+            });
+        }
+        let store = bindings::gss_key_value_set_desc {
+            count: elements.len() as bindings::OM_uint32,
+            elements: elements.as_mut_ptr(),
+        };
+        let mut minor = 0;
+        let mut cred = ptr::null_mut();
+        let major = unsafe {
+            libgssapi()?.gss_acquire_cred_from(
+                &mut minor,
+                desired_name
+                    .as_mut()
+                    .map_or(ptr::null_mut(), |name| name.name),
+                bindings::_GSS_C_INDEFINITE,
+                ptr::null_mut(),
+                bindings::GSS_C_INITIATE as bindings::gss_cred_usage_t,
+                &store,
+                &mut cred,
+                ptr::null_mut(),
+                ptr::null_mut(),
+            )
+        };
+        check_gss_ok(major, minor)?;
+        Ok(Self { cred })
+    }
+
     fn name(&self) -> crate::Result<GssName> {
         let mut minor = 0;
         let mut name = ptr::null_mut::<bindings::gss_name_struct>();
@@ -295,17 +406,27 @@ struct GssClientCtx {
     target: GssName,
     mech: GssMech,
     flags: u32,
+    credential: Option<GssCred>,
 }
 
 unsafe impl Send for GssClientCtx {}
 unsafe impl Sync for GssClientCtx {}
 
 impl GssClientCtx {
-    fn new(target: GssName) -> Self {
-        Self::with_mech(target, GssMech::Krb5)
+    fn with_credential(target: GssName, credential: Option<GssCred>) -> Self {
+        Self::with_mech_and_credential(target, GssMech::Krb5, credential)
     }
 
+    #[cfg(feature = "kms")]
     fn with_mech(target: GssName, mech: GssMech) -> Self {
+        Self::with_mech_and_credential(target, mech, None)
+    }
+
+    fn with_mech_and_credential(
+        target: GssName,
+        mech: GssMech,
+        credential: Option<GssCred>,
+    ) -> Self {
         // Hadoop IPC SASL uses GSSAPI/Kerberos and historically requests credential
         // delegation. SPNEGO over HTTP (KMS) does not need delegation, and the
         // delegated TGT bloats the SPNEGO token to the point where it can exceed
@@ -336,6 +457,7 @@ impl GssClientCtx {
             target,
             mech,
             flags,
+            credential,
         }
     }
 
@@ -367,7 +489,10 @@ impl GssClientCtx {
         let major = unsafe {
             libgssapi()?.gss_init_sec_context(
                 &mut minor,
-                ptr::null_mut(),
+                self.credential
+                    .as_ref()
+                    .map(|credential| credential.cred)
+                    .unwrap_or(ptr::null_mut()),
                 &mut self.ctx as *mut bindings::gss_ctx_id_t,
                 self.target.name,
                 mech_oid,
@@ -551,11 +676,16 @@ impl GssapiSession {
         service: &str,
         hostname: &str,
         effective_user: Option<String>,
+        kerberos_credentials: Option<&crate::security::ResolvedKerberosCredentials>,
     ) -> crate::Result<Self> {
         let targ_name = format!("{service}@{hostname}");
 
         let target = GssName::with_target(&targ_name)?;
-        let state = GssapiState::Pending(GssClientCtx::new(target));
+        let credential = match kerberos_credentials {
+            Some(credentials) => Some(GssCred::acquire(credentials)?),
+            None => None,
+        };
+        let state = GssapiState::Pending(GssClientCtx::with_credential(target, credential));
         Ok(Self {
             state,
             effective_user,

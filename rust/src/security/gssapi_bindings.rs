@@ -76,6 +76,22 @@ pub type gss_int32 = i32;
 pub type OM_uint32 = gss_uint32;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct gss_key_value_element_struct {
+    pub key: *const ::std::os::raw::c_char,
+    pub value: *const ::std::os::raw::c_char,
+}
+pub type gss_key_value_element_desc = gss_key_value_element_struct;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct gss_key_value_set_struct {
+    pub count: OM_uint32,
+    pub elements: *mut gss_key_value_element_desc,
+}
+pub type gss_key_value_set_desc = gss_key_value_set_struct;
+pub type gss_key_value_set_t = *mut gss_key_value_set_struct;
+pub type gss_const_key_value_set_t = *const gss_key_value_set_struct;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct gss_OID_desc_struct {
     pub length: OM_uint32,
     pub elements: *mut ::std::os::raw::c_void,
@@ -213,6 +229,20 @@ pub struct GSSAPI {
             arg6: *mut gss_cred_id_t,
             arg7: *mut gss_OID_set,
             arg8: *mut OM_uint32,
+        ) -> OM_uint32,
+        ::libloading::Error,
+    >,
+    pub gss_acquire_cred_from: Result<
+        unsafe extern "C" fn(
+            arg1: *mut OM_uint32,
+            arg2: gss_name_t,
+            arg3: OM_uint32,
+            arg4: gss_OID_set,
+            arg5: gss_cred_usage_t,
+            arg6: gss_const_key_value_set_t,
+            arg7: *mut gss_cred_id_t,
+            arg8: *mut gss_OID_set,
+            arg9: *mut OM_uint32,
         ) -> OM_uint32,
         ::libloading::Error,
     >,
@@ -683,6 +713,9 @@ impl GSSAPI {
             .get::<*mut gss_OID>(b"GSS_C_NT_EXPORT_NAME\0")
             .map(|sym| *sym);
         let gss_acquire_cred = __library.get(b"gss_acquire_cred\0").map(|sym| *sym);
+        let gss_acquire_cred_from = __library
+            .get(b"gss_acquire_cred_from\0")
+            .map(|sym| *sym);
         let gss_release_cred = __library.get(b"gss_release_cred\0").map(|sym| *sym);
         let gss_init_sec_context = __library.get(b"gss_init_sec_context\0").map(|sym| *sym);
         let gss_accept_sec_context = __library.get(b"gss_accept_sec_context\0").map(|sym| *sym);
@@ -777,6 +810,7 @@ impl GSSAPI {
             GSS_C_NT_ANONYMOUS,
             GSS_C_NT_EXPORT_NAME,
             gss_acquire_cred,
+            gss_acquire_cred_from,
             gss_release_cred,
             gss_init_sec_context,
             gss_accept_sec_context,
@@ -893,6 +927,25 @@ impl GSSAPI {
             .as_ref()
             .expect("Expected function, got error."))(
             arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8,
+        )
+    }
+    pub unsafe fn gss_acquire_cred_from(
+        &self,
+        arg1: *mut OM_uint32,
+        arg2: gss_name_t,
+        arg3: OM_uint32,
+        arg4: gss_OID_set,
+        arg5: gss_cred_usage_t,
+        arg6: gss_const_key_value_set_t,
+        arg7: *mut gss_cred_id_t,
+        arg8: *mut gss_OID_set,
+        arg9: *mut OM_uint32,
+    ) -> OM_uint32 {
+        (self
+            .gss_acquire_cred_from
+            .as_ref()
+            .expect("Expected function, got error."))(
+            arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9,
         )
     }
     pub unsafe fn gss_release_cred(

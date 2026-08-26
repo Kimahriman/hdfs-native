@@ -3,8 +3,8 @@ mod common;
 
 #[cfg(feature = "integration-test")]
 mod test {
-    use crate::common::{TEST_FILE_INTS, assert_bufs_equal};
-    use bytes::{BufMut, BytesMut};
+    use crate::common::{EnvVarGuard, TEST_FILE_INTS, assert_bufs_equal};
+    use bytes::{BufMut, Bytes, BytesMut};
     use hdfs_native::{
         Client, Result, WriteOptions,
         acl::AclEntry,
@@ -31,6 +31,77 @@ mod test {
         test_with_features(&HashSet::from([DfsFeatures::Security]))
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_security_kerberos_explicit_keytab_without_default_cache() {
+        let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::Security]));
+        let _cache_guard = EnvVarGuard::set("KRB5CCNAME", "FILE:target/test/nonexistent-cache");
+
+        let client = ClientBuilder::new()
+            .with_url(&dfs.url)
+            .with_kerberos_credentials(
+                Some("hdfs/localhost".to_string()),
+                Some("target/test/hdfs.keytab".to_string()),
+                None,
+            )
+            .build()
+            .unwrap();
+        assert_explicit_kerberos_io(&client, "/explicit-keytab").await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_security_kerberos_explicit_cache_without_default_cache() {
+        let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::Security]));
+        let _cache_guard = EnvVarGuard::set("KRB5CCNAME", "FILE:target/test/nonexistent-cache");
+
+        let client = ClientBuilder::new()
+            .with_url(&dfs.url)
+            .with_kerberos_credentials(
+                Some("hdfs/localhost".to_string()),
+                None,
+                Some("FILE:target/test/krbcache".to_string()),
+            )
+            .build()
+            .unwrap();
+        assert_explicit_kerberos_io(&client, "/explicit-cache").await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_security_kerberos_keytab_populates_explicit_cache() {
+        let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::Security]));
+        let _cache_guard = EnvVarGuard::set("KRB5CCNAME", "FILE:target/test/nonexistent-cache");
+
+        let client = ClientBuilder::new()
+            .with_url(&dfs.url)
+            .with_kerberos_credentials(
+                Some("hdfs/localhost".to_string()),
+                Some("target/test/hdfs.keytab".to_string()),
+                Some("FILE:target/test/explicit-keytab-cache".to_string()),
+            )
+            .build()
+            .unwrap();
+        assert_explicit_kerberos_io(&client, "/explicit-keytab-cache").await;
+    }
+
+    async fn assert_explicit_kerberos_io(client: &Client, path: &str) {
+        let payload = b"credentials are scoped to this client";
+        let mut writer = client
+            .create(path, WriteOptions::default().overwrite(true))
+            .await
+            .unwrap();
+        writer
+            .write_bytes(Bytes::from_static(payload))
+            .await
+            .unwrap();
+        writer.close().await.unwrap();
+        let mut reader = client.read(path).await.unwrap();
+        let actual = reader.read_bytes(payload.len()).await.unwrap();
+        assert_eq!(actual.as_ref(), payload);
+        assert!(client.delete(path, false).await.unwrap());
     }
 
     #[tokio::test]

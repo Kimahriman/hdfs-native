@@ -62,6 +62,19 @@ impl ClientBuilder {
         self
     }
 
+    /// Set Kerberos credentials scoped to this client instance.
+    pub fn with_kerberos_credentials(
+        mut self,
+        principal: Option<String>,
+        keytab: Option<String>,
+        cache: Option<String>,
+    ) -> Self {
+        self.inner = self
+            .inner
+            .with_kerberos_credentials(principal, keytab, cache);
+        self
+    }
+
     /// Create the synchronous [`Client`] from the provided settings.
     pub fn build(self) -> Result<Client> {
         let rt = Arc::new(Runtime::new()?);

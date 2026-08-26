@@ -73,6 +73,7 @@ pub(crate) async fn negotiate_sasl_session(
     service: &str,
     config: &Configuration,
     effective_user: Option<String>,
+    kerberos_credentials: Option<&crate::security::ResolvedKerberosCredentials>,
 ) -> Result<(UserInfo, SaslReader, SaslWriter)> {
     let (reader, writer) = stream.into_split();
     let mut reader = SaslReader::new(reader);
@@ -97,8 +98,12 @@ pub(crate) async fn negotiate_sasl_session(
         debug!("Handling SASL message: {:?}", message);
         match SaslState::try_from(message.state).unwrap() {
             SaslState::Negotiate => {
-                let (mut selected_auth, selected_session) =
-                    select_method(&message.auths, service, effective_user.clone())?;
+                let (mut selected_auth, selected_session) = select_method(
+                    &message.auths,
+                    service,
+                    effective_user.clone(),
+                    kerberos_credentials,
+                )?;
                 session = selected_session;
 
                 let token = if let Some(session) = session.as_mut() {
@@ -182,6 +187,7 @@ fn select_method(
     auths: &[SaslAuth],
     service: &str,
     effective_user: Option<String>,
+    kerberos_credentials: Option<&crate::security::ResolvedKerberosCredentials>,
 ) -> Result<(SaslAuth, Option<Box<dyn SaslSession>>)> {
     let user = User::get();
     for auth in auths.iter() {
@@ -193,11 +199,15 @@ fn select_method(
                 return Ok((auth.clone(), None));
             }
             (Some(AuthMethod::Kerberos), _) => {
-                let session =
-                    GssapiSession::new(auth.protocol(), auth.server_id(), effective_user)?;
+                let session = GssapiSession::new(
+                    auth.protocol(),
+                    auth.server_id(),
+                    effective_user,
+                    kerberos_credentials,
+                )?;
                 return Ok((auth.clone(), Some(Box::new(session))));
             }
-            (Some(AuthMethod::Token), Some(token)) => {
+            (Some(AuthMethod::Token), Some(token)) if kerberos_credentials.is_none() => {
                 let session = DigestSaslSession::from_token(
                     auth.protocol().to_string(),
                     auth.server_id().to_string(),
