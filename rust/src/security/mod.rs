@@ -5,6 +5,10 @@ pub(crate) mod kms;
 pub mod sasl;
 pub mod user;
 
+use std::sync::Arc;
+
+use crate::Result;
+
 /// Kerberos credentials to use for a single HDFS client.
 ///
 /// The fields are independent: a keytab and cache may be supplied together so
@@ -18,27 +22,57 @@ pub(crate) struct KerberosCredentials {
     pub cache: Option<String>,
 }
 
-#[derive(Clone)]
-pub(crate) struct ResolvedKerberosCredentials {
-    pub(crate) principal: Option<String>,
-    pub(crate) keytab: Option<String>,
-    pub(crate) cache: Option<String>,
-}
-
 impl KerberosCredentials {
-    pub(crate) fn resolve(self) -> Option<ResolvedKerberosCredentials> {
-        if self.principal.is_none() && self.keytab.is_none() && self.cache.is_none() {
-            return None;
+    pub(crate) fn new(
+        principal: Option<String>,
+        keytab: Option<String>,
+        cache: Option<String>,
+    ) -> Result<Option<Self>> {
+        if principal.is_none() && keytab.is_none() && cache.is_none() {
+            // Calling the explicit-credentials builder with all fields unset is
+            // deliberately equivalent to not calling it. This preserves the
+            // existing process-default GSSAPI behavior.
+            return Ok(None);
         }
-        let cache = match (&self.keytab, self.cache) {
+        if principal.is_none() {
+            return Err(crate::HdfsError::InvalidArgument(
+                "Kerberos principal is required when keytab or cache credentials are supplied"
+                    .to_string(),
+            ));
+        }
+        if principal.as_deref().is_some_and(str::is_empty) {
+            return Err(crate::HdfsError::InvalidArgument(
+                "Kerberos principal must not be empty".to_string(),
+            ));
+        }
+        let cache = match (&keytab, cache) {
             (Some(_), None) => Some(format!("MEMORY:hdfs-native-{}", uuid::Uuid::new_v4())),
             (_, cache) => cache,
         };
-        Some(ResolvedKerberosCredentials {
-            principal: self.principal,
-            keytab: self.keytab,
+        Ok(Some(Self {
+            principal,
+            keytab,
             cache,
-        })
+        }))
+    }
+}
+
+/// Authentication state shared by every connection belonging to one client.
+///
+/// GSS credential handles remain session-local; this context owns the
+/// per-client credential configuration used to acquire them.
+#[derive(Debug)]
+pub(crate) struct ClientAuth {
+    pub(crate) kerberos: KerberosCredentials,
+}
+
+impl ClientAuth {
+    pub(crate) fn new(kerberos: KerberosCredentials) -> Arc<Self> {
+        Arc::new(Self { kerberos })
+    }
+
+    pub(crate) fn credentials(&self) -> Option<&KerberosCredentials> {
+        Some(&self.kerberos)
     }
 }
 
@@ -52,34 +86,26 @@ impl std::fmt::Debug for KerberosCredentials {
     }
 }
 
-impl std::fmt::Debug for ResolvedKerberosCredentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ResolvedKerberosCredentials")
-            .field("principal", &self.principal)
-            .field("keytab", &self.keytab.as_ref().map(|_| "[REDACTED]"))
-            .field("cache", &self.cache.as_ref().map(|_| "[REDACTED]"))
-            .finish()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::KerberosCredentials;
 
     #[test]
     fn kerberos_credentials_are_composable_and_redacted() {
-        let credentials = KerberosCredentials {
-            principal: Some("alice@EXAMPLE.COM".to_string()),
-            keytab: Some("/run/secrets/alice.keytab".to_string()),
-            cache: Some("FILE:/run/krb5/alice.ccache".to_string()),
-        };
+        let credentials = KerberosCredentials::new(
+            Some("alice@EXAMPLE.COM".to_string()),
+            Some("/run/secrets/alice.keytab".to_string()),
+            Some("FILE:/run/krb5/alice.ccache".to_string()),
+        )
+        .unwrap()
+        .unwrap();
 
         let debug = format!("{credentials:?}");
         assert!(debug.contains("alice@EXAMPLE.COM"));
         assert!(!debug.contains("/run/secrets/alice.keytab"));
         assert!(!debug.contains("/run/krb5/alice.ccache"));
 
-        let resolved = credentials.resolve().unwrap();
+        let resolved = credentials;
         assert_eq!(
             resolved.keytab.as_deref(),
             Some("/run/secrets/alice.keytab")
@@ -92,12 +118,12 @@ mod tests {
 
     #[test]
     fn keytab_without_cache_gets_private_memory_cache() {
-        let resolved = KerberosCredentials {
-            principal: None,
-            keytab: Some("/run/secrets/alice.keytab".to_string()),
-            cache: None,
-        }
-        .resolve()
+        let resolved = KerberosCredentials::new(
+            Some("alice@EXAMPLE.COM".to_string()),
+            Some("/run/secrets/alice.keytab".to_string()),
+            None,
+        )
+        .unwrap()
         .unwrap();
 
         assert!(resolved.cache.unwrap().starts_with("MEMORY:hdfs-native-"));
@@ -105,6 +131,18 @@ mod tests {
 
     #[test]
     fn empty_credentials_use_default_path() {
-        assert!(KerberosCredentials::default().resolve().is_none());
+        assert!(
+            KerberosCredentials::new(None, None, None)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn explicit_credentials_require_a_principal() {
+        let error =
+            KerberosCredentials::new(None, Some("/run/secrets/alice.keytab".to_string()), None)
+                .unwrap_err();
+        assert!(error.to_string().contains("principal is required"));
     }
 }

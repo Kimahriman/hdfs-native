@@ -62,16 +62,21 @@ impl ClientBuilder {
         self
     }
 
-    /// Set Kerberos credentials scoped to this client instance.
-    pub fn with_kerberos_credentials(
-        mut self,
-        principal: Option<String>,
-        keytab: Option<String>,
-        cache: Option<String>,
-    ) -> Self {
-        self.inner = self
-            .inner
-            .with_kerberos_credentials(principal, keytab, cache);
+    /// Set the Kerberos principal used by this client.
+    pub fn with_kerberos_principal(mut self, principal: impl Into<String>) -> Self {
+        self.inner = self.inner.with_kerberos_principal(principal);
+        self
+    }
+
+    /// Set the Kerberos keytab used by this client.
+    pub fn with_kerberos_keytab(mut self, keytab: impl Into<String>) -> Self {
+        self.inner = self.inner.with_kerberos_keytab(keytab);
+        self
+    }
+
+    /// Set the Kerberos credential cache used by this client.
+    pub fn with_kerberos_cache(mut self, cache: impl Into<String>) -> Self {
+        self.inner = self.inner.with_kerberos_cache(cache);
         self
     }
 

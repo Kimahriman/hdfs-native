@@ -47,6 +47,33 @@ Here is a list of currently supported and unsupported but possible future featur
 
 Kerberos (SASL GSSAPI) mechanism is supported through a runtime dynamic link to `libgssapi_krb5`. This must be installed separately, but is likely already installed on your system. If not you can install it by:
 
+Clients can supply explicit Kerberos settings with the following builder
+methods:
+
+- `with_kerberos_principal(principal)` — set the Kerberos principal (required
+  when a keytab or cache is supplied).
+- `with_kerberos_keytab(keytab)` — use a keytab for credential acquisition.
+- `with_kerberos_cache(cache)` — use a credential cache such as
+  `FILE:/run/krb5/client.ccache`.
+
+For example:
+
+```rust,no_run
+use hdfs_native::ClientBuilder;
+
+let client = ClientBuilder::new()
+    .with_url("hdfs://namenode.example.com:9000")
+    .with_kerberos_principal("client@EXAMPLE.COM")
+    .with_kerberos_keytab("/run/secrets/client.keytab")
+    .build()
+    .unwrap();
+```
+
+These methods are available on both the asynchronous and synchronous
+builders. This is native credential-store behavior rather than Hadoop Java's
+Subject-based credential storage. Explicit stores require a GSSAPI
+implementation exporting `gss_acquire_cred_from`.
+
 #### Debian-based systems
 
 ```bash

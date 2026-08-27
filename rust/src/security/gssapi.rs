@@ -10,6 +10,7 @@ use std::{ptr, slice};
 
 use crate::HdfsError;
 
+use super::ClientAuth;
 use super::sasl::SaslSession;
 use super::user::User;
 
@@ -263,7 +264,7 @@ impl GssCred {
         Ok(Self { cred })
     }
 
-    fn acquire(credentials: &crate::security::ResolvedKerberosCredentials) -> crate::Result<Self> {
+    fn acquire(credentials: &crate::security::KerberosCredentials) -> crate::Result<Self> {
         let mut desired_name = credentials
             .principal
             .as_deref()
@@ -415,11 +416,6 @@ unsafe impl Sync for GssClientCtx {}
 impl GssClientCtx {
     fn with_credential(target: GssName, credential: Option<GssCred>) -> Self {
         Self::with_mech_and_credential(target, GssMech::Krb5, credential)
-    }
-
-    #[cfg(feature = "kms")]
-    fn with_mech(target: GssName, mech: GssMech) -> Self {
-        Self::with_mech_and_credential(target, mech, None)
     }
 
     fn with_mech_and_credential(
@@ -676,12 +672,12 @@ impl GssapiSession {
         service: &str,
         hostname: &str,
         effective_user: Option<String>,
-        kerberos_credentials: Option<&crate::security::ResolvedKerberosCredentials>,
+        auth: Option<std::sync::Arc<ClientAuth>>,
     ) -> crate::Result<Self> {
         let targ_name = format!("{service}@{hostname}");
 
         let target = GssName::with_target(&targ_name)?;
-        let credential = match kerberos_credentials {
+        let credential = match auth.as_deref().and_then(ClientAuth::credentials) {
             Some(credentials) => Some(GssCred::acquire(credentials)?),
             None => None,
         };
@@ -712,10 +708,18 @@ pub(crate) struct SpnegoSession {
 
 #[cfg(feature = "kms")]
 impl SpnegoSession {
-    pub(crate) fn new(service: &str, hostname: &str) -> crate::Result<Self> {
+    pub(crate) fn new(
+        service: &str,
+        hostname: &str,
+        auth: Option<std::sync::Arc<ClientAuth>>,
+    ) -> crate::Result<Self> {
         let target = GssName::with_target(&format!("{service}@{hostname}"))?;
+        let credential = match auth.as_deref().and_then(ClientAuth::credentials) {
+            Some(credentials) => Some(GssCred::acquire(credentials)?),
+            None => None,
+        };
         Ok(Self {
-            ctx: GssClientCtx::with_mech(target, GssMech::Spnego),
+            ctx: GssClientCtx::with_mech_and_credential(target, GssMech::Spnego, credential),
             complete: false,
         })
     }

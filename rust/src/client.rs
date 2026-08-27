@@ -223,15 +223,15 @@ impl IORuntime {
 ///
 /// Create a client that acquires credentials directly from a keytab:
 ///
+/// An explicit principal is required. A keytab without a supplied cache uses
+/// a native `MEMORY:` credential cache.
+///
 /// ```rust,no_run
 /// # use hdfs_native::ClientBuilder;
 /// let client = ClientBuilder::new()
 ///     .with_url("hdfs://namenode.example.com:9000")
-///     .with_kerberos_credentials(
-///         Some("client@EXAMPLE.COM".into()),
-///         Some("/run/secrets/client.keytab".into()),
-///         None,
-///     )
+///     .with_kerberos_principal("client@EXAMPLE.COM")
+///     .with_kerberos_keytab("/run/secrets/client.keytab")
 ///     .build()
 ///     .unwrap();
 /// ```
@@ -283,11 +283,8 @@ impl IORuntime {
 /// # use hdfs_native::ClientBuilder;
 /// let client = ClientBuilder::new()
 ///     .with_url("hdfs://namenode.example.com:9000")
-///     .with_kerberos_credentials(
-///         Some("client@EXAMPLE.COM".into()),
-///         None,
-///         Some("FILE:/run/krb5/client.ccache".into()),
-///     )
+///     .with_kerberos_principal("client@EXAMPLE.COM")
+///     .with_kerberos_cache("FILE:/run/krb5/client.ccache")
 ///     .build()
 ///     .unwrap();
 /// ```
@@ -298,7 +295,9 @@ pub struct ClientBuilder {
     config_dir: Option<String>,
     runtime: Option<IORuntime>,
     user: Option<String>,
-    kerberos_credentials: Option<crate::security::KerberosCredentials>,
+    kerberos_principal: Option<String>,
+    kerberos_keytab: Option<String>,
+    kerberos_cache: Option<String>,
 }
 
 impl ClientBuilder {
@@ -346,25 +345,21 @@ impl ClientBuilder {
         self
     }
 
-    /// Set Kerberos credentials scoped to this client instance.
-    ///
-    /// When unset, Kerberos authentication continues to use the process-default
-    /// GSSAPI credential for backward compatibility. `keytab` and `cache` are
-    /// independent and may be provided together. A keytab without a cache gets
-    /// a private in-memory cache. Explicit credential stores require a runtime
-    /// GSSAPI implementation that exports
-    /// `gss_acquire_cred_from` (such as MIT Kerberos).
-    pub fn with_kerberos_credentials(
-        mut self,
-        principal: Option<String>,
-        keytab: Option<String>,
-        cache: Option<String>,
-    ) -> Self {
-        self.kerberos_credentials = Some(crate::security::KerberosCredentials {
-            principal,
-            keytab,
-            cache,
-        });
+    /// Set the Kerberos principal used by this client.
+    pub fn with_kerberos_principal(mut self, principal: impl Into<String>) -> Self {
+        self.kerberos_principal = Some(principal.into());
+        self
+    }
+
+    /// Set the Kerberos keytab used by this client.
+    pub fn with_kerberos_keytab(mut self, keytab: impl Into<String>) -> Self {
+        self.kerberos_keytab = Some(keytab.into());
+        self
+    }
+
+    /// Set the Kerberos credential cache used by this client.
+    pub fn with_kerberos_cache(mut self, cache: impl Into<String>) -> Self {
+        self.kerberos_cache = Some(cache.into());
         self
     }
 
@@ -377,15 +372,14 @@ impl ClientBuilder {
             Client::default_fs(&config)?
         };
 
-        Client::build(
-            &url,
-            config,
-            self.runtime,
-            self.user,
-            self.kerberos_credentials
-                .and_then(crate::security::KerberosCredentials::resolve)
-                .map(Arc::new),
-        )
+        let kerberos_credentials = crate::security::KerberosCredentials::new(
+            self.kerberos_principal,
+            self.kerberos_keytab,
+            self.kerberos_cache,
+        )?
+        .map(crate::security::ClientAuth::new);
+
+        Client::build(&url, config, self.runtime, self.user, kerberos_credentials)
     }
 }
 
@@ -448,7 +442,7 @@ impl Client {
         config: Configuration,
         rt: Option<IORuntime>,
         user: Option<String>,
-        kerberos_credentials: Option<Arc<crate::security::ResolvedKerberosCredentials>>,
+        auth: Option<Arc<crate::security::ClientAuth>>,
     ) -> Result<Self> {
         let resolved_url = if !url.has_host() {
             let default_url = Self::default_fs(&config)?;
@@ -467,8 +461,9 @@ impl Client {
         let rt_holder = RuntimeHolder::new(rt);
 
         let user_info = if config.security_enabled()
-            && let Some(principal) = kerberos_credentials
+            && let Some(principal) = auth
                 .as_deref()
+                .and_then(|auth| auth.credentials())
                 .and_then(|credentials| credentials.principal.as_deref())
         {
             User::get_user_info_from_principal(principal, user.clone())
@@ -494,7 +489,7 @@ impl Client {
                     Arc::clone(&config),
                     rt_holder.get_handle(),
                     user.clone(),
-                    kerberos_credentials.clone(),
+                    auth.clone(),
                 )?;
                 let protocol = Arc::new(NamenodeProtocol::new(proxy, rt_holder.get_handle()));
 
@@ -510,7 +505,7 @@ impl Client {
                 Arc::clone(&config),
                 rt_holder.get_handle(),
                 user.clone(),
-                kerberos_credentials,
+                auth.clone(),
                 home_dir,
             )?,
             _ => {
@@ -521,7 +516,8 @@ impl Client {
         };
 
         #[cfg(feature = "kms")]
-        let kms_client = KmsClient::from_config(config.as_ref(), None, username.to_string())?;
+        let kms_client =
+            KmsClient::from_config(config.as_ref(), None, username.to_string(), auth.clone())?;
 
         Ok(Self {
             mount_table: Arc::new(mount_table),
@@ -537,7 +533,7 @@ impl Client {
         config: Arc<Configuration>,
         handle: Handle,
         effective_user: Option<String>,
-        kerberos_credentials: Option<Arc<crate::security::ResolvedKerberosCredentials>>,
+        auth: Option<Arc<crate::security::ClientAuth>>,
         home_dir: String,
     ) -> Result<MountTable> {
         let mut mounts: Vec<MountLink> = Vec::new();
@@ -560,7 +556,7 @@ impl Client {
                 Arc::clone(&config),
                 handle.clone(),
                 effective_user.clone(),
-                kerberos_credentials.clone(),
+                auth.clone(),
             )?;
             let protocol = Arc::new(NamenodeProtocol::new(proxy, handle.clone()));
 
@@ -1721,16 +1717,24 @@ mod test {
         let client = ClientBuilder::new()
             .with_url("hdfs://127.0.0.1:9000")
             .with_config([("hadoop.security.authentication", "kerberos")])
-            .with_kerberos_credentials(
-                Some("alice@EXAMPLE.COM".to_string()),
-                None,
-                Some("FILE:/run/krb5/alice.ccache".to_string()),
-            )
+            .with_kerberos_principal("alice@EXAMPLE.COM")
+            .with_kerberos_cache("FILE:/run/krb5/alice.ccache")
             .build()
             .unwrap();
 
         let (_, resolved) = client.mount_table.resolve("file");
         assert_eq!(resolved, "/user/alice/file");
+    }
+
+    #[test]
+    fn test_explicit_kerberos_credentials_require_principal() {
+        let error = ClientBuilder::new()
+            .with_url("hdfs://127.0.0.1:9000")
+            .with_kerberos_keytab("client.keytab")
+            .build()
+            .unwrap_err();
+
+        assert!(error.to_string().contains("principal is required"));
     }
 
     #[test]

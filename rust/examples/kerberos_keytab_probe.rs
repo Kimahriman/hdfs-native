@@ -17,7 +17,8 @@ async fn main() {
     let client = ClientBuilder::new()
         .with_url(url)
         .with_config_dir(config_dir)
-        .with_kerberos_credentials(Some(principal), Some(keytab), None)
+        .with_kerberos_principal(principal)
+        .with_kerberos_keytab(keytab)
         .build()
         .expect("build keytab-backed client");
 

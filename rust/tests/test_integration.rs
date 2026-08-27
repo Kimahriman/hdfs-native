@@ -41,11 +41,8 @@ mod test {
 
         let client = ClientBuilder::new()
             .with_url(&dfs.url)
-            .with_kerberos_credentials(
-                Some("hdfs/localhost".to_string()),
-                Some("target/test/hdfs.keytab".to_string()),
-                None,
-            )
+            .with_kerberos_principal("hdfs/localhost")
+            .with_kerberos_keytab("target/test/hdfs.keytab")
             .build()
             .unwrap();
         assert_explicit_kerberos_io(&client, "/explicit-keytab").await;
@@ -59,11 +56,8 @@ mod test {
 
         let client = ClientBuilder::new()
             .with_url(&dfs.url)
-            .with_kerberos_credentials(
-                Some("hdfs/localhost".to_string()),
-                None,
-                Some("FILE:target/test/krbcache".to_string()),
-            )
+            .with_kerberos_principal("hdfs/localhost")
+            .with_kerberos_cache("FILE:target/test/krbcache")
             .build()
             .unwrap();
         assert_explicit_kerberos_io(&client, "/explicit-cache").await;
@@ -77,11 +71,9 @@ mod test {
 
         let client = ClientBuilder::new()
             .with_url(&dfs.url)
-            .with_kerberos_credentials(
-                Some("hdfs/localhost".to_string()),
-                Some("target/test/hdfs.keytab".to_string()),
-                Some("FILE:target/test/explicit-keytab-cache".to_string()),
-            )
+            .with_kerberos_principal("hdfs/localhost")
+            .with_kerberos_keytab("target/test/hdfs.keytab")
+            .with_kerberos_cache("FILE:target/test/explicit-keytab-cache")
             .build()
             .unwrap();
         assert_explicit_kerberos_io(&client, "/explicit-keytab-cache").await;

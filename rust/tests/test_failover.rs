@@ -73,11 +73,8 @@ mod test {
         let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::Security, DfsFeatures::HA]));
         let _cache_guard = EnvVarGuard::set("KRB5CCNAME", "FILE:target/test/nonexistent-cache");
         let client = ClientBuilder::new()
-            .with_kerberos_credentials(
-                Some("hdfs/localhost".to_string()),
-                Some("target/test/hdfs.keytab".to_string()),
-                None,
-            )
+            .with_kerberos_principal("hdfs/localhost")
+            .with_kerberos_keytab("target/test/hdfs.keytab")
             .build()?;
 
         client

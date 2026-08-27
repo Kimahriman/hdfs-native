@@ -40,7 +40,7 @@ struct ProxyConnection {
     alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
     nameservice: Option<String>,
     effective_user: Option<String>,
-    kerberos_credentials: Option<Arc<crate::security::ResolvedKerberosCredentials>>,
+    auth: Option<Arc<crate::security::ClientAuth>>,
     config: Arc<Configuration>,
     handle: Handle,
 }
@@ -83,7 +83,7 @@ impl ProxyConnection {
         alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
         nameservice: Option<String>,
         effective_user: Option<String>,
-        kerberos_credentials: Option<Arc<crate::security::ResolvedKerberosCredentials>>,
+        auth: Option<Arc<crate::security::ClientAuth>>,
         config: Arc<Configuration>,
         handle: Handle,
     ) -> Self {
@@ -93,7 +93,7 @@ impl ProxyConnection {
             alignment_context,
             nameservice,
             effective_user,
-            kerberos_credentials,
+            auth,
             config,
             handle,
         }
@@ -117,7 +117,7 @@ impl ProxyConnection {
                                 self.alignment_context.clone(),
                                 self.nameservice.as_deref(),
                                 self.effective_user.clone(),
-                                self.kerberos_credentials.as_deref(),
+                                self.auth.clone(),
                                 &self.config,
                                 &self.handle,
                             )
@@ -177,7 +177,7 @@ impl NameServiceProxy {
         config: Arc<Configuration>,
         handle: Handle,
         effective_user: Option<String>,
-        kerberos_credentials: Option<Arc<crate::security::ResolvedKerberosCredentials>>,
+        auth: Option<Arc<crate::security::ClientAuth>>,
     ) -> Result<Self> {
         let host = nameservice.host_str().ok_or(HdfsError::InvalidArgument(
             "No host for name service".to_string(),
@@ -213,7 +213,7 @@ impl NameServiceProxy {
                 alignment_context,
                 None,
                 effective_user,
-                kerberos_credentials,
+                auth,
                 Arc::clone(&config),
                 handle,
             )]
@@ -228,7 +228,7 @@ impl NameServiceProxy {
                         alignment_context.clone(),
                         Some(host.to_string()),
                         effective_user.clone(),
-                        kerberos_credentials.clone(),
+                        auth.clone(),
                         Arc::clone(&config),
                         handle.clone(),
                     )
