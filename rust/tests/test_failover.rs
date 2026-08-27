@@ -9,7 +9,7 @@ mod test {
     use std::time::Duration;
 
     use hdfs_native::{
-        Client, ClientBuilder, Result,
+        Client, ClientBuilder, HdfsError, Result,
         minidfs::{DfsFeatures, MiniDfs},
         test::{NAMENODE_RESPONSE_FAULT_INJECTOR, NAMENODE_STANDBY_FAULT_INJECTOR},
     };
@@ -58,9 +58,25 @@ mod test {
         NAMENODE_RESPONSE_FAULT_INJECTOR.store(false, Ordering::SeqCst);
 
         assert!(result.is_err());
-        // The response was lost after the NameNode committed the mutation. A later read proves
-        // that the failed write reached the server without allowing the client to replay it.
-        assert!(client.get_file_info("/ambiguous-write").await.is_ok());
+        // The response was lost after the NameNode committed the mutation, so the state ID is
+        // not updated. Follow-up requests are therefore not guaranteed to see the write until
+        // the observer catches up.
+        let observed = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match client.get_file_info("/ambiguous-write").await {
+                    Ok(_) => break Ok(()),
+                    Err(HdfsError::FileNotFound(_)) => {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                    Err(error) => break Err(error),
+                }
+            }
+        })
+        .await
+        .map_err(|_| {
+            HdfsError::OperationFailed("Timed out waiting for the observer".to_string())
+        })?;
+        observed?;
 
         Ok(())
     }
