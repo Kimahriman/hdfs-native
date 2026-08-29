@@ -258,7 +258,7 @@ impl User {
             })
     }
 
-    pub(crate) fn get_user_info_from_principal(
+    pub fn get_user_info_from_principal(
         principal: &str,
         effective_user: Option<String>,
     ) -> UserInfo {

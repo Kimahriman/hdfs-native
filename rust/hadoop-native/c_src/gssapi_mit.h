@@ -1,4 +1,5 @@
 #include <gssapi/gssapi.h>
+#include <gssapi/gssapi_ext.h>
 #include <gssapi/gssapi_krb5.h>
 
 const OM_uint32 _GSS_C_INDEFINITE = GSS_C_INDEFINITE;

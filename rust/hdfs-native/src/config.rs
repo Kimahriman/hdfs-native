@@ -17,6 +17,9 @@ const HA_NAMENODE_RPC_ADDRESS_PREFIX: &str = "dfs.namenode.rpc-address";
 const DFS_CLIENT_FAILOVER_RESOLVE_NEEDED: &str = "dfs.client.failover.resolve-needed";
 const DFS_CLIENT_FAILOVER_RESOLVER_USE_FQDN: &str = "dfs.client.failover.resolver.useFQDN";
 const DFS_CLIENT_FAILOVER_RANDOM_ORDER: &str = "dfs.client.failover.random.order";
+const DFS_CLIENT_FAILOVER_MAX_ATTEMPTS: &str = "dfs.client.failover.max.attempts";
+const DFS_CLIENT_FAILOVER_SLEEP_BASE_MILLIS: &str = "dfs.client.failover.sleep.base.millis";
+const DFS_CLIENT_FAILOVER_SLEEP_MAX_MILLIS: &str = "dfs.client.failover.sleep.max.millis";
 const DFS_CLIENT_FAILOVER_PROXY_PROVIDER: &str = "dfs.client.failover.proxy.provider";
 const DFS_DATA_TRANSFER_PROTECTION: &str = "dfs.data.transfer.protection";
 const DFS_CLIENT_USE_DATANODE_HOSTNAME: &str = "dfs.client.use.datanode.hostname";
@@ -49,6 +52,24 @@ impl Configuration {
 
     pub(crate) fn use_datanode_hostname(&self) -> bool {
         self.get_boolean(DFS_CLIENT_USE_DATANODE_HOSTNAME, false)
+    }
+
+    fn get_u64(&self, key: &str, default: u64) -> u64 {
+        self.get(key)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default)
+    }
+
+    pub(crate) fn failover_max_attempts(&self) -> u32 {
+        self.get_u64(DFS_CLIENT_FAILOVER_MAX_ATTEMPTS, 15) as u32
+    }
+
+    pub(crate) fn failover_sleep_base_millis(&self) -> u64 {
+        self.get_u64(DFS_CLIENT_FAILOVER_SLEEP_BASE_MILLIS, 500)
+    }
+
+    pub(crate) fn failover_sleep_max_millis(&self) -> u64 {
+        self.get_u64(DFS_CLIENT_FAILOVER_SLEEP_MAX_MILLIS, 15000)
     }
 
     pub(crate) fn get_urls_for_nameservice(&self, nameservice: &str) -> Result<Vec<String>> {

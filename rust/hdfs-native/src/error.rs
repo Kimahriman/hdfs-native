@@ -62,6 +62,7 @@ impl From<hadoop_native::HadoopError> for HdfsError {
         match error {
             HadoopError::IOError(error) => Self::IOError(error),
             HadoopError::InvalidPath(path) => Self::InvalidPath(path),
+            HadoopError::InvalidArgument(message) => Self::InvalidArgument(message),
             HadoopError::InvalidRPCResponse(error) => Self::InvalidRPCResponse(error),
             HadoopError::RPCError(class, message) => Self::RPCError(class, message),
             HadoopError::FatalRPCError(class, message) => Self::FatalRPCError(class, message),

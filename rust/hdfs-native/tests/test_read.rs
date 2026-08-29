@@ -45,6 +45,26 @@ mod test {
         .unwrap();
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn test_read_crc32() -> Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::Crc32]));
+        let client = Client::default();
+
+        let reader = client.read("/testfile-crc32").await?;
+        let mut buf = reader.read_range(0, reader.file_length()).await?;
+        for i in 0..1024 {
+            assert_eq!(buf.get_i32(), i);
+        }
+
+        let mut buf = reader.read_range(512 * 4, 4).await?;
+        assert_eq!(buf.get_i32(), 512);
+
+        Ok(())
+    }
+
     async fn test_read(features: &HashSet<DfsFeatures>) -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 

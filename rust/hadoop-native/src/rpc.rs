@@ -63,6 +63,7 @@ pub struct RpcConnectionOptions<'a> {
     pub token_kind: &'a str,
     pub token_service: &'a str,
     pub effective_user: Option<String>,
+    pub auth: Option<Arc<crate::security::ClientAuth>>,
 }
 
 #[derive(Debug)]
@@ -108,6 +109,7 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
             options.token_service,
             config,
             options.effective_user,
+            options.auth,
         )
         .await?;
         let (sender, receiver) = mpsc::channel::<Vec<u8>>(1000);

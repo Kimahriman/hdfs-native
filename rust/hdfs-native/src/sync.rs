@@ -62,6 +62,24 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the Kerberos principal used by this client.
+    pub fn with_kerberos_principal(mut self, principal: impl Into<String>) -> Self {
+        self.inner = self.inner.with_kerberos_principal(principal);
+        self
+    }
+
+    /// Set the Kerberos keytab used by this client.
+    pub fn with_kerberos_keytab(mut self, keytab: impl Into<String>) -> Self {
+        self.inner = self.inner.with_kerberos_keytab(keytab);
+        self
+    }
+
+    /// Set the Kerberos credential cache used by this client.
+    pub fn with_kerberos_cache(mut self, cache: impl Into<String>) -> Self {
+        self.inner = self.inner.with_kerberos_cache(cache);
+        self
+    }
+
     /// Create the synchronous [`Client`] from the provided settings.
     pub fn build(self) -> Result<Client> {
         let rt = Arc::new(Runtime::new()?);

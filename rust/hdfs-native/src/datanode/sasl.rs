@@ -286,7 +286,7 @@ impl SaslDatanodeConnection {
             )
         } else if !config.security_enabled()
             || token.identifier.is_empty()
-            || datanode_id.xfer_port <= 1024
+            || datanode_id.xfer_port < 1024
             || !config.data_transfer_protection_enabled()
         {
             return self.split(None, None);

@@ -15,6 +15,23 @@ client = Client("hdfs://localhost:9000")
 status = client.get_file_info("/file.txt")
 ```
 
+To use explicit Kerberos credentials, pass the principal and optionally a
+keytab and/or credential cache to either `Client` or `AsyncClient`:
+
+```python
+from hdfs_native import Client
+
+client = Client(
+    "hdfs://namenode.example.com:9000",
+    kerberos_principal="client@EXAMPLE.COM",
+    kerberos_keytab="/run/secrets/client.keytab",
+)
+```
+
+`kerberos_principal` is required when `kerberos_keytab` or `kerberos_cache` is
+provided. A keytab without an explicit cache uses a native in-memory cache.
+The same arguments are available on `AsyncClient`.
+
 ## CLI
 There is a built-in CLI `hdfsn` that implements most of the behavior of `hdfs dfs` but with a more bash-like syntax. The easiest way to use the CLI is with UV.
 

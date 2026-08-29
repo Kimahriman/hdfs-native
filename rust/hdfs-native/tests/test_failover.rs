@@ -1,0 +1,116 @@
+#[cfg(feature = "integration-test")]
+mod common;
+
+#[cfg(feature = "integration-test")]
+mod test {
+    use crate::common::EnvVarGuard;
+    use std::collections::HashSet;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    use hdfs_native::{
+        Client, ClientBuilder, HdfsError, Result,
+        minidfs::{DfsFeatures, MiniDfs},
+        test::{NAMENODE_RESPONSE_FAULT_INJECTOR, NAMENODE_STANDBY_FAULT_INJECTOR},
+    };
+    use serial_test::serial;
+
+    #[tokio::test]
+    #[serial]
+    async fn test_standby_failover_retry() -> Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::HA]));
+        let client = Client::default();
+
+        client.mkdirs("/pre-failover", 0o755, true).await?;
+
+        NAMENODE_STANDBY_FAULT_INJECTOR.store(true, Ordering::SeqCst);
+
+        let write_during_failover = tokio::spawn({
+            let client = client.clone();
+            async move { client.mkdirs("/during-failover", 0o755, true).await }
+        });
+
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        NAMENODE_STANDBY_FAULT_INJECTOR.store(false, Ordering::SeqCst);
+
+        write_during_failover.await.unwrap()?;
+        assert!(client.get_file_info("/during-failover").await.is_ok());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_ambiguous_write_is_not_retried() -> Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::HA]));
+        let client = Client::default();
+
+        // Warm up the observer/active connections and complete the write-side msync so the
+        // injected failure is consumed by the mkdirs response itself.
+        client.mkdirs("/pre-ambiguous-write", 0o755, true).await?;
+
+        NAMENODE_RESPONSE_FAULT_INJECTOR.store(true, Ordering::SeqCst);
+        let result = client.mkdirs("/ambiguous-write", 0o755, true).await;
+        NAMENODE_RESPONSE_FAULT_INJECTOR.store(false, Ordering::SeqCst);
+
+        assert!(result.is_err());
+        // The response was lost after the NameNode committed the mutation, so the state ID is
+        // not updated. Follow-up requests are therefore not guaranteed to see the write until
+        // the observer catches up.
+        let observed = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match client.get_file_info("/ambiguous-write").await {
+                    Ok(_) => break Ok(()),
+                    Err(HdfsError::FileNotFound(_)) => {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                    Err(error) => break Err(error),
+                }
+            }
+        })
+        .await
+        .map_err(|_| {
+            HdfsError::OperationFailed("Timed out waiting for the observer".to_string())
+        })?;
+        observed?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_explicit_keytab_survives_ha_reconnect() -> Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::Security, DfsFeatures::HA]));
+        let _cache_guard = EnvVarGuard::set("KRB5CCNAME", "FILE:target/test/nonexistent-cache");
+        let client = ClientBuilder::new()
+            .with_kerberos_principal("hdfs/localhost")
+            .with_kerberos_keytab("target/test/hdfs.keytab")
+            .build()?;
+
+        client
+            .mkdirs("/keytab-before-failover", 0o755, true)
+            .await?;
+        NAMENODE_STANDBY_FAULT_INJECTOR.store(true, Ordering::SeqCst);
+        let operation = tokio::spawn({
+            let client = client.clone();
+            async move { client.mkdirs("/keytab-during-failover", 0o755, true).await }
+        });
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        NAMENODE_STANDBY_FAULT_INJECTOR.store(false, Ordering::SeqCst);
+
+        operation.await.unwrap()?;
+        assert!(
+            client
+                .get_file_info("/keytab-during-failover")
+                .await
+                .is_ok()
+        );
+        Ok(())
+    }
+}

@@ -10,6 +10,8 @@ pub enum HadoopError {
     IOError(#[from] io::Error),
     #[error("invalid path: {0}")]
     InvalidPath(String),
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
     #[error("failed to decode RPC response: {0}")]
     InvalidRPCResponse(#[from] DecodeError),
     #[error("RPC error: {0} {1}")]
