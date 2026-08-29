@@ -1,0 +1,1751 @@
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use futures::stream::BoxStream;
+use futures::{StreamExt, stream};
+use tokio::runtime::{Handle, Runtime};
+use url::Url;
+
+use crate::acl::{AclEntry, AclStatus};
+use crate::config::{self, Configuration};
+use crate::ec::resolve_ec_policy;
+use crate::encryption::codec::FileCryptoCodec;
+#[cfg(feature = "kms")]
+use crate::encryption::kms::KmsClient;
+use crate::error::{HdfsError, Result};
+use crate::file::{FileReader, FileWriter};
+use crate::namenode::protocol::NamenodeProtocol;
+use crate::namenode::proxy::NameServiceProxy;
+use crate::proto::hdfs::hdfs_file_status_proto::FileType;
+use hadoop_native::security::user::User;
+use hadoop_native::security::{ClientAuth, KerberosCredentials};
+
+use crate::glob::{GlobPattern, expand_glob, get_path_components, unescape_component};
+use crate::proto::hdfs::{ContentSummaryProto, FileEncryptionInfoProto, HdfsFileStatusProto};
+
+const TRASH_ROOT_DIR: &str = ".Trash";
+const TRASH_CURRENT_DIR: &str = "Current";
+const TRASH_DIR_PERMISSION: u32 = 0o700;
+
+#[derive(Clone)]
+pub struct WriteOptions {
+    /// Block size. Default is retrieved from the server.
+    pub block_size: Option<u64>,
+    /// Replication factor. Default is retrieved from the server.
+    pub replication: Option<u32>,
+    /// Unix file permission, defaults to 0o644, which is "rw-r--r--" as a Unix permission.
+    /// This is the raw octal value represented in base 10.
+    pub permission: u32,
+    /// Whether to overwrite the file, defaults to false. If true and the
+    /// file does not exist, it will result in an error.
+    pub overwrite: bool,
+    /// Whether to create any missing parent directories, defaults to true. If false
+    /// and the parent directory does not exist, an error will be returned.
+    pub create_parent: bool,
+}
+
+impl Default for WriteOptions {
+    fn default() -> Self {
+        Self {
+            block_size: None,
+            replication: None,
+            permission: 0o644,
+            overwrite: false,
+            create_parent: true,
+        }
+    }
+}
+
+impl AsRef<WriteOptions> for WriteOptions {
+    fn as_ref(&self) -> &WriteOptions {
+        self
+    }
+}
+
+impl WriteOptions {
+    /// Set the block_size for the new file
+    pub fn block_size(mut self, block_size: u64) -> Self {
+        self.block_size = Some(block_size);
+        self
+    }
+
+    /// Set the replication for the new file
+    pub fn replication(mut self, replication: u32) -> Self {
+        self.replication = Some(replication);
+        self
+    }
+
+    /// Set the raw octal permission value for the new file
+    pub fn permission(mut self, permission: u32) -> Self {
+        self.permission = permission;
+        self
+    }
+
+    /// Set whether to overwrite an existing file
+    pub fn overwrite(mut self, overwrite: bool) -> Self {
+        self.overwrite = overwrite;
+        self
+    }
+
+    /// Set whether to create all missing parent directories
+    pub fn create_parent(mut self, create_parent: bool) -> Self {
+        self.create_parent = create_parent;
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+struct MountLink {
+    viewfs_path: String,
+    hdfs_path: String,
+    protocol: Arc<NamenodeProtocol>,
+}
+
+impl MountLink {
+    fn new(viewfs_path: &str, hdfs_path: &str, protocol: Arc<NamenodeProtocol>) -> Self {
+        // We should never have an empty path, we always want things mounted at root ("/") by default.
+        Self {
+            viewfs_path: viewfs_path.trim_end_matches("/").to_string(),
+            hdfs_path: hdfs_path.trim_end_matches("/").to_string(),
+            protocol,
+        }
+    }
+    /// Convert a viewfs path into a name service path if it matches this link
+    fn resolve(&self, path: &str) -> Option<String> {
+        // Make sure we don't partially match the last component. It either needs to be an exact
+        // match to a viewfs path, or needs to match with a trailing slash
+        if path == self.viewfs_path {
+            Some(self.hdfs_path.clone())
+        } else {
+            path.strip_prefix(&format!("{}/", self.viewfs_path))
+                .map(|relative_path| format!("{}/{}", self.hdfs_path, relative_path))
+        }
+    }
+}
+
+#[derive(Debug)]
+struct MountTable {
+    mounts: Vec<MountLink>,
+    fallback: MountLink,
+    home_dir: String,
+}
+
+impl MountTable {
+    fn resolve(&self, src: &str) -> (&MountLink, String) {
+        let path = if src.starts_with('/') {
+            src.to_string()
+        } else {
+            format!("{}/{}", self.home_dir, src)
+        };
+
+        for link in self.mounts.iter() {
+            if let Some(resolved) = link.resolve(&path) {
+                return (link, resolved);
+            }
+        }
+        (&self.fallback, self.fallback.resolve(&path).unwrap())
+    }
+}
+
+fn build_home_dir(
+    scheme: &str,
+    host: Option<&str>,
+    config: &Configuration,
+    username: &str,
+) -> String {
+    let prefix = match scheme {
+        "hdfs" => config.get("dfs.user.home.dir.prefix"),
+        "viewfs" => {
+            host.and_then(|host| config.get(&format!("fs.viewfs.mounttable.{host}.homedir")))
+        }
+        _ => None,
+    }
+    .unwrap_or("/user");
+
+    let prefix = prefix.trim_end_matches('/');
+    if prefix.is_empty() {
+        format!("/{username}")
+    } else {
+        format!("{prefix}/{username}")
+    }
+}
+
+/// Holds either a [Runtime] or a [Handle] to an existing runtime for IO tasks
+#[derive(Debug)]
+pub enum IORuntime {
+    Runtime(Runtime),
+    Handle(Handle),
+}
+
+impl From<Runtime> for IORuntime {
+    fn from(value: Runtime) -> Self {
+        Self::Runtime(value)
+    }
+}
+
+impl From<Handle> for IORuntime {
+    fn from(value: Handle) -> Self {
+        Self::Handle(value)
+    }
+}
+
+impl IORuntime {
+    fn handle(&self) -> Handle {
+        match self {
+            Self::Runtime(runtime) => runtime.handle().clone(),
+            Self::Handle(handle) => handle.clone(),
+        }
+    }
+}
+
+/// Builds a new [Client] instance. Configs will be loaded with the following precedence:
+///
+/// - If method `ClientBuilder::with_config_dir` is invoked, configs will be loaded from `${config_dir}/{core,hdfs}-site.xml`
+/// - If the `HADOOP_CONF_DIR` environment variable is defined, configs will be loaded from `${HADOOP_CONF_DIR}/{core,hdfs}-site.xml`
+/// - If the `HADOOP_HOME` environment variable is defined, configs will be loaded from `${HADOOP_HOME}/etc/hadoop/{core,hdfs}-site.xml`
+/// - Otherwise no configs are defined
+///
+/// Finally, configs set by `with_config` will override the configs loaded above.
+///
+/// If no URL is defined, the `fs.defaultFS` config must be defined and is used as the URL.
+///
+/// # Examples
+///
+/// Create a new client with given config directory
+///
+/// ```rust,no_run
+/// # use hdfs_native::ClientBuilder;
+/// let client = ClientBuilder::new()
+///     .with_config_dir("/opt/hadoop/etc/hadoop")
+///     .build()
+///     .unwrap();
+/// ```
+///
+/// Create a client that acquires credentials directly from a keytab:
+///
+/// An explicit principal is required. A keytab without a supplied cache uses
+/// a native `MEMORY:` credential cache.
+///
+/// ```rust,no_run
+/// # use hdfs_native::ClientBuilder;
+/// let client = ClientBuilder::new()
+///     .with_url("hdfs://namenode.example.com:9000")
+///     .with_kerberos_principal("client@EXAMPLE.COM")
+///     .with_kerberos_keytab("/run/secrets/client.keytab")
+///     .build()
+///     .unwrap();
+/// ```
+///
+/// Create a new client with the environment variable
+///
+/// ```rust,no_run
+/// # use hdfs_native::ClientBuilder;
+/// unsafe { std::env::set_var("HADOOP_CONF_DIR", "/opt/hadoop/etc/hadoop") };
+/// let client = ClientBuilder::new()
+///     .build()
+///     .unwrap();
+/// ```
+///
+/// Create a new client using the fs.defaultFS config
+///
+/// ```rust
+/// # use hdfs_native::ClientBuilder;
+/// let client = ClientBuilder::new()
+///     .with_config(vec![("fs.defaultFS", "hdfs://127.0.0.1:9000")])
+///     .build()
+///     .unwrap();
+/// ```
+///
+/// Create a new client connecting to a specific URL:
+///
+/// ```rust
+/// # use hdfs_native::ClientBuilder;
+/// let client = ClientBuilder::new()
+///     .with_url("hdfs://127.0.0.1:9000")
+///     .build()
+///     .unwrap();
+/// ```
+///
+/// Create a new client using a dedicated tokio runtime for spawned tasks and IO operations
+///
+/// ```rust
+/// # use hdfs_native::ClientBuilder;
+/// let client = ClientBuilder::new()
+///     .with_url("hdfs://127.0.0.1:9000")
+///     .with_io_runtime(tokio::runtime::Runtime::new().unwrap())
+///     .build()
+///     .unwrap();
+/// ```
+///
+/// Create a client with an explicit Kerberos credential cache:
+///
+/// ```rust,no_run
+/// # use hdfs_native::ClientBuilder;
+/// let client = ClientBuilder::new()
+///     .with_url("hdfs://namenode.example.com:9000")
+///     .with_kerberos_principal("client@EXAMPLE.COM")
+///     .with_kerberos_cache("FILE:/run/krb5/client.ccache")
+///     .build()
+///     .unwrap();
+/// ```
+#[derive(Default)]
+pub struct ClientBuilder {
+    url: Option<String>,
+    config: Option<HashMap<String, String>>,
+    config_dir: Option<String>,
+    runtime: Option<IORuntime>,
+    user: Option<String>,
+    kerberos_principal: Option<String>,
+    kerberos_keytab: Option<String>,
+    kerberos_cache: Option<String>,
+}
+
+impl ClientBuilder {
+    /// Create a new [ClientBuilder]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the URL to connect to. Can be the address of a single NameNode, or a logical NameService
+    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+        self.url = Some(url.into());
+        self
+    }
+
+    /// Set configs to use for the client. The provided configs will override any found in the config files loaded
+    pub fn with_config(
+        mut self,
+        config: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        self.config = Some(
+            config
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
+        );
+        self
+    }
+
+    /// Set the configration directory path to read from. The provided path will override the one provided by environment variable.
+    pub fn with_config_dir(mut self, config_dir: impl Into<String>) -> Self {
+        self.config_dir = Some(config_dir.into());
+        self
+    }
+
+    /// Use a dedicated tokio runtime for spawned tasks and IO operations. Can either take ownership of a whole [Runtime]
+    /// or take a [Handle] to an externally owned runtime.
+    pub fn with_io_runtime(mut self, runtime: impl Into<IORuntime>) -> Self {
+        self.runtime = Some(runtime.into());
+        self
+    }
+
+    /// Set the effective user for the client. If not set, the client will detect user from environment variables `HADOOP_USER_NAME` or `HADOOP_PROXY_USER`.
+    pub fn with_user(mut self, user: impl Into<String>) -> Self {
+        self.user = Some(user.into());
+        self
+    }
+
+    /// Set the Kerberos principal used by this client.
+    pub fn with_kerberos_principal(mut self, principal: impl Into<String>) -> Self {
+        self.kerberos_principal = Some(principal.into());
+        self
+    }
+
+    /// Set the Kerberos keytab used by this client.
+    pub fn with_kerberos_keytab(mut self, keytab: impl Into<String>) -> Self {
+        self.kerberos_keytab = Some(keytab.into());
+        self
+    }
+
+    /// Set the Kerberos credential cache used by this client.
+    pub fn with_kerberos_cache(mut self, cache: impl Into<String>) -> Self {
+        self.kerberos_cache = Some(cache.into());
+        self
+    }
+
+    /// Create the [Client] instance from the provided settings
+    pub fn build(self) -> Result<Client> {
+        let config = Configuration::new(self.config_dir, self.config)?;
+        let url = if let Some(url) = self.url {
+            Url::parse(&url)?
+        } else {
+            Client::default_fs(&config)?
+        };
+
+        let kerberos_credentials = KerberosCredentials::new(
+            self.kerberos_principal,
+            self.kerberos_keytab,
+            self.kerberos_cache,
+        )?
+        .map(ClientAuth::new);
+
+        Client::build(&url, config, self.runtime, self.user, kerberos_credentials)
+    }
+}
+
+#[derive(Clone, Debug)]
+enum RuntimeHolder {
+    Custom(Arc<IORuntime>),
+    Default(Arc<OnceLock<Runtime>>),
+}
+
+impl RuntimeHolder {
+    fn new(rt: Option<IORuntime>) -> Self {
+        if let Some(rt) = rt {
+            Self::Custom(Arc::new(rt))
+        } else {
+            Self::Default(Arc::new(OnceLock::new()))
+        }
+    }
+
+    fn get_handle(&self) -> Handle {
+        match self {
+            Self::Custom(rt) => rt.handle().clone(),
+            Self::Default(rt) => match Handle::try_current() {
+                Ok(handle) => handle,
+                Err(_) => rt
+                    .get_or_init(|| Runtime::new().expect("Failed to create tokio runtime"))
+                    .handle()
+                    .clone(),
+            },
+        }
+    }
+}
+
+/// A client to a speicific NameNode, NameService, or Viewfs mount table
+#[derive(Clone, Debug)]
+pub struct Client {
+    mount_table: Arc<MountTable>,
+    config: Arc<Configuration>,
+    // Store the runtime used for spawning all internal tasks. If we are not created
+    // inside a tokio runtime, we will create our own to use.
+    rt_holder: RuntimeHolder,
+    // Built once at client construction from `hadoop.security.key.provider.path`.
+    // `None` means TDE is not configured; reads of encrypted files will error.
+    #[cfg(feature = "kms")]
+    kms_client: Option<Arc<KmsClient>>,
+}
+
+impl Client {
+    fn default_fs(config: &Configuration) -> Result<Url> {
+        let url = config
+            .get(config::DEFAULT_FS)
+            .ok_or(HdfsError::InvalidArgument(format!(
+                "No {} setting found",
+                config::DEFAULT_FS
+            )))?;
+        Ok(Url::parse(url)?)
+    }
+
+    fn build(
+        url: &Url,
+        config: Configuration,
+        rt: Option<IORuntime>,
+        user: Option<String>,
+        auth: Option<Arc<ClientAuth>>,
+    ) -> Result<Self> {
+        let resolved_url = if !url.has_host() {
+            let default_url = Self::default_fs(&config)?;
+            if url.scheme() != default_url.scheme() || !default_url.has_host() {
+                return Err(HdfsError::InvalidArgument(
+                    "URL must contain a host".to_string(),
+                ));
+            }
+            default_url
+        } else {
+            url.clone()
+        };
+
+        let config = Arc::new(config);
+
+        let rt_holder = RuntimeHolder::new(rt);
+
+        let user_info = if config.security_enabled()
+            && let Some(principal) = auth
+                .as_deref()
+                .and_then(|auth| auth.credentials())
+                .and_then(|credentials| credentials.principal.as_deref())
+        {
+            User::get_user_info_from_principal(principal, user.clone())
+        } else {
+            User::get_user_info(user.clone(), config.security_enabled())
+        };
+        let username = user_info
+            .effective_user
+            .as_deref()
+            .or(user_info.real_user.as_deref())
+            .expect("User info must include a username");
+        let home_dir = build_home_dir(
+            resolved_url.scheme(),
+            resolved_url.host_str(),
+            config.as_ref(),
+            username,
+        );
+
+        let mount_table = match url.scheme() {
+            "hdfs" => {
+                let proxy = NameServiceProxy::new(
+                    &resolved_url,
+                    Arc::clone(&config),
+                    rt_holder.get_handle(),
+                    user.clone(),
+                    auth.clone(),
+                )?;
+                let protocol = Arc::new(NamenodeProtocol::new(proxy, rt_holder.get_handle()));
+
+                MountTable {
+                    mounts: Vec::new(),
+                    fallback: MountLink::new("/", "/", protocol),
+                    home_dir,
+                }
+            }
+            "viewfs" => Self::build_mount_table(
+                // Host is guaranteed to be present.
+                resolved_url.host_str().expect("URL must have a host"),
+                Arc::clone(&config),
+                rt_holder.get_handle(),
+                user.clone(),
+                auth.clone(),
+                home_dir,
+            )?,
+            _ => {
+                return Err(HdfsError::InvalidArgument(
+                    "Only `hdfs` and `viewfs` schemes are supported".to_string(),
+                ));
+            }
+        };
+
+        #[cfg(feature = "kms")]
+        let kms_client =
+            KmsClient::from_config(config.as_ref(), None, username.to_string(), auth.clone())?;
+
+        Ok(Self {
+            mount_table: Arc::new(mount_table),
+            config,
+            rt_holder,
+            #[cfg(feature = "kms")]
+            kms_client,
+        })
+    }
+
+    fn build_mount_table(
+        host: &str,
+        config: Arc<Configuration>,
+        handle: Handle,
+        effective_user: Option<String>,
+        auth: Option<Arc<ClientAuth>>,
+        home_dir: String,
+    ) -> Result<MountTable> {
+        let mut mounts: Vec<MountLink> = Vec::new();
+        let mut fallback: Option<MountLink> = None;
+
+        for (viewfs_path, hdfs_url) in config.get_mount_table(host).iter() {
+            let url = Url::parse(hdfs_url)?;
+            if !url.has_host() {
+                return Err(HdfsError::InvalidArgument(
+                    "URL must contain a host".to_string(),
+                ));
+            }
+            if url.scheme() != "hdfs" {
+                return Err(HdfsError::InvalidArgument(
+                    "Only hdfs mounts are supported for viewfs".to_string(),
+                ));
+            }
+            let proxy = NameServiceProxy::new(
+                &url,
+                Arc::clone(&config),
+                handle.clone(),
+                effective_user.clone(),
+                auth.clone(),
+            )?;
+            let protocol = Arc::new(NamenodeProtocol::new(proxy, handle.clone()));
+
+            if let Some(prefix) = viewfs_path {
+                mounts.push(MountLink::new(prefix, url.path(), protocol));
+            } else {
+                if fallback.is_some() {
+                    return Err(HdfsError::InvalidArgument(
+                        "Multiple viewfs fallback links found".to_string(),
+                    ));
+                }
+                fallback = Some(MountLink::new("/", url.path(), protocol));
+            }
+        }
+
+        if let Some(fallback) = fallback {
+            // Sort the mount table from longest viewfs path to shortest. This makes sure more specific paths are considered first.
+            mounts.sort_by_key(|m| m.viewfs_path.chars().filter(|c| *c == '/').count());
+            mounts.reverse();
+
+            Ok(MountTable {
+                mounts,
+                fallback,
+                home_dir,
+            })
+        } else {
+            Err(HdfsError::InvalidArgument(
+                "No viewfs fallback mount found".to_string(),
+            ))
+        }
+    }
+
+    fn normalize_path(path: &str) -> String {
+        let mut normalized = if path.is_empty() {
+            "/".to_string()
+        } else {
+            path.to_string()
+        };
+        if !normalized.starts_with('/') {
+            normalized.insert(0, '/');
+        }
+        while normalized.len() > 1 && normalized.ends_with('/') {
+            normalized.pop();
+        }
+        normalized
+    }
+
+    fn join_paths(base: &str, suffix: &str) -> String {
+        if suffix.is_empty() {
+            return base.to_string();
+        }
+        let trimmed_base = if base.is_empty() { "/" } else { base };
+        let suffix = suffix.trim_start_matches('/');
+        if trimmed_base == "/" {
+            format!("/{suffix}")
+        } else {
+            format!("{}/{}", trimmed_base.trim_end_matches('/'), suffix)
+        }
+    }
+
+    fn is_prefix_path(parent: &str, child: &str) -> bool {
+        if parent == "/" {
+            return true;
+        }
+        child == parent || child.starts_with(&format!("{parent}/"))
+    }
+
+    fn current_time_millis() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    fn absolute_path(&self, path: &str) -> String {
+        if path.starts_with('/') {
+            Self::normalize_path(path)
+        } else {
+            let home = self.mount_table.home_dir.trim_end_matches('/');
+            Self::normalize_path(&format!("{home}/{path}"))
+        }
+    }
+
+    fn trash_root_path(&self) -> String {
+        let home = Self::normalize_path(&self.mount_table.home_dir);
+        Self::join_paths(&home, TRASH_ROOT_DIR)
+    }
+
+    async fn trash_enabled(&self, path: &str) -> Result<bool> {
+        let (link, _) = self.mount_table.resolve(path);
+        let server_defaults = link.protocol.get_cached_server_defaults().await?;
+        Ok(server_defaults.trash_interval.unwrap_or_default() > 0)
+    }
+
+    fn split_parent_name(path: &str) -> Result<(String, String)> {
+        let normalized = Self::normalize_path(path);
+        if normalized == "/" {
+            return Err(HdfsError::InvalidArgument(
+                "Cannot move the root directory to trash".to_string(),
+            ));
+        }
+        let (parent, name) = normalized
+            .rsplit_once('/')
+            .expect("Normalized path always contains '/'");
+        let parent = if parent.is_empty() {
+            "/".to_string()
+        } else {
+            parent.to_string()
+        };
+        Ok((parent, name.to_string()))
+    }
+
+    async fn non_dir_ancestor(&self, path: &str) -> Result<Option<String>> {
+        let normalized = Self::normalize_path(path);
+        let mut current = "/".to_string();
+        for component in normalized.trim_start_matches('/').split('/') {
+            if component.is_empty() {
+                continue;
+            }
+            current = Self::join_paths(&current, component);
+            match self.get_file_info(&current).await {
+                Ok(status) => {
+                    if !status.isdir {
+                        return Ok(Some(current));
+                    }
+                }
+                Err(HdfsError::FileNotFound(_)) => return Ok(None),
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(None)
+    }
+
+    async fn ensure_unique_trash_path(&self, path: String) -> Result<String> {
+        let base = path.clone();
+        let mut candidate = path;
+        loop {
+            match self.get_file_info(&candidate).await {
+                Ok(_) => {
+                    candidate = format!("{}{}", base, Self::current_time_millis());
+                }
+                Err(HdfsError::FileNotFound(_)) => return Ok(candidate),
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    /// Retrieve the file status for the file at `path`.
+    pub async fn get_file_info(&self, path: &str) -> Result<FileStatus> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        match link.protocol.get_file_info(&resolved_path).await?.fs {
+            Some(status) => Ok(FileStatus::from(status, path)),
+            None => Err(HdfsError::FileNotFound(path.to_string())),
+        }
+    }
+
+    /// Retrives a list of all files in directories located at `path`. Wrapper around `list_status_iter` that
+    /// returns Err if any part of the stream fails, or Ok if all file statuses were found successfully.
+    pub async fn list_status(&self, path: &str, recursive: bool) -> Result<Vec<FileStatus>> {
+        let iter = self.list_status_iter(path, recursive);
+        let statuses = iter
+            .into_stream()
+            .collect::<Vec<Result<FileStatus>>>()
+            .await;
+
+        let mut resolved_statues = Vec::<FileStatus>::with_capacity(statuses.len());
+        for status in statuses.into_iter() {
+            resolved_statues.push(status?);
+        }
+
+        Ok(resolved_statues)
+    }
+
+    /// Retrives an iterator of all files in directories located at `path`.
+    pub fn list_status_iter(&self, path: &str, recursive: bool) -> ListStatusIterator {
+        ListStatusIterator::new(path.to_string(), Arc::clone(&self.mount_table), recursive)
+    }
+
+    /// Opens a file reader for the file at `path`. Path should not include a scheme.
+    pub async fn read(&self, path: &str) -> Result<FileReader> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        // Get all block locations. Length is actually a signed value, but the proto uses an unsigned value
+        let located_info = link
+            .protocol
+            .get_block_locations(&resolved_path, 0, i64::MAX as u64)
+            .await?;
+
+        if let Some(locations) = located_info.locations {
+            let ec_schema = if let Some(ec_policy) = locations.ec_policy.as_ref() {
+                Some(resolve_ec_policy(ec_policy)?)
+            } else {
+                None
+            };
+
+            let crypto = self
+                .build_crypto_codec(locations.file_encryption_info.as_ref())
+                .await?;
+
+            Ok(FileReader::new(
+                Arc::clone(&link.protocol),
+                locations,
+                ec_schema,
+                Arc::clone(&self.config),
+                self.rt_holder.get_handle(),
+                crypto,
+            ))
+        } else {
+            Err(HdfsError::FileNotFound(path.to_string()))
+        }
+    }
+
+    /// Build a [`FileCryptoCodec`] for a file in an HDFS encryption zone.
+    /// Returns `None` for files outside any zone. Returns an error if the file
+    /// is encrypted but no KMS is configured for this client.
+    async fn build_crypto_codec(
+        &self,
+        info: Option<&FileEncryptionInfoProto>,
+    ) -> Result<Option<Arc<FileCryptoCodec>>> {
+        let Some(info) = info else {
+            return Ok(None);
+        };
+        #[cfg(feature = "kms")]
+        {
+            let kms = self.kms_client.as_ref().ok_or_else(|| {
+                HdfsError::OperationFailed(
+                    "File is in an HDFS encryption zone but no KMS provider is configured \
+                     (set `hadoop.security.key.provider.path` in core-site.xml)"
+                        .to_string(),
+                )
+            })?;
+            let dek = kms.decrypt_edek(info).await?;
+            Ok(Some(Arc::new(FileCryptoCodec::new(info, dek)?)))
+        }
+        #[cfg(not(feature = "kms"))]
+        {
+            let _ = info;
+            Err(HdfsError::UnsupportedFeature(
+                "file is in an HDFS encryption zone; reading or writing it requires \
+                 building hdfs-native with the `kms` cargo feature"
+                    .to_string(),
+            ))
+        }
+    }
+
+    /// Opens a new file for writing. See [WriteOptions] for options and behavior for different
+    /// scenarios.
+    pub async fn create(
+        &self,
+        src: &str,
+        write_options: impl AsRef<WriteOptions>,
+    ) -> Result<FileWriter> {
+        let write_options = write_options.as_ref();
+
+        let (link, resolved_path) = self.mount_table.resolve(src);
+
+        let create_response = link
+            .protocol
+            .create(
+                &resolved_path,
+                write_options.permission,
+                write_options.overwrite,
+                write_options.create_parent,
+                write_options.replication,
+                write_options.block_size,
+            )
+            .await?;
+
+        match create_response.fs {
+            Some(status) => {
+                let crypto = match self
+                    .build_crypto_codec(status.file_encryption_info.as_ref())
+                    .await
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        // The file already exists on the namenode but we can't
+                        // build a codec to write to it. Clean it up so the
+                        // caller doesn't see a zero-byte stub.
+                        let _ = self.delete(src, false).await;
+                        return Err(e);
+                    }
+                };
+
+                Ok(FileWriter::new(
+                    Arc::clone(&link.protocol),
+                    resolved_path,
+                    status,
+                    Arc::clone(&self.config),
+                    self.rt_holder.get_handle(),
+                    None,
+                    crypto,
+                ))
+            }
+            None => Err(HdfsError::FileNotFound(src.to_string())),
+        }
+    }
+
+    fn needs_new_block(class: &str, msg: &str) -> bool {
+        class == "java.lang.UnsupportedOperationException" && msg.contains("NEW_BLOCK")
+    }
+
+    /// Opens an existing file for appending. An Err will be returned if the file does not exist. If the
+    /// file is replicated, the current block will be appended to until it is full. If the file is erasure
+    /// coded, a new block will be created.
+    pub async fn append(&self, src: &str) -> Result<FileWriter> {
+        let (link, resolved_path) = self.mount_table.resolve(src);
+
+        // Assume the file is replicated and try to append to the current block. If the file is
+        // erasure coded, then try again by appending to a new block.
+        let append_response = match link.protocol.append(&resolved_path, false).await {
+            Err(HdfsError::RPCError(class, msg)) if Self::needs_new_block(&class, &msg) => {
+                link.protocol.append(&resolved_path, true).await?
+            }
+            resp => resp?,
+        };
+
+        match append_response.stat {
+            Some(status) => {
+                let crypto = match self
+                    .build_crypto_codec(status.file_encryption_info.as_ref())
+                    .await
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        // Release the open lease the namenode granted for the
+                        // append we can no longer fulfill.
+                        let _ = link
+                            .protocol
+                            .complete(
+                                src,
+                                append_response.block.as_ref().map(|b| b.b.clone()),
+                                status.file_id,
+                            )
+                            .await;
+                        return Err(e);
+                    }
+                };
+
+                Ok(FileWriter::new(
+                    Arc::clone(&link.protocol),
+                    resolved_path,
+                    status,
+                    Arc::clone(&self.config),
+                    self.rt_holder.get_handle(),
+                    append_response.block,
+                    crypto,
+                ))
+            }
+            None => Err(HdfsError::FileNotFound(src.to_string())),
+        }
+    }
+
+    /// Create a new directory at `path` with the given `permission`.
+    ///
+    /// `permission` is the raw octal value representing the Unix style permission. For example, to
+    /// set 755 (`rwxr-x-rx`) permissions, use 0o755.
+    ///
+    /// If `create_parent` is true, any missing parent directories will be created as well,
+    /// otherwise an error will be returned if the parent directory doesn't already exist.
+    pub async fn mkdirs(&self, path: &str, permission: u32, create_parent: bool) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .mkdirs(&resolved_path, permission, create_parent)
+            .await
+            .map(|_| ())
+    }
+
+    async fn rename_internal(
+        &self,
+        src: &str,
+        dst: &str,
+        overwrite: bool,
+        move_to_trash: bool,
+    ) -> Result<()> {
+        let (src_link, src_resolved_path) = self.mount_table.resolve(src);
+        let (dst_link, dst_resolved_path) = self.mount_table.resolve(dst);
+        if src_link.viewfs_path == dst_link.viewfs_path {
+            src_link
+                .protocol
+                .rename(
+                    &src_resolved_path,
+                    &dst_resolved_path,
+                    overwrite,
+                    move_to_trash,
+                )
+                .await
+                .map(|_| ())
+        } else {
+            Err(HdfsError::InvalidArgument(
+                "Cannot rename across different name services".to_string(),
+            ))
+        }
+    }
+
+    /// Renames `src` to `dst`. Returns Ok(()) on success, and Err otherwise.
+    pub async fn rename(&self, src: &str, dst: &str, overwrite: bool) -> Result<()> {
+        self.rename_internal(src, dst, overwrite, false).await
+    }
+
+    /// Deletes the file or directory at `path`. If `recursive` is false and `path` is a non-empty
+    /// directory, this will fail. Returns `Ok(true)` if it was successfully deleted.
+    pub async fn delete(&self, path: &str, recursive: bool) -> Result<bool> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .delete(&resolved_path, recursive)
+            .await
+            .map(|r| r.result)
+    }
+
+    /// Moves a file or directory at `path` into the user's trash. Returns `Ok(Some(path))` if
+    /// moved, where `path` is the new location in the trash, or `Ok(None)` if the path is already
+    /// under trash.
+    pub async fn trash(&self, path: &str) -> Result<Option<String>> {
+        if path.is_empty() {
+            return Err(HdfsError::InvalidPath("Empty path".to_string()));
+        }
+
+        let src_abs = self.absolute_path(path);
+        if !self.trash_enabled(&src_abs).await? {
+            return Err(HdfsError::TrashNotEnabled);
+        }
+
+        let trash_root = self.trash_root_path();
+
+        if Self::is_prefix_path(&trash_root, &src_abs) {
+            return Ok(None);
+        }
+        if Self::is_prefix_path(&src_abs, &trash_root) {
+            return Err(HdfsError::InvalidArgument(
+                "Cannot move to trash because it contains the trash".to_string(),
+            ));
+        }
+
+        let _ = self.get_file_info(&src_abs).await?;
+
+        let (src_parent, src_name) = Self::split_parent_name(&src_abs)?;
+        let trash_current = Self::join_paths(&trash_root, TRASH_CURRENT_DIR);
+        let src_parent_rel = src_parent.trim_start_matches('/');
+        let mut base_trash_path = if src_parent_rel.is_empty() {
+            trash_current.clone()
+        } else {
+            Self::join_paths(&trash_current, src_parent_rel)
+        };
+        let mut trash_path = Self::join_paths(&base_trash_path, &src_name);
+
+        for attempt in 0..2 {
+            let mut mkdirs_error: Option<HdfsError> = None;
+            loop {
+                match self
+                    .mkdirs(&base_trash_path, TRASH_DIR_PERMISSION, true)
+                    .await
+                {
+                    Ok(()) => break,
+                    Err(err) => {
+                        if let Some(ancestor) = self.non_dir_ancestor(&base_trash_path).await? {
+                            let timestamp = Self::current_time_millis();
+                            base_trash_path = base_trash_path.replacen(
+                                &ancestor,
+                                &format!("{ancestor}{timestamp}"),
+                                1,
+                            );
+                            trash_path = Self::join_paths(&base_trash_path, &src_name);
+                            continue;
+                        }
+                        mkdirs_error = Some(err);
+                        break;
+                    }
+                }
+            }
+
+            if let Some(err) = mkdirs_error {
+                if attempt == 0 {
+                    continue;
+                }
+                return Err(err);
+            }
+
+            let unique_trash_path = self.ensure_unique_trash_path(trash_path.clone()).await?;
+            match self
+                .rename_internal(&src_abs, &unique_trash_path, false, true)
+                .await
+            {
+                Ok(()) => return Ok(Some(unique_trash_path)),
+                Err(_) if attempt == 0 => continue,
+                Err(err) => return Err(err),
+            }
+        }
+
+        Err(HdfsError::OperationFailed(
+            "Failed to move to trash after retry".to_string(),
+        ))
+    }
+
+    /// Sets the modified and access times for a file. Times should be in milliseconds from the epoch.
+    pub async fn set_times(&self, path: &str, mtime: u64, atime: u64) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .set_times(&resolved_path, mtime, atime)
+            .await?;
+        Ok(())
+    }
+
+    /// Optionally sets the owner and group for a file.
+    pub async fn set_owner(
+        &self,
+        path: &str,
+        owner: Option<&str>,
+        group: Option<&str>,
+    ) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .set_owner(&resolved_path, owner, group)
+            .await?;
+        Ok(())
+    }
+
+    /// Sets permissions for a file. Permission should be an octal number reprenting the Unix style
+    /// permission.
+    ///
+    /// For example, to set permissions to rwxr-xr-x, use 0o755.
+    pub async fn set_permission(&self, path: &str, permission: u32) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .set_permission(&resolved_path, permission)
+            .await?;
+        Ok(())
+    }
+
+    /// Sets the replication for a file.
+    pub async fn set_replication(&self, path: &str, replication: u32) -> Result<bool> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        let result = link
+            .protocol
+            .set_replication(&resolved_path, replication)
+            .await?
+            .result;
+
+        Ok(result)
+    }
+
+    /// Gets a content summary for a file or directory rooted at `path`.
+    pub async fn get_content_summary(&self, path: &str) -> Result<ContentSummary> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        let result = link
+            .protocol
+            .get_content_summary(&resolved_path)
+            .await?
+            .summary;
+
+        Ok(result.into())
+    }
+
+    /// Update ACL entries for file or directory at `path`. Existing entries will remain.
+    pub async fn modify_acl_entries(&self, path: &str, acl_spec: Vec<AclEntry>) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .modify_acl_entries(&resolved_path, acl_spec)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Remove specific ACL entries for file or directory at `path`.
+    pub async fn remove_acl_entries(&self, path: &str, acl_spec: Vec<AclEntry>) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol
+            .remove_acl_entries(&resolved_path, acl_spec)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Remove all default ACLs for file or directory at `path`.
+    pub async fn remove_default_acl(&self, path: &str) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol.remove_default_acl(&resolved_path).await?;
+
+        Ok(())
+    }
+
+    /// Remove all ACL entries for file or directory at `path`.
+    pub async fn remove_acl(&self, path: &str) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol.remove_acl(&resolved_path).await?;
+
+        Ok(())
+    }
+
+    /// Override all ACL entries for file or directory at `path`. If only access ACLs are provided,
+    /// default ACLs are maintained. Likewise if only default ACLs are provided, access ACLs are
+    /// maintained.
+    pub async fn set_acl(&self, path: &str, acl_spec: Vec<AclEntry>) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol.set_acl(&resolved_path, acl_spec).await?;
+
+        Ok(())
+    }
+
+    /// Get the ACL status for the file or directory at `path`.
+    pub async fn get_acl_status(&self, path: &str) -> Result<AclStatus> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        Ok(link
+            .protocol
+            .get_acl_status(&resolved_path)
+            .await?
+            .result
+            .into())
+    }
+
+    /// Get all file statuses matching the glob `pattern`. Supports Hadoop-style globbing
+    /// which only applies to individual components of a path.
+    pub async fn glob_status(&self, pattern: &str) -> Result<Vec<FileStatus>> {
+        // Expand any brace groups first
+        let flattened = expand_glob(pattern.to_string())?;
+
+        let mut results: Vec<FileStatus> = Vec::new();
+
+        for flat in flattened.into_iter() {
+            // Make the pattern absolute-ish. We keep the pattern as-is; components
+            // will be split on '/'. An empty pattern yields no results.
+            if flat.is_empty() {
+                continue;
+            }
+
+            let components = get_path_components(&flat);
+
+            // Candidate holds a path (fully built so far) and optionally a resolved FileStatus
+            #[derive(Clone, Debug)]
+            struct Candidate {
+                path: String,
+                status: Option<FileStatus>,
+            }
+
+            // Start from the root placeholder
+            let mut candidates: Vec<Candidate> = vec![Candidate {
+                path: "/".to_string(),
+                status: None,
+            }];
+
+            for (idx, comp) in components.iter().enumerate() {
+                if candidates.is_empty() {
+                    break;
+                }
+
+                let is_last = idx == components.len() - 1;
+
+                let unescaped = unescape_component(comp);
+                let glob_pat = GlobPattern::new(comp)?;
+
+                if !is_last && !glob_pat.has_wildcard() {
+                    // Optimization: just append the literal component to each candidate
+                    for cand in candidates.iter_mut() {
+                        if !cand.path.ends_with('/') {
+                            cand.path.push('/');
+                        }
+                        cand.path.push_str(&unescaped);
+                        // keep status as None (we'll resolve later if needed)
+                    }
+                    continue;
+                }
+
+                let mut new_candidates: Vec<Candidate> = Vec::new();
+
+                for cand in candidates.into_iter() {
+                    if glob_pat.has_wildcard() {
+                        // List the directory represented by cand.path
+                        let listing = match self.list_status(&cand.path, false).await {
+                            Ok(listing) => listing,
+                            Err(HdfsError::FileNotFound(_)) => continue,
+                            Err(e) => return Err(e),
+                        };
+                        if listing.len() == 1 && listing[0].path == cand.path {
+                            // listing corresponds to the candidate itself (file), skip
+                            continue;
+                        }
+
+                        for child in listing.into_iter() {
+                            // If this is not the terminal component, only recurse into directories
+                            if !is_last && !child.isdir {
+                                continue;
+                            }
+
+                            // child.path already contains the full path
+                            // Extract the name portion to match against the glob pattern
+                            let name = child
+                                .path
+                                .rsplit_once('/')
+                                .map(|(_, n)| n)
+                                .unwrap_or(child.path.as_str());
+
+                            if glob_pat.matches(name) {
+                                new_candidates.push(Candidate {
+                                    path: child.path.clone(),
+                                    status: Some(child),
+                                });
+                            }
+                        }
+                    } else {
+                        // Non-glob component: use get_file_info for exact path
+                        let mut next_path = cand.path.clone();
+                        if !next_path.ends_with('/') {
+                            next_path.push('/');
+                        }
+                        next_path.push_str(&unescaped);
+
+                        match self.get_file_info(&next_path).await {
+                            Ok(status) => {
+                                if is_last || status.isdir {
+                                    new_candidates.push(Candidate {
+                                        path: status.path.clone(),
+                                        status: Some(status),
+                                    });
+                                }
+                            }
+                            Err(HdfsError::FileNotFound(_)) => continue,
+                            Err(e) => return Err(e),
+                        }
+                    }
+                }
+
+                candidates = new_candidates;
+            }
+
+            // Resolve any placeholder candidates (including root) and collect results
+            for cand in candidates.into_iter() {
+                let status = if let Some(s) = cand.status {
+                    s
+                } else {
+                    // Try to resolve the path to a real FileStatus
+                    match self.get_file_info(&cand.path).await {
+                        Ok(s) => s,
+                        Err(HdfsError::FileNotFound(_)) => continue,
+                        Err(e) => return Err(e),
+                    }
+                };
+
+                results.push(status);
+            }
+        }
+
+        Ok(results)
+    }
+}
+
+impl Default for Client {
+    /// Creates a new HDFS Client based on the fs.defaultFS setting. Panics if the config files fail to load,
+    /// no defaultFS is defined, or the defaultFS is invalid.
+    fn default() -> Self {
+        ClientBuilder::new()
+            .build()
+            .expect("Failed to create default client")
+    }
+}
+
+pub(crate) struct DirListingIterator {
+    path: String,
+    resolved_path: String,
+    link: MountLink,
+    files_only: bool,
+    partial_listing: VecDeque<HdfsFileStatusProto>,
+    remaining: u32,
+    last_seen: Vec<u8>,
+}
+
+impl DirListingIterator {
+    fn new(path: String, mount_table: &Arc<MountTable>, files_only: bool) -> Self {
+        let (link, resolved_path) = mount_table.resolve(&path);
+
+        DirListingIterator {
+            path,
+            resolved_path,
+            link: link.clone(),
+            files_only,
+            partial_listing: VecDeque::new(),
+            remaining: 1,
+            last_seen: Vec::new(),
+        }
+    }
+
+    async fn get_next_batch(&mut self) -> Result<bool> {
+        let listing = self
+            .link
+            .protocol
+            .get_listing(&self.resolved_path, self.last_seen.clone(), false)
+            .await?;
+
+        if let Some(dir_list) = listing.dir_list {
+            self.last_seen = dir_list
+                .partial_listing
+                .last()
+                .map(|p| p.path.clone())
+                .unwrap_or(Vec::new());
+
+            self.remaining = dir_list.remaining_entries;
+
+            self.partial_listing = dir_list
+                .partial_listing
+                .into_iter()
+                .filter(|s| !self.files_only || s.file_type() != FileType::IsDir)
+                .collect();
+            Ok(!self.partial_listing.is_empty())
+        } else {
+            Err(HdfsError::FileNotFound(self.path.clone()))
+        }
+    }
+
+    pub async fn next(&mut self) -> Option<Result<FileStatus>> {
+        if self.partial_listing.is_empty()
+            && self.remaining > 0
+            && let Err(error) = self.get_next_batch().await
+        {
+            self.remaining = 0;
+            return Some(Err(error));
+        }
+        if let Some(next) = self.partial_listing.pop_front() {
+            Some(Ok(FileStatus::from(next, &self.path)))
+        } else {
+            None
+        }
+    }
+}
+
+pub struct ListStatusIterator {
+    mount_table: Arc<MountTable>,
+    recursive: bool,
+    iters: Arc<tokio::sync::Mutex<Vec<DirListingIterator>>>,
+}
+
+impl ListStatusIterator {
+    fn new(path: String, mount_table: Arc<MountTable>, recursive: bool) -> Self {
+        let initial = DirListingIterator::new(path.clone(), &mount_table, false);
+
+        ListStatusIterator {
+            mount_table,
+            recursive,
+            iters: Arc::new(tokio::sync::Mutex::new(vec![initial])),
+        }
+    }
+
+    pub async fn next(&self) -> Option<Result<FileStatus>> {
+        let mut next_file: Option<Result<FileStatus>> = None;
+        let mut iters = self.iters.lock().await;
+        while next_file.is_none() {
+            if let Some(iter) = iters.last_mut() {
+                if let Some(file_result) = iter.next().await {
+                    if let Ok(file) = file_result {
+                        // Return the directory as the next result, but start traversing into that directory
+                        // next if we're doing a recursive listing
+                        if file.isdir && self.recursive {
+                            iters.push(DirListingIterator::new(
+                                file.path.clone(),
+                                &self.mount_table,
+                                false,
+                            ))
+                        }
+                        next_file = Some(Ok(file));
+                    } else {
+                        // Error, return that as the next element
+                        next_file = Some(file_result)
+                    }
+                } else {
+                    // We've exhausted this directory
+                    iters.pop();
+                }
+            } else {
+                // There's nothing left, just return None
+                break;
+            }
+        }
+
+        next_file
+    }
+
+    pub fn into_stream(self) -> BoxStream<'static, Result<FileStatus>> {
+        let listing = stream::unfold(self, |state| async move {
+            let next = state.next().await;
+            next.map(|n| (n, state))
+        });
+        Box::pin(listing)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FileStatus {
+    pub path: String,
+    pub length: usize,
+    pub isdir: bool,
+    pub permission: u16,
+    pub owner: String,
+    pub group: String,
+    pub modification_time: u64,
+    pub access_time: u64,
+    pub replication: Option<u32>,
+    pub blocksize: Option<u64>,
+}
+
+impl FileStatus {
+    fn from(value: HdfsFileStatusProto, base_path: &str) -> Self {
+        let mut path = base_path.trim_end_matches("/").to_string();
+        let relative_path = std::str::from_utf8(&value.path).unwrap();
+        if !relative_path.is_empty() {
+            path.push('/');
+            path.push_str(relative_path);
+        }
+
+        // Root path should be a slash
+        if path.is_empty() {
+            path.push('/');
+        }
+
+        FileStatus {
+            isdir: value.file_type() == FileType::IsDir,
+            path,
+            length: value.length as usize,
+            permission: value.permission.perm as u16,
+            owner: value.owner,
+            group: value.group,
+            modification_time: value.modification_time,
+            access_time: value.access_time,
+            replication: value.block_replication,
+            blocksize: value.blocksize,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ContentSummary {
+    pub length: u64,
+    pub file_count: u64,
+    pub directory_count: u64,
+    pub quota: u64,
+    pub space_consumed: u64,
+    pub space_quota: u64,
+}
+
+impl From<ContentSummaryProto> for ContentSummary {
+    fn from(value: ContentSummaryProto) -> Self {
+        ContentSummary {
+            length: value.length,
+            file_count: value.file_count,
+            directory_count: value.directory_count,
+            quota: value.quota,
+            space_consumed: value.space_consumed,
+            space_quota: value.space_quota,
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::{Arc, LazyLock};
+
+    use tokio::runtime::Runtime;
+    use url::Url;
+
+    use crate::{
+        client::ClientBuilder,
+        config::Configuration,
+        namenode::{protocol::NamenodeProtocol, proxy::NameServiceProxy},
+    };
+
+    use super::{MountLink, MountTable};
+
+    static RT: LazyLock<Runtime> = LazyLock::new(|| Runtime::new().unwrap());
+
+    fn create_protocol(url: &str) -> Arc<NamenodeProtocol> {
+        let proxy = NameServiceProxy::new(
+            &Url::parse(url).unwrap(),
+            Arc::new(Configuration::new(None, None).unwrap()),
+            RT.handle().clone(),
+            None,
+            None,
+        )
+        .unwrap();
+        Arc::new(NamenodeProtocol::new(proxy, RT.handle().clone()))
+    }
+
+    #[test]
+    fn test_default_fs() {
+        assert!(
+            ClientBuilder::new()
+                .with_config(vec![("fs.defaultFS", "hdfs://test:9000")])
+                .build()
+                .is_ok()
+        );
+
+        assert!(
+            ClientBuilder::new()
+                .with_config(vec![("fs.defaultFS", "hdfs://")])
+                .build()
+                .is_err()
+        );
+
+        assert!(
+            ClientBuilder::new()
+                .with_url("hdfs://")
+                .with_config(vec![("fs.defaultFS", "hdfs://test:9000")])
+                .build()
+                .is_ok()
+        );
+
+        assert!(
+            ClientBuilder::new()
+                .with_url("hdfs://")
+                .with_config(vec![("fs.defaultFS", "hdfs://")])
+                .build()
+                .is_err()
+        );
+
+        assert!(
+            ClientBuilder::new()
+                .with_url("hdfs://")
+                .with_config(vec![("fs.defaultFS", "viewfs://test")])
+                .build()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_mount_link_resolve() {
+        let protocol = create_protocol("hdfs://127.0.0.1:9000");
+        let link = MountLink::new("/view", "/hdfs", protocol);
+
+        assert_eq!(link.resolve("/view/dir/file").unwrap(), "/hdfs/dir/file");
+        assert_eq!(link.resolve("/view").unwrap(), "/hdfs");
+        assert!(link.resolve("/hdfs/path").is_none());
+    }
+
+    #[test]
+    fn test_fallback_link() {
+        let protocol = create_protocol("hdfs://127.0.0.1:9000");
+        let link = MountLink::new("", "/hdfs", Arc::clone(&protocol));
+
+        assert_eq!(link.resolve("/path/to/file").unwrap(), "/hdfs/path/to/file");
+        assert_eq!(link.resolve("/").unwrap(), "/hdfs/");
+        assert_eq!(link.resolve("/hdfs/path").unwrap(), "/hdfs/hdfs/path");
+
+        let link = MountLink::new("", "", protocol);
+        assert_eq!(link.resolve("/").unwrap(), "/");
+    }
+
+    #[test]
+    fn test_mount_table_resolve() {
+        let link1 = MountLink::new(
+            "/mount1",
+            "/path1/nested",
+            create_protocol("hdfs://127.0.0.1:9000"),
+        );
+        let link2 = MountLink::new(
+            "/mount2",
+            "/path2",
+            create_protocol("hdfs://127.0.0.1:9001"),
+        );
+        let link3 = MountLink::new(
+            "/mount3/nested",
+            "/path3",
+            create_protocol("hdfs://127.0.0.1:9002"),
+        );
+        let fallback = MountLink::new("/", "/path4", create_protocol("hdfs://127.0.0.1:9003"));
+
+        let mount_table = MountTable {
+            mounts: vec![link1, link2, link3],
+            fallback,
+            home_dir: "/user/test".to_string(),
+        };
+
+        // Exact mount path resolves to the exact HDFS path
+        let (link, resolved) = mount_table.resolve("/mount1");
+        assert_eq!(link.viewfs_path, "/mount1");
+        assert_eq!(resolved, "/path1/nested");
+
+        // Trailing slash is treated the same
+        let (link, resolved) = mount_table.resolve("/mount1/");
+        assert_eq!(link.viewfs_path, "/mount1");
+        assert_eq!(resolved, "/path1/nested/");
+
+        // Doesn't do partial matches on a directory name
+        let (link, resolved) = mount_table.resolve("/mount12");
+        assert_eq!(link.viewfs_path, "");
+        assert_eq!(resolved, "/path4/mount12");
+
+        let (link, resolved) = mount_table.resolve("/mount3/file");
+        assert_eq!(link.viewfs_path, "");
+        assert_eq!(resolved, "/path4/mount3/file");
+
+        let (link, resolved) = mount_table.resolve("/mount3/nested/file");
+        assert_eq!(link.viewfs_path, "/mount3/nested");
+        assert_eq!(resolved, "/path3/file");
+
+        let (link, resolved) = mount_table.resolve("file");
+        assert_eq!(link.viewfs_path, "");
+        assert_eq!(resolved, "/path4/user/test/file");
+
+        let (link, resolved) = mount_table.resolve("dir/subdir");
+        assert_eq!(link.viewfs_path, "");
+        assert_eq!(resolved, "/path4/user/test/dir/subdir");
+
+        let mount_table = MountTable {
+            mounts: vec![
+                MountLink::new(
+                    "/mount1",
+                    "/path1/nested",
+                    create_protocol("hdfs://127.0.0.1:9000"),
+                ),
+                MountLink::new(
+                    "/mount2",
+                    "/path2",
+                    create_protocol("hdfs://127.0.0.1:9001"),
+                ),
+            ],
+            fallback: MountLink::new("/", "/path4", create_protocol("hdfs://127.0.0.1:9003")),
+            home_dir: "/mount1/user".to_string(),
+        };
+
+        let (link, resolved) = mount_table.resolve("file");
+        assert_eq!(link.viewfs_path, "/mount1");
+        assert_eq!(resolved, "/path1/nested/user/file");
+
+        let (link, resolved) = mount_table.resolve("dir/subdir");
+        assert_eq!(link.viewfs_path, "/mount1");
+        assert_eq!(resolved, "/path1/nested/user/dir/subdir");
+    }
+
+    #[test]
+    fn test_io_runtime() {
+        assert!(
+            ClientBuilder::new()
+                .with_url("hdfs://127.0.0.1:9000")
+                .with_io_runtime(Runtime::new().unwrap())
+                .build()
+                .is_ok()
+        );
+
+        let rt = Runtime::new().unwrap();
+        assert!(
+            ClientBuilder::new()
+                .with_url("hdfs://127.0.0.1:9000")
+                .with_io_runtime(rt.handle().clone())
+                .build()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_with_user_sets_relative_path_home_dir() {
+        let client = ClientBuilder::new()
+            .with_url("hdfs://127.0.0.1:9000")
+            .with_user("alice")
+            .build()
+            .unwrap();
+
+        let (_, resolved) = client.mount_table.resolve("file");
+        assert_eq!(resolved, "/user/alice/file");
+    }
+
+    #[test]
+    fn test_kerberos_credentials_set_principal_home_dir() {
+        let client = ClientBuilder::new()
+            .with_url("hdfs://127.0.0.1:9000")
+            .with_config([("hadoop.security.authentication", "kerberos")])
+            .with_kerberos_principal("alice@EXAMPLE.COM")
+            .with_kerberos_cache("FILE:/run/krb5/alice.ccache")
+            .build()
+            .unwrap();
+
+        let (_, resolved) = client.mount_table.resolve("file");
+        assert_eq!(resolved, "/user/alice/file");
+    }
+
+    #[test]
+    fn test_explicit_kerberos_credentials_require_principal() {
+        let error = ClientBuilder::new()
+            .with_url("hdfs://127.0.0.1:9000")
+            .with_kerberos_keytab("client.keytab")
+            .build()
+            .unwrap_err();
+
+        assert!(error.to_string().contains("principal is required"));
+    }
+
+    #[test]
+    fn test_set_conf_dir() {
+        assert!(
+            ClientBuilder::new()
+                .with_url("hdfs://127.0.0.1:9000")
+                .with_config_dir("target/test")
+                .build()
+                .is_ok()
+        )
+    }
+}
