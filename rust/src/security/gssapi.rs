@@ -5,7 +5,6 @@ use std::ffi::CString;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::os::raw::c_void;
-use std::slice::from_raw_parts;
 use std::{ptr, slice};
 
 use crate::HdfsError;
@@ -102,15 +101,46 @@ fn libgssapi() -> crate::Result<&'static bindings::GSSAPI> {
 #[derive(Debug)]
 struct GssBuf<'a>(bindings::gss_buffer_desc_struct, PhantomData<&'a [u8]>);
 
-impl GssBuf<'_> {
+struct GssOwnedBuf(bindings::gss_buffer_desc_struct);
+
+impl GssOwnedBuf {
     fn new() -> Self {
-        Self(
-            bindings::gss_buffer_desc_struct {
-                length: 0,
-                value: ptr::null_mut(),
-            },
-            PhantomData {},
-        )
+        Self(bindings::gss_buffer_desc_struct {
+            length: 0,
+            value: ptr::null_mut(),
+        })
+    }
+
+    unsafe fn as_ptr(&mut self) -> bindings::gss_buffer_t {
+        &mut self.0 as bindings::gss_buffer_t
+    }
+}
+
+impl Deref for GssOwnedBuf {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        if self.0.value.is_null() {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(self.0.value.cast(), self.0.length) }
+        }
+    }
+}
+
+impl Drop for GssOwnedBuf {
+    fn drop(&mut self) {
+        if self.0.value.is_null() {
+            return;
+        }
+        let Ok(lib) = libgssapi() else {
+            return;
+        };
+        let mut minor = bindings::GSS_S_COMPLETE;
+        let major = unsafe { lib.gss_release_buffer(&mut minor, &mut self.0) };
+        if let Err(e) = check_gss_ok(major, minor) {
+            warn!("Failed to release GSSAPI buffer: {:?}", e);
+        }
     }
 }
 
@@ -200,23 +230,17 @@ impl GssName {
 
     fn display_name(&self) -> crate::Result<String> {
         let mut minor = 0;
-        let mut display_name = bindings::gss_buffer_desc_struct {
-            length: 0,
-            value: ptr::null_mut(),
-        };
+        let mut display_name = GssOwnedBuf::new();
         let major = unsafe {
-            libgssapi()?.gss_display_name(&mut minor, self.name, &mut display_name, ptr::null_mut())
+            libgssapi()?.gss_display_name(
+                &mut minor,
+                self.name,
+                display_name.as_ptr(),
+                ptr::null_mut(),
+            )
         };
         check_gss_ok(major, minor)?;
-
-        unsafe {
-            if display_name.value.is_null() {
-                Ok(String::new())
-            } else {
-                let slice: &[u8] = from_raw_parts(display_name.value.cast(), display_name.length);
-                Ok(String::from_utf8_lossy(slice).to_string())
-            }
-        }
+        Ok(String::from_utf8_lossy(&display_name).to_string())
     }
 
     fn as_ptr(&mut self) -> *mut bindings::gss_name_t {
@@ -460,10 +484,7 @@ impl GssClientCtx {
     fn step(&mut self, token: Option<&[u8]>) -> crate::Result<(Option<Vec<u8>>, bool)> {
         let mut minor = 0;
         let mut flags_out = 0;
-        let mut out = bindings::gss_buffer_desc_struct {
-            value: ptr::null_mut(),
-            length: 0,
-        };
+        let mut out = GssOwnedBuf::new();
 
         let mut token_buf = token.map(GssBuf::from);
         let token_ptr = token_buf
@@ -497,7 +518,7 @@ impl GssClientCtx {
                 ptr::null_mut(),
                 token_ptr,
                 ptr::null_mut(),
-                &mut out,
+                out.as_ptr(),
                 &mut flags_out,
                 ptr::null_mut(),
             )
@@ -512,13 +533,10 @@ impl GssClientCtx {
 
         self.flags |= flags_out;
 
-        let out_token = unsafe {
-            if out.value.is_null() {
-                None
-            } else {
-                let slice: &[u8] = from_raw_parts(out.value.cast(), out.length);
-                Some(slice.to_vec())
-            }
+        let out_token = if out.is_empty() {
+            None
+        } else {
+            Some(out.to_vec())
         };
 
         Ok((out_token, complete))
@@ -527,7 +545,7 @@ impl GssClientCtx {
     fn wrap(&mut self, encrypt: bool, buf: &[u8]) -> crate::Result<Vec<u8>> {
         let mut minor = 0;
         let mut buf_in = GssBuf::from(buf);
-        let mut buf_out = GssBuf::new();
+        let mut buf_out = GssOwnedBuf::new();
         let major = unsafe {
             libgssapi()?.gss_wrap(
                 &mut minor,
@@ -547,7 +565,7 @@ impl GssClientCtx {
     fn unwrap(&mut self, buf: &[u8]) -> crate::Result<Vec<u8>> {
         let mut minor = 0;
         let mut buf_in = GssBuf::from(buf);
-        let mut buf_out = GssBuf::new();
+        let mut buf_out = GssOwnedBuf::new();
         let major = unsafe {
             libgssapi()?.gss_unwrap(
                 &mut minor,
@@ -617,7 +635,7 @@ fn check_gss_ok(mut major: u32, mut minor: u32) -> crate::Result<()> {
         Ok(())
     } else {
         let mut context = 0;
-        let mut msg = GssBuf::new();
+        let mut msg = GssOwnedBuf::new();
         let ret = unsafe {
             libgssapi()?.gss_display_status(
                 &mut minor,
