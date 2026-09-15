@@ -422,7 +422,7 @@ impl FileWriter {
             let extended_block = if let Some(block_writer) = self.block_writer.take() {
                 Some(block_writer.close().await?)
             } else {
-                None
+                self.last_block.as_ref().map(|block| block.b.clone())
             };
 
             let mut retry_delay = COMPLETE_RETRY_DELAY_MS;
