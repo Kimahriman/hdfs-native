@@ -3,7 +3,11 @@ use std::{sync::Arc, time::Duration};
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::future::join_all;
 use log::{debug, warn};
-use tokio::{runtime::Handle, sync::mpsc, task::JoinHandle};
+use tokio::{
+    runtime::Handle,
+    sync::{mpsc, oneshot, watch},
+    task::JoinHandle,
+};
 
 use crate::{
     HdfsError, Result,
@@ -83,6 +87,15 @@ impl BlockWriter {
         }
     }
 
+    pub(crate) async fn hsync(&mut self) -> Result<hdfs::ExtendedBlockProto> {
+        match self {
+            Self::Replicated(writer) => writer.hsync().await,
+            Self::Striped(_) => Err(HdfsError::OperationFailed(
+                "hsync is not supported for erasure-coded files".to_string(),
+            )),
+        }
+    }
+
     pub(crate) fn is_full(&self) -> bool {
         match self {
             Self::Replicated(writer) => writer.is_full(),
@@ -112,6 +125,7 @@ struct Pipeline {
     packet_sender_handle: JoinHandle<Vec<WritePacket>>,
     // Tracks the heartbeat task so we can abort it when we close
     heartbeat_handle: JoinHandle<()>,
+    failed: watch::Receiver<bool>,
 }
 
 impl Pipeline {
@@ -124,9 +138,16 @@ impl Pipeline {
         let (packet_sender, packet_receiver) =
             mpsc::channel::<WritePacket>(WRITE_PACKET_BUFFER_LEN);
 
-        let ack_listener_handle = Self::listen_for_acks(reader, ack_queue_receiever, handle);
-        let packet_sender_handle =
-            Self::start_packet_sender(writer, packet_receiver, ack_queue_sender, handle);
+        let (failed_sender, failed) = watch::channel(false);
+        let ack_listener_handle =
+            Self::listen_for_acks(reader, ack_queue_receiever, failed_sender.clone(), handle);
+        let packet_sender_handle = Self::start_packet_sender(
+            writer,
+            packet_receiver,
+            ack_queue_sender,
+            failed_sender,
+            handle,
+        );
         let heartbeat_handle = Self::start_heartbeat_sender(packet_sender.clone(), handle);
 
         Self {
@@ -134,6 +155,23 @@ impl Pipeline {
             ack_listener_handle,
             packet_sender_handle,
             heartbeat_handle,
+            failed,
+        }
+    }
+
+    async fn wait_for_ack(&mut self, receiver: &mut oneshot::Receiver<()>) -> bool {
+        loop {
+            if *self.failed.borrow() {
+                return false;
+            }
+            tokio::select! {
+                result = &mut *receiver => return result.is_ok(),
+                changed = self.failed.changed() => {
+                    if changed.is_err() || *self.failed.borrow() {
+                        return false;
+                    }
+                }
+            }
         }
     }
 
@@ -177,6 +215,7 @@ impl Pipeline {
         mut writer: DatanodeWriter,
         mut packet_receiver: mpsc::Receiver<WritePacket>,
         ack_queue: mpsc::Sender<WritePacket>,
+        failed: watch::Sender<bool>,
         handle: &Handle,
     ) -> JoinHandle<Vec<WritePacket>> {
         handle.spawn(async move {
@@ -186,6 +225,7 @@ impl Pipeline {
                 if crate::test::WRITE_CONNECTION_FAULT_INJECTOR
                     .swap(false, std::sync::atomic::Ordering::SeqCst)
                 {
+                    let _ = failed.send(true);
                     debug!("Failing write to active node");
                     return [packet]
                         .into_iter()
@@ -194,6 +234,7 @@ impl Pipeline {
                 }
 
                 if let Err(e) = writer.write_packet(&mut packet).await {
+                    let _ = failed.send(true);
                     warn!("Failed to send packet to DataNode: {:?}", e);
                     return [packet]
                         .into_iter()
@@ -242,6 +283,7 @@ impl Pipeline {
     fn listen_for_acks(
         mut reader: DatanodeReader,
         mut ack_queue: mpsc::Receiver<WritePacket>,
+        failed: watch::Sender<bool>,
         handle: &Handle,
     ) -> JoinHandle<Result<WriteStatus>> {
         handle.spawn(async move {
@@ -250,6 +292,7 @@ impl Pipeline {
                 {
                     Ok(Ok(next_ack)) => next_ack,
                     Ok(Err(e)) => {
+                        let _ = failed.send(true);
                         warn!("Failed to read ack from DataNode: {}", e);
                         return Ok(WriteStatus::Recover(
                             vec![0],
@@ -257,6 +300,7 @@ impl Pipeline {
                         ));
                     }
                     Err(_) => {
+                        let _ = failed.send(true);
                         warn!(
                             "Timed out waiting for ack from DataNode after {}s",
                             ACK_READ_TIMEOUT.as_secs()
@@ -289,6 +333,7 @@ impl Pipeline {
                 }
 
                 if !failed_nodes.is_empty() {
+                    let _ = failed.send(true);
                     // I need a way to make sure the packet sender thread dies here
                     return Ok(WriteStatus::Recover(
                         failed_nodes,
@@ -300,24 +345,29 @@ impl Pipeline {
                     continue;
                 }
                 if next_ack.seqno == UNKNOWN_SEQNO {
+                    let _ = failed.send(true);
                     return Err(HdfsError::DataTransferError(
                         "Received unknown seqno for successful ack".to_string(),
                     ));
                 }
 
-                if let Some(packet) = ack_queue.recv().await {
+                if let Some(mut packet) = ack_queue.recv().await {
                     debug!("Next: {}, packet: {}", next_ack.seqno, packet.header.seqno);
                     if next_ack.seqno != packet.header.seqno {
+                        let _ = failed.send(true);
                         return Err(HdfsError::DataTransferError(
                             "Received acknowledgement does not match expected sequence number"
                                 .to_string(),
                         ));
                     }
 
+                    packet.acknowledge();
+
                     if packet.header.last_packet_in_block {
                         return Ok(WriteStatus::Success);
                     }
                 } else {
+                    let _ = failed.send(true);
                     // Error occurred in the packet sender, which would only happen on errors
                     // communicating with the DataNode
                     return Ok(WriteStatus::Recover(
@@ -585,11 +635,18 @@ impl ReplicatedBlockWriter {
 
     // Create the next packet and return the current packet
     fn create_next_packet(&mut self) -> WritePacket {
+        let bytes_per_checksum = self.server_defaults.bytes_per_checksum;
+        let bytes_in_last_chunk = self.block.b.num_bytes() % u64::from(bytes_per_checksum);
+        let (checksum_bytes, packet_size) = if bytes_in_last_chunk == 0 {
+            (bytes_per_checksum, self.server_defaults.write_packet_size)
+        } else {
+            (bytes_per_checksum - bytes_in_last_chunk as u32, 0)
+        };
         let next_packet = WritePacket::empty(
             self.block.b.num_bytes() as i64,
             self.current_packet.header.seqno + 1,
-            self.server_defaults.bytes_per_checksum,
-            self.server_defaults.write_packet_size,
+            checksum_bytes,
+            packet_size,
         );
         std::mem::replace(&mut self.current_packet, next_packet)
     }
@@ -622,6 +679,32 @@ impl ReplicatedBlockWriter {
                 return Ok(());
             }
             // Send the packet
+        }
+    }
+
+    async fn hsync(&mut self) -> Result<hdfs::ExtendedBlockProto> {
+        self.current_packet.set_sync_block();
+        let mut acknowledgement = self.current_packet.request_acknowledgement();
+        self.send_current_packet().await?;
+
+        loop {
+            let mut pipeline = self.pipeline.take().ok_or_else(|| {
+                HdfsError::DataTransferError("Block writer is closed".to_string())
+            })?;
+            if pipeline.wait_for_ack(&mut acknowledgement).await {
+                self.pipeline = Some(pipeline);
+                return Ok(self.block.b.clone());
+            }
+            match pipeline.shutdown().await? {
+                WriteStatus::Success => {
+                    return Err(HdfsError::DataTransferError(
+                        "Pipeline stopped before the sync packet was acknowledged".to_string(),
+                    ));
+                }
+                WriteStatus::Recover(failed_nodes, packets_to_replay) => {
+                    self.recover(failed_nodes, packets_to_replay, None).await?;
+                }
+            }
         }
     }
 

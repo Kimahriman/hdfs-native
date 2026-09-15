@@ -395,6 +395,28 @@ impl FileWriter {
         Ok(bytes_to_write)
     }
 
+    /// Persist all data written so far while keeping the writer open.
+    ///
+    /// On success, new readers can observe the synchronized length and the
+    /// current replicated block has been synchronized by every DataNode in
+    /// its pipeline. Erasure-coded files do not currently support this call.
+    pub async fn hsync(&mut self) -> Result<()> {
+        if self.closed {
+            return Err(HdfsError::OperationFailed(
+                "Cannot sync a closed file writer".to_string(),
+            ));
+        }
+        let last_block_length = if let Some(block_writer) = self.block_writer.as_mut() {
+            Some(block_writer.hsync().await?.num_bytes())
+        } else {
+            self.last_block.as_ref().map(|block| block.b.num_bytes())
+        };
+        self.protocol
+            .fsync(&self.src, last_block_length, self.status.file_id)
+            .await?;
+        Ok(())
+    }
+
     pub async fn close(&mut self) -> Result<()> {
         if !self.closed {
             let extended_block = if let Some(block_writer) = self.block_writer.take() {

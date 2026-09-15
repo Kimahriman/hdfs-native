@@ -279,6 +279,25 @@ impl NamenodeProtocol {
         self.call("complete", message, true).await
     }
 
+    pub(crate) async fn fsync(
+        &self,
+        src: &str,
+        last_block_length: Option<u64>,
+        file_id: Option<u64>,
+    ) -> Result<hdfs::FsyncResponseProto> {
+        let last_block_length = last_block_length
+            .map(i64::try_from)
+            .transpose()
+            .map_err(|_| crate::HdfsError::InvalidArgument("last block length overflow".into()))?;
+        let message = hdfs::FsyncRequestProto {
+            src: src.to_string(),
+            client: self.client_name.clone(),
+            last_block_length,
+            file_id,
+        };
+        self.call("fsync", message, true).await
+    }
+
     pub(crate) async fn mkdirs(
         &self,
         src: &str,

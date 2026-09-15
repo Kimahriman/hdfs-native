@@ -358,6 +358,11 @@ impl FileWriter {
         self.rt.block_on(self.inner.write_bytes(buf))
     }
 
+    /// Persist all data written so far while keeping the writer open.
+    pub fn hsync(&mut self) -> Result<()> {
+        self.rt.block_on(self.inner.hsync())
+    }
+
     /// Close the file writer.
     pub fn close(&mut self) -> Result<()> {
         self.rt.block_on(self.inner.close())
