@@ -2,7 +2,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use cipher::{KeyIvInit, StreamCipher};
 use log::debug;
 use prost::Message;
-use std::io;
+use std::io::{self, IoSlice};
 use std::sync::{Arc, Mutex};
 use tokio::io::BufReader;
 use tokio::{
@@ -578,6 +578,51 @@ impl SaslDatanodeWriter {
             None => {
                 self.stream.write_all(buf).await?;
             }
+        }
+        Ok(())
+    }
+
+    /// Write reference-counted payload segments without first concatenating
+    /// them into a packet-sized userspace buffer.
+    pub(crate) async fn write_all_vectored(&mut self, bufs: &[Bytes]) -> Result<()> {
+        if self.encryptor.is_none() {
+            let mut index = 0;
+            let mut offset = 0;
+
+            while index < bufs.len() {
+                // Stay comfortably below the smallest common IOV_MAX while
+                // still combining fragmented application writes efficiently.
+                let slices: Vec<_> = std::iter::once(IoSlice::new(&bufs[index][offset..]))
+                    .chain(
+                        bufs[index + 1..]
+                            .iter()
+                            .map(|buf| IoSlice::new(buf.as_ref())),
+                    )
+                    .take(64)
+                    .collect();
+                let written = self.stream.write_vectored(&slices).await?;
+                if written == 0 {
+                    return Err(io::Error::from(io::ErrorKind::WriteZero).into());
+                }
+
+                let mut remaining = written;
+                while remaining != 0 {
+                    let available = bufs[index].len() - offset;
+                    if remaining < available {
+                        offset += remaining;
+                        remaining = 0;
+                    } else {
+                        remaining -= available;
+                        index += 1;
+                        offset = 0;
+                    }
+                }
+            }
+            return Ok(());
+        }
+
+        for buf in bufs {
+            self.write_all(buf).await?;
         }
         Ok(())
     }
