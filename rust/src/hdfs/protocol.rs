@@ -354,6 +354,14 @@ impl NamenodeProtocol {
         self.call("renewLease", message, true).await
     }
 
+    pub(crate) async fn recover_lease(&self, src: &str) -> Result<hdfs::RecoverLeaseResponseProto> {
+        let message = hdfs::RecoverLeaseRequestProto {
+            src: src.to_string(),
+            client_name: self.client_name.clone(),
+        };
+        self.call("recoverLease", message, true).await
+    }
+
     pub(crate) async fn set_times(
         &self,
         src: &str,

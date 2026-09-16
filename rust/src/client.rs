@@ -909,6 +909,22 @@ impl Client {
         }
     }
 
+    /// Force lease recovery for an under-construction file.
+    ///
+    /// Returns `true` when the file is closed and stable. A `false` result
+    /// means recovery has started but has not completed yet; callers may poll
+    /// this method until it returns `true`.
+    ///
+    /// This operation fences the current writer for `src`. Callers must hold
+    /// exclusive recovery authority for the path before invoking it.
+    pub async fn recover_lease(&self, src: &str) -> Result<bool> {
+        let (link, resolved_path) = self.mount_table.resolve(src);
+        link.protocol
+            .recover_lease(&resolved_path)
+            .await
+            .map(|response| response.result)
+    }
+
     /// Create a new directory at `path` with the given `permission`.
     ///
     /// `permission` is the raw octal value representing the Unix style permission. For example, to
