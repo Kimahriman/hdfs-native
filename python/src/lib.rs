@@ -387,6 +387,10 @@ impl RawFileWriter {
         Ok(py.detach(|| self.inner.write_bytes(Bytes::from(buf)))?)
     }
 
+    pub fn hsync(&mut self, py: Python) -> PyHdfsResult<()> {
+        Ok(py.detach(|| self.inner.hsync())?)
+    }
+
     pub fn close(&mut self, py: Python) -> PyHdfsResult<()> {
         Ok(py.detach(|| self.inner.close())?)
     }
@@ -483,6 +487,10 @@ impl RawClient {
         let file_writer = py.detach(|| self.inner.append(src))?;
 
         Ok(RawFileWriter { inner: file_writer })
+    }
+
+    pub fn recover_lease(&self, src: &str, py: Python) -> PyHdfsResult<bool> {
+        Ok(py.detach(|| self.inner.recover_lease(src))?)
     }
 
     pub fn mkdirs(
@@ -681,6 +689,10 @@ impl AsyncRawFileWriter {
         Ok(self.inner.write_bytes(Bytes::from(buf)).await?)
     }
 
+    pub async fn hsync(&mut self) -> PyHdfsResult<()> {
+        Ok(self.inner.hsync().await?)
+    }
+
     pub async fn close(&mut self) -> PyHdfsResult<()> {
         Ok(self.inner.close().await?)
     }
@@ -783,6 +795,10 @@ impl AsyncRawClient {
         let file_writer = self.inner.append(&src).await?;
 
         Ok(AsyncRawFileWriter { inner: file_writer })
+    }
+
+    pub async fn recover_lease(&self, src: String) -> PyHdfsResult<bool> {
+        Ok(self.inner.recover_lease(&src).await?)
     }
 
     pub async fn mkdirs(

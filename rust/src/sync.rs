@@ -145,6 +145,13 @@ impl Client {
         })
     }
 
+    /// Recover a file lease, returning true once the file is closed.
+    ///
+    /// The caller must hold exclusive recovery authority for this path.
+    pub fn recover_lease(&self, src: &str) -> Result<bool> {
+        self.block_on(self.inner.recover_lease(src))
+    }
+
     /// Create a new directory at `path` with the given permission.
     pub fn mkdirs(&self, path: &str, permission: u32, create_parent: bool) -> Result<()> {
         self.block_on(self.inner.mkdirs(path, permission, create_parent))
