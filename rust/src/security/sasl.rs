@@ -2,7 +2,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use cipher::{KeyIvInit, StreamCipher};
 use log::debug;
 use prost::Message;
-use std::io;
+use std::io::{self, IoSlice};
 use std::sync::{Arc, Mutex};
 use tokio::io::BufReader;
 use tokio::{
@@ -578,6 +578,21 @@ impl SaslDatanodeWriter {
             None => {
                 self.stream.write_all(buf).await?;
             }
+        }
+        Ok(())
+    }
+
+    /// Write reference-counted payload segments without first concatenating
+    /// them into a packet-sized userspace buffer.
+    pub(crate) async fn write_all_vectored(&mut self, bufs: &[Bytes]) -> Result<()> {
+        if self.encryptor.is_none() {
+            let mut slices: Vec<IoSlice<'_>> = bufs.iter().map(|buf| IoSlice::new(buf)).collect();
+            tokio_util::io::write_all_vectored(&mut self.stream, &mut slices).await?;
+            return Ok(());
+        }
+
+        for buf in bufs {
+            self.write_all(buf).await?;
         }
         Ok(())
     }
