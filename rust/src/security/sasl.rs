@@ -586,38 +586,8 @@ impl SaslDatanodeWriter {
     /// them into a packet-sized userspace buffer.
     pub(crate) async fn write_all_vectored(&mut self, bufs: &[Bytes]) -> Result<()> {
         if self.encryptor.is_none() {
-            let mut index = 0;
-            let mut offset = 0;
-
-            while index < bufs.len() {
-                // Stay comfortably below the smallest common IOV_MAX while
-                // still combining fragmented application writes efficiently.
-                let slices: Vec<_> = std::iter::once(IoSlice::new(&bufs[index][offset..]))
-                    .chain(
-                        bufs[index + 1..]
-                            .iter()
-                            .map(|buf| IoSlice::new(buf.as_ref())),
-                    )
-                    .take(64)
-                    .collect();
-                let written = self.stream.write_vectored(&slices).await?;
-                if written == 0 {
-                    return Err(io::Error::from(io::ErrorKind::WriteZero).into());
-                }
-
-                let mut remaining = written;
-                while remaining != 0 {
-                    let available = bufs[index].len() - offset;
-                    if remaining < available {
-                        offset += remaining;
-                        remaining = 0;
-                    } else {
-                        remaining -= available;
-                        index += 1;
-                        offset = 0;
-                    }
-                }
-            }
+            let mut slices: Vec<IoSlice<'_>> = bufs.iter().map(|buf| IoSlice::new(buf)).collect();
+            tokio_util::io::write_all_vectored(&mut self.stream, &mut slices).await?;
             return Ok(());
         }
 
