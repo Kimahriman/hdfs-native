@@ -5,21 +5,26 @@ on:
     branches:
       - master
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'hdfs-v*'
 
 jobs:
   validate-release-tag:
     name: Validate git tag
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/hdfs-v')
     steps:
       - uses: actions/checkout@v7
-      - name: compare git tag with cargo metadata
+      - name: Compare tag with Rust and Python metadata
         run: |
           PUSHED_TAG=${GITHUB_REF##*/}
-          CURR_VER=$( grep version python/Cargo.toml | head -n 1 | awk '{print $3}' | tr -d '"' )
-          if [[ "${PUSHED_TAG}" != "v${CURR_VER}" ]]; then
-            echo "Cargo metadata has version set to ${CURR_VER}, but got pushed tag ${PUSHED_TAG}."
+          PYTHON_VER=$(grep '^version' python/Cargo.toml | head -n 1 | awk '{print $3}' | tr -d '"')
+          HDFS_VER=$(grep '^version' rust/hdfs-native/Cargo.toml | head -n 1 | awk '{print $3}' | tr -d '"')
+          if [[ "${PYTHON_VER}" != "${HDFS_VER}" ]]; then
+            echo "Python has version ${PYTHON_VER}, but hdfs-native has version ${HDFS_VER}."
+            exit 1
+          fi
+          if [[ "${PUSHED_TAG}" != "hdfs-v${PYTHON_VER}" ]]; then
+            echo "Package metadata has version ${PYTHON_VER}, but got tag ${PUSHED_TAG}."
             exit 1
           fi
 
@@ -130,7 +135,7 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/hdfs-v')
     needs:
       - validate-release-tag
       - linux
