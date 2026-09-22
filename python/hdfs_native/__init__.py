@@ -117,6 +117,13 @@ class FileWriter(io.RawIOBase):
         """Writes `buf` to the file. Always writes all bytes"""
         return self.inner.write(buf)
 
+    def hsync(self) -> None:
+        """Persist written data and update its visible length without closing.
+
+        Supported for replicated files; erasure-coded files are unsupported.
+        """
+        self.inner.hsync()
+
     def close(self) -> None:
         """Closes the file and saves the final metadata to the NameNode"""
         self.inner.close()
@@ -178,6 +185,15 @@ class Client:
     def append(self, path: str) -> FileWriter:
         """Opens an existing file to append to at `path`"""
         return FileWriter(self.inner.append(path))
+
+    def recover_lease(self, path: str) -> bool:
+        """Force lease recovery for a file owned exclusively by this recovery attempt.
+
+        Returns True once the file is closed, or False while recovery proceeds.
+        This fences the previous writer. The caller owns polling, timeout, and
+        cancellation, and must obtain exclusive recovery authority first.
+        """
+        return self.inner.recover_lease(path)
 
     def mkdirs(
         self,
@@ -367,6 +383,13 @@ class AsyncFileWriter:
         """Writes `buf` to the file. Always writes all bytes"""
         return await self.inner.write(buf)
 
+    async def hsync(self) -> None:
+        """Persist written data and update its visible length without closing.
+
+        Supported for replicated files; erasure-coded files are unsupported.
+        """
+        await self.inner.hsync()
+
     async def close(self) -> None:
         """Closes the file and saves the final metadata to the NameNode"""
         await self.inner.close()
@@ -432,6 +455,15 @@ class AsyncClient:
     async def append(self, path: str) -> AsyncFileWriter:
         """Opens an existing file to append to at `path`"""
         return AsyncFileWriter(await self.inner.append(path))
+
+    async def recover_lease(self, path: str) -> bool:
+        """Force lease recovery for a file owned exclusively by this recovery attempt.
+
+        Returns True once the file is closed, or False while recovery proceeds.
+        This fences the previous writer. The caller owns polling, timeout, and
+        cancellation, and must obtain exclusive recovery authority first.
+        """
+        return await self.inner.recover_lease(path)
 
     async def mkdirs(
         self,

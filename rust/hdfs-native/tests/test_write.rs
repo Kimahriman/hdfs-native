@@ -53,6 +53,35 @@ mod test {
 
         test_create(&client).await?;
         test_append(&client).await?;
+        test_hsync(&client).await?;
+        Ok(())
+    }
+
+    async fn test_hsync(client: &Client) -> Result<()> {
+        let write_options = WriteOptions::default().overwrite(true);
+        let mut writer = client.create("/hsync", &write_options).await?;
+        // Deliberately cross an hsync boundary in the middle of a checksum chunk.
+        let first = bytes::Bytes::from_static(b"first durable window!");
+        let second = bytes::Bytes::from_static(b" and the next window");
+
+        writer.write_bytes(first.clone()).await?;
+        writer.hsync().await?;
+        assert_eq!(client.get_file_info("/hsync").await?.length, first.len());
+
+        writer.write_bytes(second.clone()).await?;
+        writer.hsync().await?;
+        assert_eq!(
+            client.get_file_info("/hsync").await?.length,
+            first.len() + second.len()
+        );
+
+        writer.close().await?;
+        let mut reader = client.read("/hsync").await?;
+        let data = reader.read_bytes(reader.file_length()).await?;
+        let mut expected = BytesMut::new();
+        expected.put(first);
+        expected.put(second);
+        assert_bufs_equal(&expected.freeze(), &data, None);
         Ok(())
     }
 

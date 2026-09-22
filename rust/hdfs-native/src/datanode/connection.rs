@@ -10,6 +10,7 @@ use prost::Message;
 use socket2::SockRef;
 use tokio::net::TcpStream;
 use tokio::runtime::Handle;
+use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use crate::config::Configuration;
@@ -118,9 +119,50 @@ impl ReadPacket {
 
 pub(crate) struct WritePacket {
     pub header: hdfs::PacketHeaderProto,
-    pub data: BytesMut,
+    pub data: PacketData,
     bytes_per_checksum: usize,
     max_data_size: usize,
+    acknowledgement: Option<oneshot::Sender<()>>,
+}
+
+/// Payload retained by a write packet until the DataNode acknowledges it.
+///
+/// Keeping the caller's reference-counted `Bytes` slices avoids copying every
+/// write into an intermediate packet buffer. The slices also remain available
+/// unchanged if the pipeline has to replay an unacknowledged packet.
+pub(crate) struct PacketData {
+    segments: Vec<Bytes>,
+    len: usize,
+}
+
+impl PacketData {
+    fn new() -> Self {
+        Self {
+            // Most packets are a slice of one application write. Reserve a
+            // little room for packets completed by a subsequent small write.
+            segments: Vec::with_capacity(2),
+            len: 0,
+        }
+    }
+
+    fn push(&mut self, data: Bytes) {
+        if !data.is_empty() {
+            self.len += data.len();
+            self.segments.push(data);
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &Bytes> {
+        self.segments.iter()
+    }
 }
 
 impl WritePacket {
@@ -140,16 +182,33 @@ impl WritePacket {
 
         Self {
             header,
-            data: BytesMut::with_capacity(num_chunks * bytes_per_checksum as usize),
+            data: PacketData::new(),
             bytes_per_checksum: bytes_per_checksum as usize,
             max_data_size: num_chunks * bytes_per_checksum as usize,
+            acknowledgement: None,
         }
+    }
+
+    pub(crate) fn request_acknowledgement(&mut self) -> oneshot::Receiver<()> {
+        let (sender, receiver) = oneshot::channel();
+        self.acknowledgement = Some(sender);
+        receiver
+    }
+
+    pub(crate) fn acknowledge(&mut self) {
+        if let Some(sender) = self.acknowledgement.take() {
+            let _ = sender.send(());
+        }
+    }
+
+    pub(crate) fn set_sync_block(&mut self) {
+        self.header.sync_block = Some(true);
     }
 
     pub(crate) fn set_last_packet(&mut self) {
         self.header.last_packet_in_block = true;
         // Opinionated: always sync block for safety
-        self.header.sync_block = Some(true);
+        self.set_sync_block();
     }
 
     fn max_packet_chunks(bytes_per_checksum: u32, max_packet_size: u32) -> usize {
@@ -165,7 +224,7 @@ impl WritePacket {
 
     pub(crate) fn write(&mut self, buf: &mut Bytes) {
         self.data
-            .put(buf.split_to(usize::min(self.max_data_size - self.data.len(), buf.len())));
+            .push(buf.split_to(usize::min(self.max_data_size - self.data.len(), buf.len())));
         self.header.data_len = self.data.len() as i32;
     }
 
@@ -177,19 +236,37 @@ impl WritePacket {
         self.data.is_empty()
     }
 
-    fn calculate_checksum(&mut self) -> Bytes {
+    fn calculate_checksum(&self) -> Bytes {
         if self.data.is_empty() || self.bytes_per_checksum == 0 {
             return Bytes::new();
         }
 
-        let mut checksum = BytesMut::with_capacity(self.data.len() / self.bytes_per_checksum);
+        let checksum_count = self.data.len().div_ceil(self.bytes_per_checksum);
+        let mut checksum = BytesMut::with_capacity(checksum_count * CHECKSUM_BYTES);
+        let mut digest = CRC32C.digest();
+        let mut bytes_in_checksum_chunk = 0;
 
-        let mut chunk_start = 0;
-        while chunk_start < self.data.len() {
-            let chunk_end = usize::min(chunk_start + self.bytes_per_checksum, self.data.len());
-            let chunk_checksum = CRC32C.checksum(&self.data[chunk_start..chunk_end]);
-            checksum.put_u32(chunk_checksum);
-            chunk_start += self.bytes_per_checksum;
+        for segment in self.data.iter() {
+            let mut remaining = segment.as_ref();
+            while !remaining.is_empty() {
+                let bytes_to_hash = usize::min(
+                    self.bytes_per_checksum - bytes_in_checksum_chunk,
+                    remaining.len(),
+                );
+                digest.update(&remaining[..bytes_to_hash]);
+                remaining = &remaining[bytes_to_hash..];
+                bytes_in_checksum_chunk += bytes_to_hash;
+
+                if bytes_in_checksum_chunk == self.bytes_per_checksum {
+                    checksum.put_u32(digest.finalize());
+                    digest = CRC32C.digest();
+                    bytes_in_checksum_chunk = 0;
+                }
+            }
+        }
+
+        if bytes_in_checksum_chunk != 0 {
+            checksum.put_u32(digest.finalize());
         }
 
         checksum.freeze()
@@ -345,7 +422,9 @@ impl DatanodeWriter {
             .await?;
         self.writer.write_all(&header_encoded).await?;
         self.writer.write_all(&checksum).await?;
-        self.writer.write_all(&packet.data).await?;
+        self.writer
+            .write_all_vectored(&packet.data.segments)
+            .await?;
         self.writer.flush().await?;
 
         Ok(())
@@ -409,7 +488,8 @@ mod test {
 
     use crate::{config::Configuration, proto::hdfs};
 
-    use super::{MAX_PACKET_HEADER_SIZE, datanode_url};
+    use super::{CRC32C, MAX_PACKET_HEADER_SIZE, WritePacket, datanode_url};
+    use bytes::{BufMut, Bytes, BytesMut};
 
     #[test]
     fn test_max_packet_header_size() {
@@ -420,6 +500,48 @@ mod test {
         };
         // Add 4 bytes for size of whole packet and 2 bytes for size of header
         assert_eq!(MAX_PACKET_HEADER_SIZE, header.encoded_len() + 4 + 2);
+    }
+
+    #[tokio::test]
+    async fn sync_packet_is_acknowledged_without_ending_the_block() {
+        let mut packet = WritePacket::empty(512, 7, 512, 64 * 1024);
+        packet.set_sync_block();
+        let acknowledgement = packet.request_acknowledgement();
+
+        assert_eq!(packet.header.sync_block, Some(true));
+        assert!(!packet.header.last_packet_in_block);
+        packet.acknowledge();
+        assert!(acknowledgement.await.is_ok());
+    }
+
+    #[test]
+    fn write_packet_retains_shared_payload_slices() {
+        let original = Bytes::from_static(b"abcdefgh");
+        let original_ptr = original.as_ptr();
+        let mut input = original.clone();
+        let mut packet = WritePacket::empty(0, 0, 4, 49);
+
+        packet.write(&mut input);
+
+        assert!(input.is_empty());
+        assert_eq!(packet.data.len(), original.len());
+        assert_eq!(packet.data.segments.len(), 1);
+        assert_eq!(packet.data.segments[0].as_ptr(), original_ptr);
+    }
+
+    #[test]
+    fn write_packet_checksums_span_payload_segments() {
+        let mut packet = WritePacket::empty(0, 0, 4, 49);
+        let mut first = Bytes::from_static(b"abc");
+        let mut second = Bytes::from_static(b"defgh");
+        packet.write(&mut first);
+        packet.write(&mut second);
+
+        let mut expected = BytesMut::new();
+        expected.put_u32(CRC32C.checksum(b"abcd"));
+        expected.put_u32(CRC32C.checksum(b"efgh"));
+
+        assert_eq!(packet.calculate_checksum(), expected.freeze());
     }
 
     #[test]
