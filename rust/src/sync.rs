@@ -145,6 +145,13 @@ impl Client {
         })
     }
 
+    /// Recover a file lease, returning true once the file is closed.
+    ///
+    /// The caller must hold exclusive recovery authority for this path.
+    pub fn recover_lease(&self, src: &str) -> Result<bool> {
+        self.block_on(self.inner.recover_lease(src))
+    }
+
     /// Create a new directory at `path` with the given permission.
     pub fn mkdirs(&self, path: &str, permission: u32, create_parent: bool) -> Result<()> {
         self.block_on(self.inner.mkdirs(path, permission, create_parent))
@@ -356,6 +363,11 @@ impl FileWriter {
     /// Write bytes to the file.
     pub fn write_bytes(&mut self, buf: Bytes) -> Result<usize> {
         self.rt.block_on(self.inner.write_bytes(buf))
+    }
+
+    /// Persist all data written so far while keeping the writer open.
+    pub fn hsync(&mut self) -> Result<()> {
+        self.rt.block_on(self.inner.hsync())
     }
 
     /// Close the file writer.

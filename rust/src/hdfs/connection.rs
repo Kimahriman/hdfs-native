@@ -518,6 +518,7 @@ pub(crate) struct WritePacket {
     pub data: PacketData,
     bytes_per_checksum: usize,
     max_data_size: usize,
+    acknowledgement: Option<oneshot::Sender<()>>,
 }
 
 /// Payload retained by a write packet until the DataNode acknowledges it.
@@ -580,13 +581,30 @@ impl WritePacket {
             data: PacketData::new(),
             bytes_per_checksum: bytes_per_checksum as usize,
             max_data_size: num_chunks * bytes_per_checksum as usize,
+            acknowledgement: None,
         }
+    }
+
+    pub(crate) fn request_acknowledgement(&mut self) -> oneshot::Receiver<()> {
+        let (sender, receiver) = oneshot::channel();
+        self.acknowledgement = Some(sender);
+        receiver
+    }
+
+    pub(crate) fn acknowledge(&mut self) {
+        if let Some(sender) = self.acknowledgement.take() {
+            let _ = sender.send(());
+        }
+    }
+
+    pub(crate) fn set_sync_block(&mut self) {
+        self.header.sync_block = Some(true);
     }
 
     pub(crate) fn set_last_packet(&mut self) {
         self.header.last_packet_in_block = true;
         // Opinionated: always sync block for safety
-        self.header.sync_block = Some(true);
+        self.set_sync_block();
     }
 
     fn max_packet_chunks(bytes_per_checksum: u32, max_packet_size: u32) -> usize {
@@ -889,6 +907,18 @@ mod test {
         };
         // Add 4 bytes for size of whole packet and 2 bytes for size of header
         assert_eq!(MAX_PACKET_HEADER_SIZE, header.encoded_len() + 4 + 2);
+    }
+
+    #[tokio::test]
+    async fn sync_packet_is_acknowledged_without_ending_the_block() {
+        let mut packet = WritePacket::empty(512, 7, 512, 64 * 1024);
+        packet.set_sync_block();
+        let acknowledgement = packet.request_acknowledgement();
+
+        assert_eq!(packet.header.sync_block, Some(true));
+        assert!(!packet.header.last_packet_in_block);
+        packet.acknowledge();
+        assert!(acknowledgement.await.is_ok());
     }
 
     #[test]
