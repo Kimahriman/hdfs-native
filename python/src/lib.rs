@@ -23,7 +23,12 @@ use pyo3::prelude::*;
 
 mod error;
 
-use crate::error::{PythonHdfsError, TrashNotEnabledError};
+use crate::error::{
+    BlocksNotFound, ChecksumError, DataTransferError, ErasureCodingError, FatalRPCError,
+    GSSAPIError, HdfsError, InternalError, InvalidArgument, InvalidPath, InvalidRPCResponse,
+    NoSASLMechanism, OperationFailed, PythonHdfsError, RPCError, SASLError, TrashNotEnabled,
+    UnsupportedErasureCodingPolicy, UrlParseError, XmlParseError,
+};
 
 type PyHdfsResult<T> = Result<T, PythonHdfsError>;
 
@@ -908,9 +913,31 @@ fn _internal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAclStatus>()?;
 
     m.add_class::<AsyncRawClient>()?;
+
+    m.add("HdfsError", m.py().get_type::<HdfsError>())?;
+    m.add("DataTransferError", m.py().get_type::<DataTransferError>())?;
+    m.add("ChecksumError", m.py().get_type::<ChecksumError>())?;
+    m.add("InvalidPath", m.py().get_type::<InvalidPath>())?;
+    m.add("InvalidArgument", m.py().get_type::<InvalidArgument>())?;
+    m.add("UrlParseError", m.py().get_type::<UrlParseError>())?;
+    m.add("OperationFailed", m.py().get_type::<OperationFailed>())?;
+    m.add("BlocksNotFound", m.py().get_type::<BlocksNotFound>())?;
+    m.add("TrashNotEnabled", m.py().get_type::<TrashNotEnabled>())?;
     m.add(
-        "TrashNotEnabledError",
-        m.py().get_type::<TrashNotEnabledError>(),
+        "UnsupportedErasureCodingPolicy",
+        m.py().get_type::<UnsupportedErasureCodingPolicy>(),
     )?;
+    m.add("ErasureCodingError", m.py().get_type::<ErasureCodingError>())?;
+    m.add("InternalError", m.py().get_type::<InternalError>())?;
+    m.add(
+        "InvalidRPCResponse",
+        m.py().get_type::<InvalidRPCResponse>(),
+    )?;
+    m.add("RPCError", m.py().get_type::<RPCError>())?;
+    m.add("FatalRPCError", m.py().get_type::<FatalRPCError>())?;
+    m.add("SASLError", m.py().get_type::<SASLError>())?;
+    m.add("GSSAPIError", m.py().get_type::<GSSAPIError>())?;
+    m.add("NoSASLMechanism", m.py().get_type::<NoSASLMechanism>())?;
+    m.add("XmlParseError", m.py().get_type::<XmlParseError>())?;
     Ok(())
 }
