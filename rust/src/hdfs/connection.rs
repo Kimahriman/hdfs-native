@@ -725,6 +725,14 @@ impl DatanodeConnection {
         }
     }
 
+    pub(crate) fn apply_socket_timeout(&mut self, config: &Configuration, handle: &Handle) {
+        self.reader.set_idle_timeout(
+            config
+                .socket_timeout()
+                .map(|timeout| (timeout, handle.clone())),
+        );
+    }
+
     pub(crate) async fn send(
         &mut self,
         op: Op,
