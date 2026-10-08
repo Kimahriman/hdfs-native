@@ -51,6 +51,8 @@ pub enum HdfsError {
     GSSAPIError(hadoop_native::security::gssapi::GssMajorCodes, u32, String),
     #[error("No valid SASL mechanism found")]
     NoSASLMechanism,
+    #[error("XML parse error: {0}")]
+    XmlParseError(#[from] roxmltree::Error),
 }
 
 pub type Result<T> = std::result::Result<T, HdfsError>;
@@ -72,7 +74,7 @@ impl From<hadoop_native::HadoopError> for HdfsError {
             }
             HadoopError::NoSASLMechanism => Self::NoSASLMechanism,
             HadoopError::OperationFailed(message) => Self::OperationFailed(message),
-            other => Self::HadoopError(other),
+            HadoopError::XmlParseError(error) => Self::XmlParseError(error),
         }
     }
 }
