@@ -45,16 +45,16 @@ impl fmt::Debug for GssMajorCodes {
         let routine_error =
             (self.0 >> bindings::GSS_C_ROUTINE_ERROR_OFFSET) & bindings::_GSS_C_ROUTINE_ERROR_MASK;
         let supplementary_info = self.0 & bindings::_GSS_C_SUPPLEMENTARY_MASK;
+        let calling_error = calling_error_name(calling_error);
+        let routine_error = routine_error_name(routine_error);
+        let supplementary_info = format!("{:#06x}", supplementary_info);
         let raw = format!("{:#010x}", self.0);
 
         f.debug_struct("GssMajorCodes")
             .field("raw", &raw)
-            .field("calling_error", &calling_error_name(calling_error))
-            .field("routine_error", &routine_error_name(routine_error))
-            .field(
-                "supplementary_info",
-                &format!("{:#06x}", supplementary_info),
-            )
+            .field("calling_error", &calling_error)
+            .field("routine_error", &routine_error)
+            .field("supplementary_info", &supplementary_info)
             .finish()
     }
 }
@@ -936,14 +936,11 @@ mod tests {
         let major = GssMajorCodes::from_raw(bindings::_GSS_S_NO_CRED);
         let debug = format!("{major:?}");
 
-        assert!(
-            debug.contains("routine_error: \"GSS_S_NO_CRED\""),
-            "{debug}",
-        );
-        assert!(
-            !debug.contains("GSS_S_BAD_MECH"),
-            "{debug}",
-        );
+        let has_no_cred = debug.contains("routine_error: \"GSS_S_NO_CRED\"");
+        let has_no_bad_mech = !debug.contains("GSS_S_BAD_MECH");
+
+        assert!(has_no_cred, "{debug}");
+        assert!(has_no_bad_mech, "{debug}");
     }
 
     #[test]
