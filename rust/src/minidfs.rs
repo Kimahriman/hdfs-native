@@ -80,8 +80,11 @@ impl MiniDfs {
                 concat!(env!("OUT_DIR"), "/minidfs"),
                 "--quiet",
                 "compile",
-                "exec:java",
-                &format!("-Dexec.args={}", feature_args.join(" ")),
+                "exec:exec",
+                &format!(
+                    "-Dexec.args=-cp %classpath main.Main {}",
+                    feature_args.join(" ")
+                ),
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
