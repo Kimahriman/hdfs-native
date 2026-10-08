@@ -51,10 +51,7 @@ impl fmt::Debug for GssMajorCodes {
             .field("raw", &raw)
             .field("calling_error", &calling_error_name(calling_error))
             .field("routine_error", &routine_error_name(routine_error))
-            .field(
-                "supplementary_info",
-                &format!("{:#06x}", supplementary_info),
-            )
+            .field("supplementary_info", &format!("{:#06x}", supplementary_info))
             .finish()
     }
 }
