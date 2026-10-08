@@ -19,8 +19,8 @@ def minidfs():
             "--quiet",
             "clean",
             "compile",
-            "exec:java",
-            "-Dexec.args=trash",
+            "exec:exec",
+            "-Dexec.args=-cp %classpath main.Main trash",
         ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -32,23 +32,8 @@ def minidfs():
 
     assert child.stdout is not None
 
-    last_output = ""
-    while True:
-        line = child.stdout.readline()
-        if not line:
-            raise RuntimeError(
-                "MiniDFS exited before signaling readiness "
-                f"(status {child.poll()}); last output: {last_output}"
-            )
-
-        last_output = line.strip()
-        if last_output == "Ready!":
-            break
-        if child.poll() is not None:
-            raise RuntimeError(
-                "MiniDFS exited before signaling readiness "
-                f"(status {child.returncode}); last output: {last_output}"
-            )
+    output = child.stdout.readline().strip()
+    assert output == "Ready!", output
 
     os.environ["HADOOP_CONF_DIR"] = "target/test"
 
