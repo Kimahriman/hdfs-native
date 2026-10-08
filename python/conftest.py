@@ -32,8 +32,23 @@ def minidfs():
 
     assert child.stdout is not None
 
-    output = child.stdout.readline().strip()
-    assert output == "Ready!", output
+    last_output = ""
+    while True:
+        line = child.stdout.readline()
+        if not line:
+            raise RuntimeError(
+                "MiniDFS exited before signaling readiness "
+                f"(status {child.poll()}); last output: {last_output}"
+            )
+
+        last_output = line.strip()
+        if last_output == "Ready!":
+            break
+        if child.poll() is not None:
+            raise RuntimeError(
+                "MiniDFS exited before signaling readiness "
+                f"(status {child.returncode}); last output: {last_output}"
+            )
 
     os.environ["HADOOP_CONF_DIR"] = "target/test"
 
