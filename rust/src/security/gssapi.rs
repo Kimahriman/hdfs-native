@@ -563,12 +563,8 @@ impl GssClientCtx {
             )
         };
 
-        let complete = if major & bindings::GSS_S_CONTINUE_NEEDED != 0 {
-            false
-        } else {
-            check_gss_ok_with_mech(major, minor, mech_oid)?;
-            true
-        };
+        check_gss_ok_with_mech(major, minor, mech_oid)?;
+        let complete = major & bindings::GSS_S_CONTINUE_NEEDED == 0;
 
         self.flags |= flags_out;
 
