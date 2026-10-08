@@ -51,7 +51,10 @@ impl fmt::Debug for GssMajorCodes {
             .field("raw", &raw)
             .field("calling_error", &calling_error_name(calling_error))
             .field("routine_error", &routine_error_name(routine_error))
-            .field("supplementary_info", &format!("{:#06x}", supplementary_info))
+            .field(
+                "supplementary_info",
+                &format!("{:#06x}", supplementary_info),
+            )
             .finish()
     }
 }
@@ -933,8 +936,14 @@ mod tests {
         let major = GssMajorCodes::from_raw(bindings::_GSS_S_NO_CRED);
         let debug = format!("{major:?}");
 
-        assert!(debug.contains("routine_error: \"GSS_S_NO_CRED\""), "{debug}");
-        assert!(!debug.contains("GSS_S_BAD_MECH"), "{debug}");
+        assert!(
+            debug.contains("routine_error: \"GSS_S_NO_CRED\""),
+            "{debug}",
+        );
+        assert!(
+            !debug.contains("GSS_S_BAD_MECH"),
+            "{debug}",
+        );
     }
 
     #[test]
