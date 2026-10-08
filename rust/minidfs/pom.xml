@@ -75,9 +75,11 @@
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>exec-maven-plugin</artifactId>
-        <version>3.0.0</version>
+        <version>3.6.4</version>
         <configuration>
-          <mainClass>main.Main</mainClass>
+          <executable>java</executable>
+          <inheritIo>true</inheritIo>
+          <longClasspath>true</longClasspath>
         </configuration>
       </plugin>
     </plugins>
