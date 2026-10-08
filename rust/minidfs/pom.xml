@@ -80,6 +80,7 @@
           <executable>java</executable>
           <inheritIo>true</inheritIo>
           <longClasspath>true</longClasspath>
+          <workingDirectory>${user.dir}</workingDirectory>
         </configuration>
       </plugin>
     </plugins>
