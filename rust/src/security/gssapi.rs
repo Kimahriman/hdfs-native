@@ -21,37 +21,76 @@ mod bindings {
     unsafe impl Sync for GSSAPI {}
 }
 
-// Converting error codes to a bitflag provides names in debug output
-bitflags::bitflags! {
-    #[derive(Clone, Copy, Debug)]
-    pub struct GssMajorCodes: u32 {
-        const GSS_S_CALL_INACCESSIBLE_READ = bindings::_GSS_S_CALL_INACCESSIBLE_READ;
-        const GSS_S_CALL_INACCESSIBLE_WRITE = bindings::_GSS_S_CALL_INACCESSIBLE_WRITE;
-        const GSS_S_CALL_BAD_STRUCTURE = bindings::_GSS_S_CALL_BAD_STRUCTURE;
-        const GSS_S_BAD_MECH = bindings::_GSS_S_BAD_MECH;
-        const GSS_S_BAD_NAME = bindings::_GSS_S_BAD_NAME;
-        const GSS_S_BAD_NAMETYPE = bindings::_GSS_S_BAD_NAMETYPE;
-        const GSS_S_BAD_BINDINGS = bindings::_GSS_S_BAD_BINDINGS;
-        const GSS_S_BAD_STATUS = bindings::_GSS_S_BAD_STATUS;
-        const GSS_S_BAD_SIG = bindings::_GSS_S_BAD_SIG;
-        const GSS_S_BAD_MIC = bindings::_GSS_S_BAD_MIC;
-        const GSS_S_NO_CRED = bindings::_GSS_S_NO_CRED;
-        const GSS_S_NO_CONTEXT = bindings::_GSS_S_NO_CONTEXT;
-        const GSS_S_DEFECTIVE_TOKEN = bindings::_GSS_S_DEFECTIVE_TOKEN;
-        const GSS_S_DEFECTIVE_CREDENTIAL = bindings::_GSS_S_DEFECTIVE_CREDENTIAL;
-        const GSS_S_CREDENTIALS_EXPIRED = bindings::_GSS_S_CREDENTIALS_EXPIRED;
-        const GSS_S_CONTEXT_EXPIRED = bindings::_GSS_S_CONTEXT_EXPIRED;
-        const GSS_S_FAILURE = bindings::_GSS_S_FAILURE;
-        const GSS_S_BAD_QOP = bindings::_GSS_S_BAD_QOP;
-        const GSS_S_UNAUTHORIZED = bindings::_GSS_S_UNAUTHORIZED;
-        const GSS_S_UNAVAILABLE = bindings::_GSS_S_UNAVAILABLE;
-        const GSS_S_DUPLICATE_ELEMENT = bindings::_GSS_S_DUPLICATE_ELEMENT;
-        const GSS_S_NAME_NOT_MN = bindings::_GSS_S_NAME_NOT_MN;
-        const GSS_S_CONTINUE_NEEDED = bindings::_GSS_S_CONTINUE_NEEDED;
-        const GSS_S_DUPLICATE_TOKEN = bindings::_GSS_S_DUPLICATE_TOKEN;
-        const GSS_S_OLD_TOKEN = bindings::_GSS_S_OLD_TOKEN;
-        const GSS_S_UNSEQ_TOKEN = bindings::_GSS_S_UNSEQ_TOKEN;
-        const GSS_S_GAP_TOKEN = bindings::_GSS_S_GAP_TOKEN;
+// GSS major statuses contain numeric calling and routine error fields. Only the
+// supplementary information field is a set of flags.
+#[derive(Clone, Copy)]
+pub struct GssMajorCodes(u32);
+
+impl GssMajorCodes {
+    pub const GSS_S_FAILURE: Self = Self(bindings::_GSS_S_FAILURE);
+
+    pub const fn from_raw(bits: u32) -> Self {
+        Self(bits)
+    }
+
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+impl fmt::Debug for GssMajorCodes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let calling_error =
+            (self.0 >> bindings::GSS_C_CALLING_ERROR_OFFSET) & bindings::_GSS_C_CALLING_ERROR_MASK;
+        let routine_error =
+            (self.0 >> bindings::GSS_C_ROUTINE_ERROR_OFFSET) & bindings::_GSS_C_ROUTINE_ERROR_MASK;
+        let supplementary_info = self.0 & bindings::_GSS_C_SUPPLEMENTARY_MASK;
+        let calling_error = calling_error_name(calling_error);
+        let routine_error = routine_error_name(routine_error);
+        let supplementary_info = format!("{:#06x}", supplementary_info);
+        let raw = format!("{:#010x}", self.0);
+
+        f.debug_struct("GssMajorCodes")
+            .field("raw", &raw)
+            .field("calling_error", &calling_error)
+            .field("routine_error", &routine_error)
+            .field("supplementary_info", &supplementary_info)
+            .finish()
+    }
+}
+
+fn calling_error_name(error: u32) -> &'static str {
+    match error {
+        0 => "none",
+        1 => "GSS_S_CALL_INACCESSIBLE_READ",
+        2 => "GSS_S_CALL_INACCESSIBLE_WRITE",
+        3 => "GSS_S_CALL_BAD_STRUCTURE",
+        _ => "unknown calling error",
+    }
+}
+
+fn routine_error_name(error: u32) -> &'static str {
+    match error {
+        0 => "none",
+        1 => "GSS_S_BAD_MECH",
+        2 => "GSS_S_BAD_NAME",
+        3 => "GSS_S_BAD_NAMETYPE",
+        4 => "GSS_S_BAD_BINDINGS",
+        5 => "GSS_S_BAD_STATUS",
+        6 => "GSS_S_BAD_SIG/GSS_S_BAD_MIC",
+        7 => "GSS_S_NO_CRED",
+        8 => "GSS_S_NO_CONTEXT",
+        9 => "GSS_S_DEFECTIVE_TOKEN",
+        10 => "GSS_S_DEFECTIVE_CREDENTIAL",
+        11 => "GSS_S_CREDENTIALS_EXPIRED",
+        12 => "GSS_S_CONTEXT_EXPIRED",
+        13 => "GSS_S_FAILURE",
+        14 => "GSS_S_BAD_QOP",
+        15 => "GSS_S_UNAUTHORIZED",
+        16 => "GSS_S_UNAVAILABLE",
+        17 => "GSS_S_DUPLICATE_ELEMENT",
+        18 => "GSS_S_NAME_NOT_MN",
+        _ => "unknown routine error",
     }
 }
 
@@ -524,12 +563,8 @@ impl GssClientCtx {
             )
         };
 
-        let complete = if major == bindings::GSS_S_CONTINUE_NEEDED {
-            false
-        } else {
-            check_gss_ok(major, minor)?;
-            true
-        };
+        check_gss_ok_with_mech(major, minor, mech_oid)?;
+        let complete = major & bindings::GSS_S_CONTINUE_NEEDED == 0;
 
         self.flags |= flags_out;
 
@@ -628,37 +663,71 @@ enum SecurityLayer {
     Confidentiality = 4,
 }
 
-fn check_gss_ok(mut major: u32, mut minor: u32) -> crate::Result<()> {
-    major &= (bindings::_GSS_C_CALLING_ERROR_MASK << bindings::GSS_C_CALLING_ERROR_OFFSET)
+fn check_gss_ok(major: u32, minor: u32) -> crate::Result<()> {
+    check_gss_ok_with_mech(major, minor, ptr::null_mut())
+}
+
+fn check_gss_ok_with_mech(
+    major: u32,
+    minor: u32,
+    mech_type: bindings::gss_OID,
+) -> crate::Result<()> {
+    let error_mask = (bindings::_GSS_C_CALLING_ERROR_MASK << bindings::GSS_C_CALLING_ERROR_OFFSET)
         | (bindings::_GSS_C_ROUTINE_ERROR_MASK << bindings::GSS_C_ROUTINE_ERROR_OFFSET);
-    if major == bindings::GSS_S_COMPLETE {
-        Ok(())
-    } else {
-        let mut context = 0;
+    if major & error_mask == 0 {
+        return Ok(());
+    }
+
+    let mut error_message = display_status(major, bindings::GSS_C_GSS_CODE as i32, mech_type);
+    if minor != 0 {
+        let mech_message = display_status(minor, bindings::GSS_C_MECH_CODE as i32, mech_type);
+        if !mech_message.is_empty() {
+            if !error_message.is_empty() {
+                error_message.push_str(": ");
+            }
+            error_message.push_str(&mech_message);
+        }
+    }
+
+    Err(HdfsError::GSSAPIError(
+        GssMajorCodes::from_raw(major),
+        minor,
+        error_message,
+    ))
+}
+
+fn display_status(status_value: u32, status_type: i32, mech_type: bindings::gss_OID) -> String {
+    let Ok(lib) = libgssapi() else {
+        return String::new();
+    };
+    let mut context = 0;
+    let mut messages = Vec::new();
+
+    loop {
+        let mut display_minor = 0;
         let mut msg = GssOwnedBuf::new();
         let ret = unsafe {
-            libgssapi()?.gss_display_status(
-                &mut minor,
-                major,
-                bindings::GSS_C_GSS_CODE as i32,
-                ptr::null_mut(),
+            lib.gss_display_status(
+                &mut display_minor,
+                status_value,
+                status_type,
+                mech_type,
                 &mut context,
                 msg.as_ptr(),
             )
         };
-
-        let error_message = if ret == bindings::GSS_S_COMPLETE {
-            String::from_utf8_lossy(msg.as_ref()).to_string()
-        } else {
-            String::new()
-        };
-
-        Err(HdfsError::GSSAPIError(
-            GssMajorCodes::from_bits_retain(major),
-            minor,
-            error_message,
-        ))
+        if ret != bindings::GSS_S_COMPLETE {
+            break;
+        }
+        if !msg.is_empty() {
+            messages.push(String::from_utf8_lossy(msg.as_ref()).to_string());
+        }
+        if context == 0 {
+            break;
+        }
     }
+
+    messages.join(": ")
 }
 
 #[derive(Debug)]
@@ -855,5 +924,39 @@ impl SaslSession for GssapiSession {
                 "SASL session doesn't have security layer".to_string(),
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gss_major_status_debug_decodes_routine_error_as_a_value() {
+        let major = GssMajorCodes::from_raw(bindings::_GSS_S_NO_CRED);
+        let debug = format!("{major:?}");
+
+        let has_no_cred = debug.contains("routine_error: \"GSS_S_NO_CRED\"");
+        let has_no_bad_mech = !debug.contains("GSS_S_BAD_MECH");
+
+        assert!(has_no_cred, "{debug}");
+        assert!(has_no_bad_mech, "{debug}");
+    }
+
+    #[test]
+    fn check_gss_ok_preserves_raw_major_and_minor_statuses() {
+        if libgssapi().is_err() {
+            return;
+        }
+
+        let major_code = bindings::_GSS_S_NO_CRED | bindings::GSS_S_CONTINUE_NEEDED;
+        let minor_code = 0x1234_5678;
+        let error = check_gss_ok(major_code, minor_code).unwrap_err();
+        let HdfsError::GSSAPIError(major, minor, _) = error else {
+            panic!("expected a GSSAPI error");
+        };
+
+        assert_eq!(major.raw(), major_code);
+        assert_eq!(minor, minor_code);
     }
 }
