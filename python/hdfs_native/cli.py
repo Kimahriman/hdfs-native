@@ -15,7 +15,8 @@ from urllib.parse import urlparse
 
 from argcomplete import autocomplete
 
-from hdfs_native import AclEntry, AclStatus, Client, TrashNotEnabledError
+from hdfs_native import AclEntry, AclStatus, Client
+from hdfs_native.error import TrashNotEnabled
 from hdfs_native._internal import FileStatus, WriteOptions
 
 __all__ = ["main"]
@@ -733,7 +734,7 @@ def rm(args: Namespace):
                                 and not args.force
                             ):
                                 raise FileNotFoundError(f"Failed to delete {path}")
-                    except TrashNotEnabledError as err:
+                    except TrashNotEnabled as err:
                         raise ValueError(
                             "Trash is not enabled. Pass --skip-trash to permanently delete the files."
                         ) from err

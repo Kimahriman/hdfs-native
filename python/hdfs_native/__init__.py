@@ -12,7 +12,6 @@ from ._internal import (
     ContentSummary,
     FileStatus,
     RawClient,
-    TrashNotEnabledError,
     WriteOptions,
 )
 
@@ -36,7 +35,6 @@ __all__ = [
     "WriteOptions",
     "AclEntry",
     "AclStatus",
-    "TrashNotEnabledError",
 ]
 
 
