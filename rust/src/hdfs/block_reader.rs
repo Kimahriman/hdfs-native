@@ -82,6 +82,7 @@ async fn connect_and_send(
     let mut remaining_attempts = 2;
     while remaining_attempts > 0 {
         if let Some(mut conn) = DATANODE_CACHE.get(datanode_id, config) {
+            conn.apply_socket_timeout(config, handle);
             let message = hdfs::OpReadBlockProto {
                 header: conn.build_header(block, Some(token.clone())),
                 offset,
@@ -234,9 +235,10 @@ impl ReplicatedBlockStream {
         }
 
         let (header, data) = loop {
-            // If we are using an existing listener, we should retry on the same DataNode in case of
-            // transient IO errors due to socket timeouts. If this is a new listener, there should be no socket
-            // timeout so we should move directly to the next node.
+            // If we are using an existing listener, retry once on the same DataNode in case of
+            // transient IO errors. This includes a read timeout
+            // after the DataNode has sent data. If this is a new listener, move directly to the
+            // next node.
             let retry_connection = if self.listener.is_none() {
                 let (connection, checksum_info) = self.select_next_datanode().await?;
                 self.listener = Some(Self::start_packet_listener(
@@ -283,8 +285,7 @@ impl ReplicatedBlockStream {
 
         // We've consumed the whole read, there should be no more packets and the listener should complete
         if self.len == 0 {
-            let conn = self.listener.take().unwrap().await.unwrap()?;
-            DATANODE_CACHE.release(conn);
+            self.finish_block().await;
         }
 
         let slice = data.slice(packet_offset..(packet_offset + packet_len));
@@ -297,6 +298,21 @@ impl ReplicatedBlockStream {
             }
         };
         Ok(Some(slice))
+    }
+
+    async fn finish_block(&mut self) {
+        let Some(listener) = self.listener.take() else {
+            return;
+        };
+        match listener.await.unwrap() {
+            Ok(conn) => DATANODE_CACHE.release(conn),
+            Err(e) => {
+                warn!(
+                    "Failed to finish block {} after reading all data: {:?}",
+                    self.block.b.block_id, e
+                );
+            }
+        }
     }
 
     async fn get_next_packet(
@@ -324,10 +340,16 @@ impl ReplicatedBlockStream {
                     break;
                 }
 
+                let failed = next_packet.is_err();
                 if sender.send(next_packet).await.is_err() {
                     // The block reader was dropped, so just kill the listener
                     return Err(HdfsError::DataTransferError(
                         "Reader was dropped without consuming all data".to_string(),
+                    ));
+                }
+                if failed {
+                    return Err(HdfsError::DataTransferError(
+                        "DataNode read failed".to_string(),
                     ));
                 }
             }
@@ -687,5 +709,148 @@ impl StripedBlockStream {
                 buffers.pop_front().map(|b| (Ok(b), (stream, buffers)))
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use bytes::Bytes;
+    use futures::TryStreamExt;
+    use tokio::runtime::Handle;
+    use url::Url;
+
+    use super::ReplicatedBlockStream;
+    use crate::Result;
+    use crate::common::config::Configuration;
+    use crate::hdfs::connection::DATANODE_CACHE;
+    use crate::hdfs::fake_datanode::{
+        connect, encode_packet, fake_datanode, fake_namenode, socket_timeout_config,
+        stalling_datanode,
+    };
+    use crate::hdfs::protocol::NamenodeProtocol;
+    use crate::hdfs::proxy::NameServiceProxy;
+    use crate::proto::hdfs;
+
+    fn block_packets() -> Vec<Vec<u8>> {
+        vec![
+            encode_packet(b"abcd", 0),
+            encode_packet(b"efgh", 4),
+            encode_packet(b"ijkl", 8),
+            encode_packet(b"", 12),
+        ]
+    }
+
+    fn located_block(datanodes: Vec<hdfs::DatanodeIdProto>) -> hdfs::LocatedBlockProto {
+        hdfs::LocatedBlockProto {
+            locs: datanodes
+                .into_iter()
+                .map(|id| hdfs::DatanodeInfoProto {
+                    id,
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    fn namenode_protocol(url: &str, config: &Arc<Configuration>) -> Arc<NamenodeProtocol> {
+        let handle = Handle::current();
+        let proxy = NameServiceProxy::new(
+            &Url::parse(url).unwrap(),
+            Arc::clone(config),
+            handle.clone(),
+            None,
+            None,
+        )
+        .unwrap();
+        Arc::new(NamenodeProtocol::new(proxy, handle))
+    }
+
+    async fn read_block(
+        protocol: &Arc<NamenodeProtocol>,
+        block: hdfs::LocatedBlockProto,
+        config: &Arc<Configuration>,
+    ) -> Result<Vec<u8>> {
+        let stream = ReplicatedBlockStream::new(
+            Arc::clone(protocol),
+            block,
+            0,
+            12,
+            Arc::clone(config),
+            Handle::current(),
+            None,
+        );
+        let data: Vec<Bytes> =
+            tokio::time::timeout(Duration::from_secs(5), stream.into_stream().try_collect())
+                .await
+                .expect("read did not finish")?;
+        Ok(data.concat())
+    }
+
+    #[tokio::test]
+    async fn stalled_stream_retries_same_datanode_once() {
+        let config = Arc::new(socket_timeout_config(200));
+        let stalling = stalling_datanode(vec![encode_packet(b"abcd", 0)]).await;
+        let healthy = fake_datanode(block_packets(), Duration::ZERO).await;
+        let (url, _) = fake_namenode(hdfs::LocatedBlocksProto::default()).await;
+        let protocol = namenode_protocol(&url, &config);
+        let block = located_block(vec![stalling, healthy]);
+
+        let started = Instant::now();
+        let data = read_block(&protocol, block, &config).await.unwrap();
+
+        assert_eq!(data, b"abcdefghijkl");
+        assert!(started.elapsed() >= Duration::from_millis(400));
+    }
+
+    #[tokio::test]
+    async fn cached_connection_uses_current_timeout() {
+        let config = Arc::new(socket_timeout_config(200));
+        let stalled = fake_datanode(vec![], Duration::ZERO).await;
+        let healthy = fake_datanode(block_packets(), Duration::ZERO).await;
+        DATANODE_CACHE.release(connect(&stalled, &socket_timeout_config(0)).await);
+        let (url, _) = fake_namenode(hdfs::LocatedBlocksProto::default()).await;
+        let protocol = namenode_protocol(&url, &config);
+        let block = located_block(vec![stalled, healthy]);
+
+        let data = read_block(&protocol, block, &config).await.unwrap();
+
+        assert_eq!(data, b"abcdefghijkl");
+    }
+
+    #[tokio::test]
+    async fn stalled_final_packet_keeps_block_data() {
+        let config = Arc::new(socket_timeout_config(200));
+        let mut packets = block_packets();
+        packets.pop();
+        let datanode = fake_datanode(packets, Duration::ZERO).await;
+        let (url, _) = fake_namenode(hdfs::LocatedBlocksProto::default()).await;
+        let protocol = namenode_protocol(&url, &config);
+
+        let data = read_block(&protocol, located_block(vec![datanode]), &config)
+            .await
+            .unwrap();
+
+        assert_eq!(data, b"abcdefghijkl");
+    }
+
+    #[tokio::test]
+    async fn stalled_replica_fails_over_to_next_replica() {
+        let config = Arc::new(socket_timeout_config(200));
+        let stalled = fake_datanode(vec![], Duration::ZERO).await;
+        let healthy = fake_datanode(block_packets(), Duration::from_millis(150)).await;
+        for datanode in [&stalled, &healthy] {
+            DATANODE_CACHE.release(connect(datanode, &config).await);
+        }
+
+        let protocol = namenode_protocol("hdfs://127.0.0.1:1", &config);
+        let block = located_block(vec![stalled, healthy]);
+
+        let data = read_block(&protocol, block, &config).await.unwrap();
+
+        assert_eq!(data, b"abcdefghijkl");
     }
 }
