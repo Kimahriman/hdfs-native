@@ -29,6 +29,7 @@ use crate::security::digest::DigestSaslSession;
 use crate::{HdfsError, Result};
 
 use super::gssapi::GssapiSession;
+use super::run_blocking;
 use super::user::{User, UserInfo};
 
 type Aes128Ctr = ctr::Ctr128BE<aes::Aes128>;
@@ -94,21 +95,22 @@ pub(crate) async fn negotiate_sasl_session(
     let mut session: Option<Box<dyn SaslSession>> = None;
     while !done {
         let mut response: Option<RpcSaslProto> = None;
-        let message = reader.read_response().await?;
+        let mut message = reader.read_response().await?;
         debug!("Handling SASL message: {:?}", message);
         match SaslState::try_from(message.state).unwrap() {
             SaslState::Negotiate => {
-                let (mut selected_auth, selected_session) = select_method(
-                    &message.auths,
-                    service,
-                    effective_user.clone(),
-                    auth.clone(),
-                )?;
+                let auths = std::mem::take(&mut message.auths);
+                let service = service.to_owned();
+                let effective_user = effective_user.clone();
+                let auth = auth.clone();
+                let (mut selected_auth, selected_session) =
+                    run_blocking(move || select_method(&auths, &service, effective_user, auth))
+                        .await?;
                 session = selected_session;
 
-                let token = if let Some(session) = session.as_mut() {
+                let token = if session.is_some() {
                     let (token, finished) =
-                        session.step(selected_auth.challenge.as_ref().map(|c| &c[..]))?;
+                        step_session(&mut session, selected_auth.challenge.as_deref()).await?;
                     if finished {
                         return Err(HdfsError::SASLError(
                             "SASL negotiation finished too soon".to_string(),
@@ -132,10 +134,7 @@ pub(crate) async fn negotiate_sasl_session(
                 response = Some(r);
             }
             SaslState::Challenge => {
-                let (token, _) = session
-                    .as_mut()
-                    .unwrap()
-                    .step(message.token.as_ref().map(|t| &t[..]))?;
+                let (token, _) = step_session(&mut session, message.token.as_deref()).await?;
 
                 let r = RpcSaslProto {
                     state: SaslState::Response as i32,
@@ -146,7 +145,7 @@ pub(crate) async fn negotiate_sasl_session(
             }
             SaslState::Success => {
                 if let Some(token) = message.token.as_ref() {
-                    let (_, finished) = session.as_mut().unwrap().step(Some(&token[..]))?;
+                    let (_, finished) = step_session(&mut session, Some(token)).await?;
                     if !finished {
                         return Err(HdfsError::SASLError(
                             "Client not finished after server success".to_string(),
@@ -181,6 +180,23 @@ pub(crate) async fn negotiate_sasl_session(
         writer.set_session(session);
     }
     Ok((user_info, reader, writer))
+}
+
+async fn step_session(
+    session_slot: &mut Option<Box<dyn SaslSession>>,
+    token: Option<&[u8]>,
+) -> Result<(Vec<u8>, bool)> {
+    let mut session = session_slot.take().ok_or_else(|| {
+        HdfsError::InternalError("SASL session missing during negotiation".to_string())
+    })?;
+    let token = token.map(<[u8]>::to_vec);
+    let (returned_session, result) = run_blocking(move || {
+        let result = session.step(token.as_deref());
+        Ok((session, result))
+    })
+    .await?;
+    *session_slot = Some(returned_session);
+    result
 }
 
 fn select_method(

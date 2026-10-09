@@ -48,6 +48,7 @@ use crate::hdfs::crypto::DataEncryptionKey;
 use crate::proto::hdfs::FileEncryptionInfoProto;
 use crate::security::ClientAuth;
 use crate::security::gssapi::SpnegoSession;
+use crate::security::run_blocking;
 use crate::{HdfsError, Result};
 
 const KMS_URI_PREFIX: &str = "kms://";
@@ -280,12 +281,21 @@ impl KmsClient {
     /// Drive a SPNEGO challenge/response handshake against a `GET` endpoint,
     /// returning the final non-401 response.
     async fn spnego_get(&self, url: &Url, host: &str) -> Result<reqwest::Response> {
-        let mut session = SpnegoSession::new(SPNEGO_SERVICE, host, self.auth.clone())?;
+        let service = SPNEGO_SERVICE.to_string();
+        let host = host.to_string();
+        let auth = self.auth.clone();
+        let mut session = run_blocking(move || SpnegoSession::new(&service, &host, auth)).await?;
         let mut server_token: Option<Vec<u8>> = None;
 
         // Bound the loop so a misbehaving server can't spin forever.
         for _ in 0..8 {
-            let token = session.step(server_token.as_deref())?;
+            let challenge = server_token.take();
+            let (next_session, token) = run_blocking(move || {
+                let token = session.step(challenge.as_deref())?;
+                Ok((session, token))
+            })
+            .await?;
+            session = next_session;
             let header = format!("Negotiate {}", BASE64.encode(&token));
             let response = self
                 .http
