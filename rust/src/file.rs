@@ -13,7 +13,7 @@ use tokio::runtime::Handle;
 
 use crate::common::config::Configuration;
 use crate::ec::{EcSchema, resolve_ec_policy};
-use crate::hdfs::block_reader::get_block_stream;
+use crate::hdfs::block_reader::{DeadNodes, get_block_stream};
 use crate::hdfs::block_writer::BlockWriter;
 use crate::hdfs::crypto::FileCryptoCodec;
 use crate::hdfs::protocol::{LeaseTracker, NamenodeProtocol};
@@ -41,6 +41,7 @@ pub struct FileReader {
     handle: Handle,
     pending_read: Option<std::sync::Mutex<PendingRead>>,
     crypto: Option<Arc<FileCryptoCodec>>,
+    dead_nodes: Arc<DeadNodes>,
 }
 
 impl FileReader {
@@ -61,6 +62,7 @@ impl FileReader {
             handle,
             pending_read: None,
             crypto,
+            dead_nodes: Arc::default(),
         }
     }
 
@@ -178,6 +180,7 @@ impl FileReader {
                         Arc::clone(&self.config),
                         self.handle.clone(),
                         self.crypto.clone(),
+                        Arc::clone(&self.dead_nodes),
                     ))
                 } else {
                     // No data is needed from this block
