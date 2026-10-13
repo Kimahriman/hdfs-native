@@ -4,7 +4,9 @@ use log::debug;
 use prost::Message;
 use std::io::{self, IoSlice};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::io::BufReader;
+use tokio::runtime::Handle;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufStream},
     net::TcpStream,
@@ -13,6 +15,7 @@ use tokio::{
 
 use super::user::BlockTokenIdentifier;
 use crate::common::config::Configuration;
+use crate::common::idle_timeout::IdleTimeoutReader;
 use crate::proto::hdfs::{CipherOptionProto, CipherSuiteProto, DataEncryptionKeyProto};
 use crate::proto::{
     common::{
@@ -385,7 +388,7 @@ struct SaslDecryptor {
 }
 
 impl SaslDecryptor {
-    async fn read_more_data(&mut self, stream: &mut BufReader<OwnedReadHalf>) -> Result<()> {
+    async fn read_more_data(&mut self, stream: &mut DatanodeStream) -> Result<()> {
         stream.read_exact(&mut self.size_buffer).await?;
         let msg_length = u32::from_be_bytes(self.size_buffer) as usize;
 
@@ -414,20 +417,25 @@ enum DatanodeDecryptor {
     Cipher(Box<dyn StreamCipher + Send>),
 }
 
+type DatanodeStream = BufReader<IdleTimeoutReader<OwnedReadHalf>>;
+
 pub(crate) struct SaslDatanodeReader {
-    stream: BufReader<OwnedReadHalf>,
+    stream: DatanodeStream,
     decryptor: Option<DatanodeDecryptor>,
 }
 
 impl SaslDatanodeReader {
-    fn unencrypted(stream: OwnedReadHalf) -> Self {
+    fn unencrypted(stream: IdleTimeoutReader<OwnedReadHalf>) -> Self {
         Self {
             stream: BufReader::new(stream),
             decryptor: None,
         }
     }
 
-    fn sasl(stream: OwnedReadHalf, session: Arc<Mutex<DigestSaslSession>>) -> Self {
+    fn sasl(
+        stream: IdleTimeoutReader<OwnedReadHalf>,
+        session: Arc<Mutex<DigestSaslSession>>,
+    ) -> Self {
         let decryptor = SaslDecryptor {
             session,
             size_buffer: [0u8; 4],
@@ -440,11 +448,18 @@ impl SaslDatanodeReader {
         }
     }
 
-    fn cipher(stream: OwnedReadHalf, cipher: Box<dyn StreamCipher + Send>) -> Self {
+    fn cipher(
+        stream: IdleTimeoutReader<OwnedReadHalf>,
+        cipher: Box<dyn StreamCipher + Send>,
+    ) -> Self {
         Self {
             stream: BufReader::new(stream),
             decryptor: Some(DatanodeDecryptor::Cipher(cipher)),
         }
+    }
+
+    pub(crate) fn set_idle_timeout(&mut self, timeout: Option<(Duration, Handle)>) {
+        self.stream.get_mut().set_timeout(timeout);
     }
 
     pub(crate) async fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
@@ -603,13 +618,13 @@ impl SaslDatanodeWriter {
 }
 
 pub(crate) struct SaslDatanodeConnection {
-    stream: BufStream<TcpStream>,
+    stream: BufStream<IdleTimeoutReader<TcpStream>>,
 }
 
 impl SaslDatanodeConnection {
-    pub fn create(stream: TcpStream) -> Self {
+    pub fn create(stream: TcpStream, timeout: Option<(Duration, Handle)>) -> Self {
         Self {
-            stream: BufStream::new(stream),
+            stream: BufStream::new(IdleTimeoutReader::new(stream, timeout)),
         }
     }
 
@@ -742,7 +757,9 @@ impl SaslDatanodeConnection {
         session: Option<DigestSaslSession>,
         cipher_option: Option<&CipherOptionProto>,
     ) -> Result<(SaslDatanodeReader, SaslDatanodeWriter)> {
-        let (stream_reader, stream_writer) = self.stream.into_inner().into_split();
+        let (stream, timeout) = self.stream.into_inner().into_parts();
+        let (stream_reader, stream_writer) = stream.into_split();
+        let stream_reader = IdleTimeoutReader::new(stream_reader, timeout);
         if let Some(cipher) = cipher_option {
             let mut session = session.unwrap();
             match cipher.suite() {

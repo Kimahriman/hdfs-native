@@ -129,6 +129,7 @@ The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xm
   - `org.apache.hadoop.hdfs.server.namenode.ha.ObserverReadProxyProvider`
   - `org.apache.hadoop.hdfs.server.namenode.ha.RouterObserverReadConfiguredFailoverProxyProvider`
 - `dfs.client.use.datanode.hostname` - Use DataNode hostnames instead of IP addresses for DataNode connections
+- `dfs.client.socket-timeout` - Milliseconds a DataNode connection can go without receiving data before a read fails over to the next replica. Defaults to 60000; 0 disables it
 - `dfs.client.block.write.replace-datanode-on-failure.enable`
 - `dfs.client.block.write.replace-datanode-on-failure.policy`
 - `dfs.client.block.write.replace-datanode-on-failure.best-effort`
