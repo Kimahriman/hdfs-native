@@ -16,8 +16,8 @@ from urllib.parse import urlparse
 from argcomplete import autocomplete
 
 from hdfs_native import AclEntry, AclStatus, Client
-from hdfs_native.error import TrashNotEnabled
 from hdfs_native._internal import FileStatus, WriteOptions
+from hdfs_native.error import TrashNotEnabled
 
 __all__ = ["main"]
 
