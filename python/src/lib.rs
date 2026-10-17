@@ -911,7 +911,10 @@ fn _internal(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "UnsupportedErasureCodingPolicy",
         m.py().get_type::<UnsupportedErasureCodingPolicy>(),
     )?;
-    m.add("ErasureCodingError", m.py().get_type::<ErasureCodingError>())?;
+    m.add(
+        "ErasureCodingError",
+        m.py().get_type::<ErasureCodingError>(),
+    )?;
     m.add("InternalError", m.py().get_type::<InternalError>())?;
     m.add(
         "InvalidRPCResponse",
