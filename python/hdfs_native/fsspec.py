@@ -1,4 +1,5 @@
 import io
+import posixpath
 import secrets
 import shutil
 import time
@@ -134,19 +135,31 @@ class BaseFileSystem(AbstractFileSystem):
         return self.mkdir(path, create_parents=True)
 
     def mv(self, path1: str, path2: str, **kwargs):  # ty:ignore[invalid-method-override]
+        """Move a file or directory.
+
+        Like ``shutil.move`` and the ``mv`` of the other fsspec filesystems, an
+        existing destination is replaced. Pass ``overwrite=False`` to get the
+        behavior of ``hdfs dfs -mv``, which fails with ``FileExistsError``.
+        """
         self.client.rename(
             self._strip_protocol(path1),
             self._strip_protocol(path2),
-            kwargs.get("overwrite", False),
+            kwargs.get("overwrite", True),
         )
 
     def cp_file(self, path1, path2, **kwargs):
         with self._open(self._strip_protocol(path1), "rb") as lstream:
-            tmp_fname = f".{self._strip_protocol(path2)}.tmp.{secrets.token_hex(6)}"
+            dst = self._strip_protocol(path2)
+            # Hidden temporary file next to the destination, so the final rename
+            # stays within one directory.
+            tmp_fname = posixpath.join(
+                posixpath.dirname(dst),
+                f".{posixpath.basename(dst)}.tmp.{secrets.token_hex(6)}",
+            )
             try:
                 with self.open(tmp_fname, "wb") as rstream:
                     shutil.copyfileobj(lstream, rstream)
-                self.mv(tmp_fname, path2)
+                self.mv(tmp_fname, dst, overwrite=True)
             except BaseException:  # noqa
                 with suppress(FileNotFoundError):
                     self.rm(tmp_fname)
