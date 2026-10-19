@@ -1,6 +1,6 @@
 use std::{
-    collections::{HashMap, VecDeque},
-    sync::Arc,
+    collections::{HashMap, HashSet, VecDeque},
+    sync::{Arc, Mutex},
 };
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -35,6 +35,26 @@ use super::protocol::NamenodeProtocol;
 // The number of packets to queue up on reads
 const READ_PACKET_BUFFER_LEN: usize = 100;
 
+fn datanode_key(datanode_id: &hdfs::DatanodeIdProto) -> String {
+    format!(
+        "{}/{}:{}",
+        datanode_id.datanode_uuid, datanode_id.ip_addr, datanode_id.xfer_port
+    )
+}
+
+#[derive(Default)]
+pub(crate) struct DeadNodes(Mutex<HashSet<String>>);
+
+impl DeadNodes {
+    fn add(&self, datanode_id: &hdfs::DatanodeIdProto) {
+        self.0.lock().unwrap().insert(datanode_key(datanode_id));
+    }
+
+    fn contains(&self, datanode_id: &hdfs::DatanodeIdProto) -> bool {
+        self.0.lock().unwrap().contains(&datanode_key(datanode_id))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn get_block_stream(
     protocol: Arc<NamenodeProtocol>,
@@ -45,6 +65,7 @@ pub(crate) fn get_block_stream(
     config: Arc<Configuration>,
     handle: Handle,
     crypto: Option<Arc<FileCryptoCodec>>,
+    dead_nodes: Arc<DeadNodes>,
 ) -> BoxStream<'static, Result<Bytes>> {
     if let Some(ec_schema) = ec_schema {
         StripedBlockStream::new(
@@ -53,9 +74,11 @@ pub(crate) fn get_block_stream(
         .into_stream()
         .boxed()
     } else {
-        ReplicatedBlockStream::new(protocol, block, offset, len, config, handle, crypto)
-            .into_stream()
-            .boxed()
+        ReplicatedBlockStream::new(
+            protocol, block, offset, len, config, handle, crypto, dead_nodes,
+        )
+        .into_stream()
+        .boxed()
     }
 }
 
@@ -143,9 +166,11 @@ struct ReplicatedBlockStream {
     sender: Sender<Result<(PacketHeaderProto, Bytes)>>,
     receiver: Receiver<Result<(PacketHeaderProto, Bytes)>>,
     next_replica: usize,
+    dead_nodes: Arc<DeadNodes>,
 }
 
 impl ReplicatedBlockStream {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         protocol: Arc<NamenodeProtocol>,
         block: hdfs::LocatedBlockProto,
@@ -154,6 +179,7 @@ impl ReplicatedBlockStream {
         config: Arc<Configuration>,
         handle: Handle,
         crypto: Option<Arc<FileCryptoCodec>>,
+        dead_nodes: Arc<DeadNodes>,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(READ_PACKET_BUFFER_LEN);
 
@@ -169,6 +195,7 @@ impl ReplicatedBlockStream {
             sender,
             receiver,
             next_replica: 0,
+            dead_nodes,
         }
     }
 
@@ -186,6 +213,10 @@ impl ReplicatedBlockStream {
             let datanode = &self.block.locs[self.next_replica].id;
 
             self.next_replica += 1;
+
+            if self.dead_nodes.contains(datanode) {
+                continue;
+            }
 
             match connect_and_send(
                 &self.protocol,
@@ -212,6 +243,7 @@ impl ReplicatedBlockStream {
                 }
                 Err(e) => warn!("Failed to connect to DataNode {:?}: {:?}", datanode, e),
             }
+            self.dead_nodes.add(datanode);
         }
     }
 
@@ -260,6 +292,9 @@ impl ReplicatedBlockStream {
                     if retry_connection && matches!(e, HdfsError::IOError(_)) {
                         // Retry transient IO errors on the same DataNode
                         self.next_replica -= 1;
+                    } else {
+                        self.dead_nodes
+                            .add(&self.block.locs[self.next_replica - 1].id);
                     }
                     self.listener = None;
                 }
@@ -674,6 +709,7 @@ impl StripedBlockStream {
                 Arc::clone(&self.config),
                 self.handle.clone(),
                 None,
+                Arc::default(),
             );
 
             self.cell_readers.push(Some(CellReader::new(
@@ -722,7 +758,7 @@ mod test {
     use tokio::runtime::Handle;
     use url::Url;
 
-    use super::ReplicatedBlockStream;
+    use super::{DeadNodes, ReplicatedBlockStream};
     use crate::Result;
     use crate::common::config::Configuration;
     use crate::hdfs::connection::DATANODE_CACHE;
@@ -774,6 +810,15 @@ mod test {
         block: hdfs::LocatedBlockProto,
         config: &Arc<Configuration>,
     ) -> Result<Vec<u8>> {
+        read_block_with(protocol, block, config, &Arc::default()).await
+    }
+
+    async fn read_block_with(
+        protocol: &Arc<NamenodeProtocol>,
+        block: hdfs::LocatedBlockProto,
+        config: &Arc<Configuration>,
+        dead_nodes: &Arc<DeadNodes>,
+    ) -> Result<Vec<u8>> {
         let stream = ReplicatedBlockStream::new(
             Arc::clone(protocol),
             block,
@@ -782,12 +827,36 @@ mod test {
             Arc::clone(config),
             Handle::current(),
             None,
+            Arc::clone(dead_nodes),
         );
         let data: Vec<Bytes> =
             tokio::time::timeout(Duration::from_secs(5), stream.into_stream().try_collect())
                 .await
                 .expect("read did not finish")?;
         Ok(data.concat())
+    }
+
+    #[tokio::test]
+    async fn dead_replica_is_skipped_by_later_reads() {
+        let config = Arc::new(socket_timeout_config(300));
+        let stalled = fake_datanode(vec![], Duration::ZERO).await;
+        let healthy = fake_datanode(block_packets(), Duration::ZERO).await;
+        let (url, _) = fake_namenode(hdfs::LocatedBlocksProto::default()).await;
+        let protocol = namenode_protocol(&url, &config);
+        let dead_nodes = Arc::new(DeadNodes::default());
+        let block = located_block(vec![stalled, healthy]);
+
+        let first = read_block_with(&protocol, block.clone(), &config, &dead_nodes)
+            .await
+            .unwrap();
+        let started = Instant::now();
+        let second = read_block_with(&protocol, block, &config, &dead_nodes)
+            .await
+            .unwrap();
+
+        assert_eq!(first, b"abcdefghijkl");
+        assert_eq!(second, b"abcdefghijkl");
+        assert!(started.elapsed() < Duration::from_millis(250));
     }
 
     #[tokio::test]
