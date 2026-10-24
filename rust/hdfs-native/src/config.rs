@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::ops::Deref;
+use std::time::Duration;
 
 use dns_lookup::lookup_addr;
 use hadoop_native::config::Configuration as HadoopConfiguration;
@@ -23,6 +24,8 @@ const DFS_CLIENT_FAILOVER_SLEEP_MAX_MILLIS: &str = "dfs.client.failover.sleep.ma
 const DFS_CLIENT_FAILOVER_PROXY_PROVIDER: &str = "dfs.client.failover.proxy.provider";
 const DFS_DATA_TRANSFER_PROTECTION: &str = "dfs.data.transfer.protection";
 const DFS_CLIENT_USE_DATANODE_HOSTNAME: &str = "dfs.client.use.datanode.hostname";
+const DFS_CLIENT_SOCKET_TIMEOUT: &str = "dfs.client.socket-timeout";
+const DEFAULT_SOCKET_TIMEOUT_MILLIS: u64 = 60_000;
 const VIEWFS_MOUNTTABLE_PREFIX: &str = "fs.viewfs.mounttable";
 
 #[cfg(feature = "kms")]
@@ -58,6 +61,13 @@ impl Configuration {
         self.get(key)
             .and_then(|value| value.parse().ok())
             .unwrap_or(default)
+    }
+
+    pub(crate) fn socket_timeout(&self) -> Option<Duration> {
+        match self.get_u64(DFS_CLIENT_SOCKET_TIMEOUT, DEFAULT_SOCKET_TIMEOUT_MILLIS) {
+            0 => None,
+            millis => Some(Duration::from_millis(millis)),
+        }
     }
 
     pub(crate) fn failover_max_attempts(&self) -> u32 {

@@ -8,6 +8,7 @@ use crc::{CRC_32_ISCSI, CRC_32_ISO_HDLC, Crc, Table};
 use once_cell::sync::Lazy;
 use prost::Message;
 use socket2::SockRef;
+use std::io::ErrorKind;
 use tokio::net::TcpStream;
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
