@@ -4,6 +4,7 @@ use prost::DecodeError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum HdfsError {
     #[error(transparent)]
     HadoopError(hadoop_native::HadoopError),
@@ -75,6 +76,7 @@ impl From<hadoop_native::HadoopError> for HdfsError {
             HadoopError::NoSASLMechanism => Self::NoSASLMechanism,
             HadoopError::OperationFailed(message) => Self::OperationFailed(message),
             HadoopError::XmlParseError(error) => Self::XmlParseError(error),
+            error => Self::HadoopError(error),
         }
     }
 }

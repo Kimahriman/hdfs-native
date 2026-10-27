@@ -5,6 +5,7 @@ use thiserror::Error;
 
 /// Errors produced by shared Hadoop client functionality.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum HadoopError {
     #[error("IO error occurred while communicating with Hadoop: {0}")]
     IOError(#[from] io::Error),

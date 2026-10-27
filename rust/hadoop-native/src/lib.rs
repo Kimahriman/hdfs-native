@@ -5,6 +5,7 @@
 //! top of these primitives.
 
 pub mod config;
+#[doc(hidden)]
 pub mod proto;
 pub mod rpc;
 pub mod security;
