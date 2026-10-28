@@ -67,6 +67,16 @@ impl Configuration {
         Ok(Configuration { map })
     }
 
+    /// Load configuration files without blocking a Tokio worker thread.
+    pub(crate) async fn new_async(
+        conf_dir: Option<String>,
+        conf_map: Option<HashMap<String, String>>,
+    ) -> Result<Self> {
+        // XML parsing may load external entity files through a synchronous resolver, so run the
+        // complete config-file load on Tokio's blocking pool.
+        crate::common::run_blocking(move || Self::new(conf_dir, conf_map)).await
+    }
+
     /// Get a value from the config, returning None if the key wasn't defined.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.map.get(key).map(|s| s.as_ref())

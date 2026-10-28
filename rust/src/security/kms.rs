@@ -44,11 +44,11 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::common::config::{Configuration, HADOOP_SECURITY_KEY_PROVIDER_PATH};
+use crate::common::run_blocking;
 use crate::hdfs::crypto::DataEncryptionKey;
 use crate::proto::hdfs::FileEncryptionInfoProto;
 use crate::security::ClientAuth;
 use crate::security::gssapi::SpnegoSession;
-use crate::security::run_blocking;
 use crate::{HdfsError, Result};
 
 const KMS_URI_PREFIX: &str = "kms://";

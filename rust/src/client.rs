@@ -363,9 +363,26 @@ impl ClientBuilder {
         self
     }
 
-    /// Create the [Client] instance from the provided settings
-    pub fn build(self) -> Result<Client> {
-        let config = Configuration::new(self.config_dir, self.config)?;
+    /// Synchronously create the [Client] instance from the provided settings.
+    ///
+    /// Use [`Self::build_async`] from async code when Hadoop XML config files may be loaded from
+    /// disk.
+    pub fn build(mut self) -> Result<Client> {
+        let config = Configuration::new(self.config_dir.take(), self.config.take())?;
+        self.build_with_config(config)
+    }
+
+    /// Asynchronously create a [Client] instance, loading XML config files without blocking a
+    /// Tokio worker thread.
+    ///
+    /// Use this method when building from async code and Hadoop XML configs may be loaded from
+    /// disk.
+    pub async fn build_async(mut self) -> Result<Client> {
+        let config = Configuration::new_async(self.config_dir.take(), self.config.take()).await?;
+        self.build_with_config(config)
+    }
+
+    fn build_with_config(self, config: Configuration) -> Result<Client> {
         let url = if let Some(url) = self.url {
             Url::parse(&url)?
         } else {
@@ -1589,6 +1606,28 @@ mod test {
                 .build()
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn test_build_async_loads_xml_config() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp_dir.path().join("core-site.xml"),
+            r#"<configuration>
+                <property>
+                    <name>fs.defaultFS</name>
+                    <value>hdfs://localhost:9000</value>
+                </property>
+            </configuration>"#,
+        )
+        .unwrap();
+
+        let client = ClientBuilder::new()
+            .with_config_dir(temp_dir.path().to_string_lossy().into_owned())
+            .build_async()
+            .await;
+
+        assert!(client.is_ok());
     }
 
     #[test]

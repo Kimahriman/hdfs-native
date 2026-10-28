@@ -29,8 +29,8 @@ use crate::security::digest::DigestSaslSession;
 use crate::{HdfsError, Result};
 
 use super::gssapi::GssapiSession;
-use super::run_blocking;
 use super::user::{User, UserInfo};
+use crate::common::run_blocking;
 
 type Aes128Ctr = ctr::Ctr128BE<aes::Aes128>;
 type Aes192Ctr = ctr::Ctr128BE<aes::Aes192>;
