@@ -4,6 +4,10 @@ use std::{
     io::{BufRead, BufReader, Write},
     path::PathBuf,
     process::{Child, Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 use which::which;
 
@@ -61,6 +65,7 @@ impl DfsFeatures {
 pub struct MiniDfs {
     features: HashSet<DfsFeatures>,
     process: Child,
+    stderr_thread: Option<std::thread::JoinHandle<()>>,
     pub url: String,
 }
 
@@ -79,6 +84,7 @@ impl MiniDfs {
                 "-f",
                 concat!(env!("OUT_DIR"), "/minidfs"),
                 "--quiet",
+                "--errors",
                 "compile",
                 "exec:exec",
                 &format!(
@@ -88,7 +94,7 @@ impl MiniDfs {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
 
         // Hadoop 3.5's ProviderUtils.locatePassword only resolves the JKS
         // password from the classpath or this env var — there's no filesystem
@@ -100,6 +106,35 @@ impl MiniDfs {
 
         let mut child = command.spawn().unwrap();
 
+        // Drain stderr while waiting for Ready! so a full pipe cannot block
+        // startup. Keep only the startup output for failure diagnostics.
+        let stderr_output = Arc::new(Mutex::new(Vec::new()));
+        let capture_stderr = Arc::new(AtomicBool::new(true));
+        let stderr = child.stderr.take().unwrap();
+        let stderr_thread = {
+            let stderr_output = Arc::clone(&stderr_output);
+            let capture_stderr = Arc::clone(&capture_stderr);
+            std::thread::spawn(move || {
+                let mut stderr = BufReader::new(stderr);
+                let mut line = Vec::new();
+                while let Ok(bytes_read) = stderr.read_until(b'\n', &mut line) {
+                    if bytes_read == 0 {
+                        break;
+                    }
+                    if capture_stderr.load(Ordering::Relaxed) {
+                        let mut output = stderr_output.lock().unwrap();
+                        output.extend_from_slice(&line);
+                        const MAX_CAPTURE_BYTES: usize = 64 * 1024;
+                        if output.len() > MAX_CAPTURE_BYTES {
+                            let excess = output.len() - MAX_CAPTURE_BYTES;
+                            output.drain(..excess);
+                        }
+                    }
+                    line.clear();
+                }
+            })
+        };
+
         let mut output = BufReader::new(child.stdout.take().unwrap()).lines();
 
         let ready = output.next().unwrap().unwrap();
@@ -109,8 +144,17 @@ impl MiniDfs {
             for line in output.by_ref() {
                 println!("{}", line.unwrap());
             }
+            capture_stderr.store(false, Ordering::Relaxed);
+            let _ = stderr_thread.join();
+            let stderr = stderr_output.lock().unwrap();
+            if !stderr.is_empty() {
+                println!("MiniDFS stderr during startup:");
+                print!("{}", String::from_utf8_lossy(&stderr));
+            }
             panic!();
         }
+
+        capture_stderr.store(false, Ordering::Relaxed);
 
         // Make sure this doesn't care over from a token test to a non-token test
         unsafe { env::remove_var("HADOOP_TOKEN_FILE_LOCATION") };
@@ -166,6 +210,7 @@ impl MiniDfs {
         MiniDfs {
             features: features.clone(),
             process: child,
+            stderr_thread: Some(stderr_thread),
             url: url.to_string(),
         }
     }
@@ -196,6 +241,9 @@ impl Drop for MiniDfs {
         stdin.write_all(b"\n").unwrap();
         self.process.kill().unwrap();
         self.process.wait().unwrap();
+        if let Some(stderr_thread) = self.stderr_thread.take() {
+            let _ = stderr_thread.join();
+        }
 
         if self.features.contains(&DfsFeatures::Security) {
             Self::kdestroy();
