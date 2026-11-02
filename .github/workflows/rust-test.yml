@@ -94,5 +94,11 @@ jobs:
           tar -xf hadoop-3.4.2-lean.tar.gz -C $GITHUB_WORKSPACE
           echo "$GITHUB_WORKSPACE/hadoop-3.4.2/bin" >> $GITHUB_PATH
 
-      - name: Run tests
-        run: cargo test --features integration-test,kms-rustls-tls
+      - name: Run doc tests
+        run: cargo test --features integration-test,kms-rustls-tls --doc
+
+      - name: Run library tests
+        run: cargo test --features integration-test,kms-rustls-tls --lib
+
+      - name: Run integration tests
+        run: cargo test --features integration-test,kms-rustls-tls --test '*' -- --test-threads=1

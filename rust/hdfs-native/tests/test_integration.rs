@@ -306,9 +306,11 @@ mod test {
         let client = ClientBuilder::new().build().unwrap();
 
         let mut file = client.create("/testfile", WriteOptions::default()).await?;
+        let mut test_file = BytesMut::with_capacity(TEST_FILE_INTS * std::mem::size_of::<i32>());
         for i in 0..TEST_FILE_INTS as i32 {
-            file.write_bytes(i.to_be_bytes().to_vec().into()).await?;
+            test_file.put_i32(i);
         }
+        file.write_bytes(test_file.freeze()).await?;
         file.close().await?;
 
         test_file_info(&client).await?;
