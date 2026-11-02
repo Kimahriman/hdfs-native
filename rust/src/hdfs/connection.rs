@@ -603,8 +603,9 @@ impl WritePacket {
 
     pub(crate) fn set_last_packet(&mut self) {
         self.header.last_packet_in_block = true;
-        // Opinionated: always sync block for safety
-        self.set_sync_block();
+        // Match Hadoop's default close behavior. Callers that need a durable
+        // sync can mark a packet with set_sync_block() explicitly.
+        self.header.sync_block = Some(false);
     }
 
     fn max_packet_chunks(bytes_per_checksum: u32, max_packet_size: u32) -> usize {
