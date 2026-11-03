@@ -79,6 +79,7 @@ impl MiniDfs {
                 "-f",
                 concat!(env!("OUT_DIR"), "/minidfs"),
                 "--quiet",
+                "--errors",
                 "compile",
                 "exec:exec",
                 &format!(
@@ -88,7 +89,7 @@ impl MiniDfs {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::inherit());
 
         // Hadoop 3.5's ProviderUtils.locatePassword only resolves the JKS
         // password from the classpath or this env var — there's no filesystem
