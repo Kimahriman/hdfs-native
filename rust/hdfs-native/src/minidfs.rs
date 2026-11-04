@@ -10,6 +10,7 @@ use std::{
 use which::which;
 
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(unix)]
 const TERMINATION_GRACE_PERIOD: Duration = Duration::from_secs(1);
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -245,8 +246,9 @@ fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> bool {
 fn terminate_process_tree(child: &mut Child) {
     let process_group = child.id() as libc::pid_t;
     signal_process_group(process_group, libc::SIGTERM);
-    thread::sleep(TERMINATION_GRACE_PERIOD);
-    signal_process_group(process_group, libc::SIGKILL);
+    if !wait_for_child_exit(child, TERMINATION_GRACE_PERIOD) {
+        signal_process_group(process_group, libc::SIGKILL);
+    }
 }
 
 #[cfg(unix)]
