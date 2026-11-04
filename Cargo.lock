@@ -1018,6 +1018,7 @@ dependencies = [
  "g2p",
  "hadoop-native",
  "indoc",
+ "libc",
  "log",
  "num-traits",
  "once_cell",

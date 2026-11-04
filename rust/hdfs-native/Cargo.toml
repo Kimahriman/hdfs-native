@@ -42,6 +42,7 @@ uuid = { version = "1", features = ["v4"] }
 which = { version = "8", optional = true }
 
 [target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }
 # Just used for benchmarks
 fs-hdfs3 = { version = "0.1.12", optional = true }
 
@@ -61,8 +62,8 @@ whoami = "2"
 
 [features]
 generate-protobuf = ["prost-build", "protobuf-src", "hadoop-native/generate-protobuf"]
-integration-test = ["which"]
-benchmark = ["fs-hdfs3", "which"]
+integration-test = ["which", "dep:libc"]
+benchmark = ["fs-hdfs3", "which", "dep:libc"]
 # Hadoop KMS REST client for HDFS Transparent Data Encryption. Off by default:
 # enabling it pulls in reqwest and its HTTP/TLS dependency stack. `kms` alone
 # supports plaintext (http) KMS endpoints; pick a TLS-enabled variant below for

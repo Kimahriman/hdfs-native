@@ -4,8 +4,14 @@ use std::{
     io::{BufRead, BufReader, Write},
     path::PathBuf,
     process::{Child, Command, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 use which::which;
+
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+const TERMINATION_GRACE_PERIOD: Duration = Duration::from_secs(1);
+const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum DfsFeatures {
@@ -89,7 +95,7 @@ impl MiniDfs {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
+            .stderr(Stdio::null());
 
         // Hadoop 3.5's ProviderUtils.locatePassword only resolves the JKS
         // password from the classpath or this env var — there's no filesystem
@@ -97,6 +103,14 @@ impl MiniDfs {
         // having to write into target/classes.
         if features.contains(&DfsFeatures::Kms) {
             command.env("HADOOP_KEYSTORE_PASSWORD", "kmspassword");
+        }
+
+        // Maven's exec:exec goal starts the MiniDFS JVM as a child process.
+        // Keep it in the same process group so Drop can terminate both.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
         }
 
         let mut child = command.spawn().unwrap();
@@ -193,13 +207,78 @@ impl Default for MiniDfs {
 impl Drop for MiniDfs {
     fn drop(&mut self) {
         println!("Dropping and killing minidfs");
-        let mut stdin = self.process.stdin.take().unwrap();
-        stdin.write_all(b"\n").unwrap();
-        self.process.kill().unwrap();
-        self.process.wait().unwrap();
+        if let Some(mut stdin) = self.process.stdin.take() {
+            let _ = stdin.write_all(b"\n");
+        }
+
+        if !wait_for_child_exit(&mut self.process, SHUTDOWN_TIMEOUT) {
+            terminate_process_tree(&mut self.process);
+        }
+        let _ = self.process.wait();
 
         if self.features.contains(&DfsFeatures::Security) {
             Self::kdestroy();
         }
     }
+}
+
+fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> bool {
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("Failed to check MiniDFS process status: {error}");
+                return false;
+            }
+        }
+
+        if start.elapsed() >= timeout {
+            return false;
+        }
+        thread::sleep(PROCESS_POLL_INTERVAL);
+    }
+}
+
+#[cfg(unix)]
+fn terminate_process_tree(child: &mut Child) {
+    let process_group = child.id() as libc::pid_t;
+    signal_process_group(process_group, libc::SIGTERM);
+    thread::sleep(TERMINATION_GRACE_PERIOD);
+    signal_process_group(process_group, libc::SIGKILL);
+}
+
+#[cfg(unix)]
+fn signal_process_group(process_group: libc::pid_t, signal: libc::c_int) {
+    // SAFETY: process_group is the process group ID assigned to the Maven
+    // child in with_features; a negative PID targets only that group.
+    if unsafe { libc::kill(-process_group, signal) } == -1 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::ESRCH) {
+            eprintln!("Failed to signal MiniDFS process group: {error}");
+        }
+    }
+}
+
+#[cfg(windows)]
+fn terminate_process_tree(child: &mut Child) {
+    let pid = child.id().to_string();
+    let result = Command::new("taskkill")
+        .arg("/PID")
+        .arg(pid)
+        .arg("/T")
+        .arg("/F")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    if !matches!(result, Ok(status) if status.success()) {
+        let _ = child.kill();
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn terminate_process_tree(child: &mut Child) {
+    let _ = child.kill();
 }
