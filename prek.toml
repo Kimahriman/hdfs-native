@@ -1,0 +1,38 @@
+# Configuration file for `prek` a git hook framework written in Rust.
+# See https://prek.j178.dev for more information.
+#:schema https://www.schemastore.org/prek.json
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "cargo-fmt"
+name = "cargo fmt"
+language = "system"
+entry = "cargo fmt --all"
+types = ["rust"]
+pass_filenames = false
+
+[[repos.hooks]]
+id = "ruff-check"
+name = "Ruff check"
+language = "system"
+entry = "uv run --project python ruff check --fix --force-exclude"
+types_or = ["python"]
+priority = 0
+
+[[repos.hooks]]
+id = "ruff-format"
+name = "Ruff format"
+entry = "uv run --project python ruff format --force-exclude"
+language = "system"
+types_or = ["python"]
+priority = 1
+
+[[repos.hooks]]
+id = "ty-check"
+name = "ty check"
+language = "system"
+entry = "uv run --project python ty check --error-on-warning --force-exclude"
+types_or = ["python"]
+priority = 2

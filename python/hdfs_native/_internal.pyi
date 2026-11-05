@@ -1,5 +1,5 @@
-from collections.abc import AsyncIterator
-from typing import Dict, Iterator, List, Literal, Optional
+from collections.abc import AsyncIterator, Iterator
+from typing import Literal, TypeAlias
 
 from typing_extensions import Buffer
 
@@ -14,8 +14,8 @@ class FileStatus:
     group: str
     modification_time: int
     access_time: int
-    replication: Optional[int]
-    blocksize: Optional[int]
+    replication: int | None
+    blocksize: int | None
 
 class ContentSummary:
     length: int
@@ -25,45 +25,45 @@ class ContentSummary:
     space_consumed: int
     space_quota: int
 
-AclEntryType = Literal["user", "group", "mask", "other"]
-AclEntryScope = Literal["access", "default"]
-FsAction = Literal["---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"]
+AclEntryType: TypeAlias = Literal["user", "group", "mask", "other"]
+AclEntryScope: TypeAlias = Literal["access", "default"]
+FsAction: TypeAlias = Literal["---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"]
 
 class AclEntry:
     type: AclEntryType
     scope: AclEntryScope
     permissions: FsAction
-    name: Optional[str]
+    name: str | None
 
     def __init__(
         self,
         type: AclEntryType,
         scope: AclEntryScope,
         permissions: FsAction,
-        name: Optional[str] = None,
+        name: str | None = None,
     ): ...
 
 class AclStatus:
     owner: str
     group: str
     sticky: bool
-    entries: List[AclEntry]
+    entries: list[AclEntry]
     permission: int
 
 class WriteOptions:
-    block_size: Optional[int]
-    replication: Optional[int]
+    block_size: int | None
+    replication: int | None
     permission: int
     overwrite: bool
     create_parent: bool
 
     def __init__(
         self,
-        block_size: Optional[int] = None,
-        replication: Optional[int] = None,
-        permission: Optional[int] = None,
-        overwrite: Optional[bool] = None,
-        create_parent: Optional[bool] = None,
+        block_size: int | None = None,
+        replication: int | None = None,
+        permission: int | None = None,
+        overwrite: bool | None = None,
+        create_parent: bool | None = None,
     ): ...
 
 class RawFileReader:
@@ -99,16 +99,16 @@ class RawFileWriter:
 class RawClient:
     def __init__(
         self,
-        url: Optional[str],
-        config: Optional[Dict[str, str]],
-        config_dir: Optional[str],
-        kerberos_principal: Optional[str] = None,
-        kerberos_keytab: Optional[str] = None,
-        kerberos_cache: Optional[str] = None,
+        url: str | None,
+        config: dict[str, str] | None,
+        config_dir: str | None,
+        kerberos_principal: str | None = None,
+        kerberos_keytab: str | None = None,
+        kerberos_cache: str | None = None,
     ) -> None: ...
     def get_file_info(self, path: str) -> FileStatus: ...
     def list_status(self, path: str, recursive: bool) -> Iterator[FileStatus]: ...
-    def glob_status(self, pattern: str) -> List[FileStatus]: ...
+    def glob_status(self, pattern: str) -> list[FileStatus]: ...
     def read(self, path: str) -> RawFileReader: ...
     def create(self, path: str, write_options: WriteOptions) -> RawFileWriter: ...
     def append(self, path: str) -> RawFileWriter: ...
@@ -116,22 +116,22 @@ class RawClient:
     def mkdirs(self, path: str, permission: int, create_parent: bool) -> None: ...
     def rename(self, src: str, dst: str, overwrite: bool) -> None: ...
     def delete(self, path: str, recursive: bool) -> bool: ...
-    def trash(self, path: str) -> Optional[str]: ...
+    def trash(self, path: str) -> str | None: ...
     def set_times(self, path: str, mtime: int, atime: int) -> None: ...
     def set_owner(
         self,
         path: str,
-        owner: Optional[str],
-        group: Optional[str],
+        owner: str | None,
+        group: str | None,
     ) -> None: ...
     def set_permission(self, path: str, permission: int) -> None: ...
     def set_replication(self, path: str, replication: int) -> bool: ...
     def get_content_summary(self, path: str) -> ContentSummary: ...
-    def modify_acl_entries(self, path: str, entries: List[AclEntry]) -> None: ...
-    def remove_acl_entries(self, path: str, entries: List[AclEntry]) -> None: ...
+    def modify_acl_entries(self, path: str, entries: list[AclEntry]) -> None: ...
+    def remove_acl_entries(self, path: str, entries: list[AclEntry]) -> None: ...
     def remove_default_acl(self, path: str) -> None: ...
     def remove_acl(self, path: str) -> None: ...
-    def set_acl(self, path: str, entries: List[AclEntry]) -> None: ...
+    def set_acl(self, path: str, entries: list[AclEntry]) -> None: ...
     def get_acl_status(self, path: str) -> AclStatus: ...
 
 class AsyncRawFileReader:
@@ -167,16 +167,16 @@ class AsyncRawFileWriter:
 class AsyncRawClient:
     def __init__(
         self,
-        url: Optional[str],
-        config: Optional[Dict[str, str]],
-        config_dir: Optional[str],
-        kerberos_principal: Optional[str] = None,
-        kerberos_keytab: Optional[str] = None,
-        kerberos_cache: Optional[str] = None,
+        url: str | None,
+        config: dict[str, str] | None,
+        config_dir: str | None,
+        kerberos_principal: str | None = None,
+        kerberos_keytab: str | None = None,
+        kerberos_cache: str | None = None,
     ) -> None: ...
     async def get_file_info(self, path: str) -> FileStatus: ...
     def list_status(self, path: str, recursive: bool) -> AsyncIterator[FileStatus]: ...
-    async def glob_status(self, pattern: str) -> List[FileStatus]: ...
+    async def glob_status(self, pattern: str) -> list[FileStatus]: ...
     async def read(self, path: str) -> AsyncRawFileReader: ...
     async def create(
         self,
@@ -188,20 +188,20 @@ class AsyncRawClient:
     async def mkdirs(self, path: str, permission: int, create_parent: bool) -> None: ...
     async def rename(self, src: str, dst: str, overwrite: bool) -> None: ...
     async def delete(self, path: str, recursive: bool) -> bool: ...
-    async def trash(self, path: str) -> Optional[str]: ...
+    async def trash(self, path: str) -> str | None: ...
     async def set_times(self, path: str, mtime: int, atime: int) -> None: ...
     async def set_owner(
         self,
         path: str,
-        owner: Optional[str],
-        group: Optional[str],
+        owner: str | None,
+        group: str | None,
     ) -> None: ...
     async def set_permission(self, path: str, permission: int) -> None: ...
     async def set_replication(self, path: str, replication: int) -> bool: ...
     async def get_content_summary(self, path: str) -> ContentSummary: ...
-    async def modify_acl_entries(self, path: str, entries: List[AclEntry]) -> None: ...
-    async def remove_acl_entries(self, path: str, entries: List[AclEntry]) -> None: ...
+    async def modify_acl_entries(self, path: str, entries: list[AclEntry]) -> None: ...
+    async def remove_acl_entries(self, path: str, entries: list[AclEntry]) -> None: ...
     async def remove_default_acl(self, path: str) -> None: ...
     async def remove_acl(self, path: str) -> None: ...
-    async def set_acl(self, path: str, entries: List[AclEntry]) -> None: ...
+    async def set_acl(self, path: str, entries: list[AclEntry]) -> None: ...
     async def get_acl_status(self, path: str) -> AclStatus: ...
