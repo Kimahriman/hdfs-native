@@ -46,9 +46,7 @@ impl Configuration {
         tokio::task::spawn_blocking(move || Self::new(conf_dir, conf_map))
             .await
             .map_err(|error| {
-                HadoopError::OperationFailed(format!(
-                    "configuration loading task failed: {error}"
-                ))
+                HadoopError::OperationFailed(format!("configuration loading task failed: {error}"))
             })?
     }
 
