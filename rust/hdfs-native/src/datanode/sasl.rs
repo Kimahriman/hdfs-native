@@ -252,17 +252,16 @@ impl SaslDatanodeWriter {
         Ok(())
     }
 
-    /// Write reference-counted payload segments without first concatenating
-    /// them into a packet-sized userspace buffer.
-    pub(crate) async fn write_all_vectored(&mut self, bufs: &[Bytes]) -> Result<()> {
+    /// Write slices without first concatenating them into a packet-sized
+    /// userspace buffer.
+    pub(crate) async fn write_all_vectored(&mut self, bufs: &mut [IoSlice<'_>]) -> Result<()> {
         if self.encryptor.is_none() {
-            let mut slices: Vec<IoSlice<'_>> = bufs.iter().map(|buf| IoSlice::new(buf)).collect();
-            tokio_util::io::write_all_vectored(&mut self.stream, &mut slices).await?;
+            tokio_util::io::write_all_vectored(&mut self.stream, bufs).await?;
             return Ok(());
         }
 
         for buf in bufs {
-            self.write_all(buf).await?;
+            self.write_all(buf.as_ref()).await?;
         }
         Ok(())
     }

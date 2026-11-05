@@ -8,7 +8,7 @@ use crc::{CRC_32_ISCSI, CRC_32_ISO_HDLC, Crc, Table};
 use once_cell::sync::Lazy;
 use prost::Message;
 use socket2::SockRef;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, IoSlice};
 use tokio::net::TcpStream;
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
@@ -448,18 +448,26 @@ impl DatanodeWriter {
     pub(crate) async fn write_packet(&mut self, packet: &mut WritePacket) -> Result<()> {
         let checksum = packet.calculate_checksum();
 
-        let payload_len = (checksum.len() + packet.data.len() + 4) as u32;
+        let payload_len = ((checksum.len() + packet.data.len() + 4) as u32).to_be_bytes();
         let header_encoded = packet.header.encode_to_vec();
+        let header_len = (header_encoded.len() as u16).to_be_bytes();
 
-        self.writer.write_all(&payload_len.to_be_bytes()).await?;
-        self.writer
-            .write_all(&(header_encoded.len() as u16).to_be_bytes())
-            .await?;
-        self.writer.write_all(&header_encoded).await?;
-        self.writer.write_all(&checksum).await?;
-        self.writer
-            .write_all_vectored(&packet.data.segments)
-            .await?;
+        // Keep the packet's existing payload slices and send the framing,
+        // checksum, and payload together with scatter/gather I/O.
+        let mut slices = Vec::with_capacity(4 + packet.data.segments.len());
+        slices.push(IoSlice::new(&payload_len));
+        slices.push(IoSlice::new(&header_len));
+        slices.push(IoSlice::new(&header_encoded));
+        slices.push(IoSlice::new(&checksum));
+        slices.extend(
+            packet
+                .data
+                .segments
+                .iter()
+                .map(|segment| IoSlice::new(segment.as_ref())),
+        );
+
+        self.writer.write_all_vectored(&mut slices).await?;
         self.writer.flush().await?;
 
         Ok(())
