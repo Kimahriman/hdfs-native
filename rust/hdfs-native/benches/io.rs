@@ -33,7 +33,7 @@ fn bench(c: &mut Criterion) {
     let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC]));
     let client = Client::default();
 
-    let ints_to_write: usize = 4 * 32 * 1024 * 1024; // 128 MiB file
+    let ints_to_write: usize = 128 * 1024 * 1024; // 1 GiB file
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
