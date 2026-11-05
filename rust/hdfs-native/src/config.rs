@@ -49,6 +49,15 @@ impl Configuration {
         Ok(Self(HadoopConfiguration::new(conf_dir, conf_map)?))
     }
 
+    pub(crate) async fn new_async(
+        conf_dir: Option<String>,
+        conf_map: Option<HashMap<String, String>>,
+    ) -> Result<Self> {
+        Ok(Self(
+            HadoopConfiguration::new_async(conf_dir, conf_map).await?,
+        ))
+    }
+
     pub(crate) fn data_transfer_protection_enabled(&self) -> bool {
         self.get(DFS_DATA_TRANSFER_PROTECTION).is_some()
     }
