@@ -75,6 +75,53 @@ class TestFsspecBase(ABC):
         fs.rm("/test")
         fs.rm("/test3")
 
+    def test_mv_replaces_destination(self, fs: BaseFileSystem):
+        try:
+            fs.write_bytes("/mv_src", b"new")
+            fs.write_bytes("/mv_dst", b"old")
+
+            # Like shutil.move and the other fsspec filesystems, mv replaces the
+            # destination; this is what DuckDB relies on for COPY over a file.
+            fs.mv("/mv_src", "/mv_dst")
+            assert fs.read_bytes("/mv_dst") == b"new"
+            assert not fs.exists("/mv_src")
+
+            # The behavior of ``hdfs dfs -mv`` is still available.
+            fs.write_bytes("/mv_src", b"newer")
+            with pytest.raises(FileExistsError):
+                fs.mv("/mv_src", "/mv_dst", overwrite=False)
+            assert fs.read_bytes("/mv_dst") == b"new"
+            assert fs.read_bytes("/mv_src") == b"newer"
+        finally:
+            for path in ("/mv_src", "/mv_dst"):
+                if fs.exists(path):
+                    fs.rm(path)
+
+    def test_cp(self, fs: BaseFileSystem):
+        try:
+            fs.write_bytes("/cp_src", b"data")
+            fs.mkdir("/cp_dir")
+
+            # Missing destination, in the root and in a subdirectory.
+            fs.cp("/cp_src", "/cp_dst")
+            fs.cp("/cp_src", "/cp_dir/cp_dst")
+            assert fs.read_bytes("/cp_dst") == b"data"
+            assert fs.read_bytes("/cp_dir/cp_dst") == b"data"
+
+            # An existing destination is replaced.
+            fs.write_bytes("/cp_src", b"other")
+            fs.cp("/cp_src", "/cp_dst")
+            assert fs.read_bytes("/cp_dst") == b"other"
+            assert fs.read_bytes("/cp_src") == b"other"
+
+            # No temporary file is left behind.
+            assert sorted(fs.ls("/", detail=False)) == ["/cp_dir", "/cp_dst", "/cp_src"]
+            assert fs.ls("/cp_dir", detail=False) == ["/cp_dir/cp_dst"]
+        finally:
+            for path in ("/cp_src", "/cp_dst", "/cp_dir"):
+                if fs.exists(path):
+                    fs.rm(path, recursive=True)
+
     def test_listing(self, fs: BaseFileSystem):
         fs.mkdir("/testdir")
 
