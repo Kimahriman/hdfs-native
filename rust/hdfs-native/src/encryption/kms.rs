@@ -279,12 +279,22 @@ impl KmsClient {
     /// Drive a SPNEGO challenge/response handshake against a `GET` endpoint,
     /// returning the final non-401 response.
     async fn spnego_get(&self, url: &Url, host: &str) -> Result<reqwest::Response> {
-        let mut session = SpnegoSession::with_auth(SPNEGO_SERVICE, host, self.auth.clone())?;
+        let service = SPNEGO_SERVICE.to_string();
+        let host = host.to_string();
+        let auth = self.auth.clone();
+        let mut session =
+            run_blocking(move || Ok(SpnegoSession::with_auth(&service, &host, auth)?)).await?;
         let mut server_token: Option<Vec<u8>> = None;
 
         // Bound the loop so a misbehaving server can't spin forever.
         for _ in 0..8 {
-            let token = session.step(server_token.as_deref())?;
+            let challenge = server_token.take();
+            let (next_session, token) = run_blocking(move || {
+                let token = session.step(challenge.as_deref())?;
+                Ok((session, token))
+            })
+            .await?;
+            session = next_session;
             let header = format!("Negotiate {}", BASE64.encode(&token));
             let response = self
                 .http
@@ -310,6 +320,18 @@ impl KmsClient {
             "KMS SPNEGO handshake did not converge".to_string(),
         ))
     }
+}
+
+async fn run_blocking<T, F>(operation: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|error| {
+            HdfsError::OperationFailed(format!("Blocking operation failed: {error}"))
+        })?
 }
 
 /// Add either a delegation token or a `user.name` query parameter to `url`.

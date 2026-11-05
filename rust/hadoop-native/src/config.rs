@@ -35,6 +35,21 @@ impl Configuration {
         Ok(Self { map })
     }
 
+    /// Asynchronously load Hadoop configuration files and apply explicit overrides.
+    ///
+    /// File loading and XML parsing run on Tokio's blocking thread pool so this
+    /// method does not block an async runtime worker.
+    pub async fn new_async(
+        conf_dir: Option<String>,
+        conf_map: Option<HashMap<String, String>>,
+    ) -> Result<Self> {
+        tokio::task::spawn_blocking(move || Self::new(conf_dir, conf_map))
+            .await
+            .map_err(|error| {
+                HadoopError::OperationFailed(format!("configuration loading task failed: {error}"))
+            })?
+    }
+
     /// Get a value, returning `None` when the key is undefined.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.map.get(key).map(String::as_str)
