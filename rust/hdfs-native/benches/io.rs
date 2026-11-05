@@ -1,4 +1,4 @@
-use std::{collections::HashSet};
+use std::collections::HashSet;
 
 #[allow(unused_imports)]
 use bytes::{Buf, BufMut, BytesMut};
