@@ -14,11 +14,16 @@ async fn write_file(client: &Client, path: &str, ints: usize) {
         .await
         .unwrap();
 
-    let mut data = BytesMut::with_capacity(ints * 4);
-    for i in 0..ints {
-        data.put_u32(i as u32);
+    // Keep fixture creation bounded even for multi-GiB files.
+    const CHUNK_INTS: usize = 4 * 1024 * 1024;
+    for start in (0..ints).step_by(CHUNK_INTS) {
+        let end = (start + CHUNK_INTS).min(ints);
+        let mut data = BytesMut::with_capacity((end - start) * 4);
+        for i in start..end {
+            data.put_u32(i as u32);
+        }
+        writer.write_bytes(data.freeze()).await.unwrap();
     }
-    writer.write_bytes(data.freeze()).await.unwrap();
     writer.close().await.unwrap();
 }
 
@@ -28,7 +33,7 @@ fn bench(c: &mut Criterion) {
     let _dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::EC]));
     let client = Client::default();
 
-    let ints_to_write: usize = 32 * 1024 * 1024; // 128 MiB file
+    let ints_to_write: usize = 128 * 1024 * 1024; // 1 GiB file
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

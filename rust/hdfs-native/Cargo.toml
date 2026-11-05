@@ -17,6 +17,7 @@ bytes = { workspace = true }
 chrono = "0.4"
 cipher = "0.5"
 crc = "3.4"
+crc32c = "0.6.9"
 ctr = "0.10"
 dns-lookup = "3"
 futures = { workspace = true }

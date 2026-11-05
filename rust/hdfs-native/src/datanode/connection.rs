@@ -4,11 +4,11 @@ use std::sync::Mutex;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use chrono::{TimeDelta, prelude::*};
-use crc::{CRC_32_ISCSI, CRC_32_ISO_HDLC, Crc, Table};
+use crc::{CRC_32_ISO_HDLC, Crc, Table};
 use once_cell::sync::Lazy;
 use prost::Message;
 use socket2::SockRef;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, IoSlice};
 use tokio::net::TcpStream;
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
@@ -26,7 +26,6 @@ const MAX_PACKET_HEADER_SIZE: usize = 33;
 const DATANODE_CACHE_EXPIRY: TimeDelta = TimeDelta::seconds(3);
 
 const CRC32: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_ISO_HDLC);
-const CRC32C: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_ISCSI);
 
 pub(crate) static DATANODE_CACHE: Lazy<DatanodeConnectionCache> =
     Lazy::new(DatanodeConnectionCache::new);
@@ -94,20 +93,15 @@ impl ReadPacket {
     ) -> Result<Bytes> {
         // Verify the checksums if they were requested
         if let Some(info) = checksum_info {
-            let algorithm = match info.checksum.r#type() {
-                hdfs::ChecksumTypeProto::ChecksumCrc32 => Some(&CRC32),
-                hdfs::ChecksumTypeProto::ChecksumCrc32c => Some(&CRC32C),
-                hdfs::ChecksumTypeProto::ChecksumNull => None,
-            };
-
-            if let Some(algorithm) = algorithm {
-                // Create a new Bytes view over the data that we can consume
-                let mut checksum_data = self.data.clone();
-                while !checksum_data.is_empty() {
-                    let chunk_checksum = algorithm.checksum(&checksum_data.split_to(usize::min(
-                        info.checksum.bytes_per_checksum as usize,
-                        checksum_data.len(),
-                    )));
+            let checksum_type = info.checksum.r#type();
+            if checksum_type != hdfs::ChecksumTypeProto::ChecksumNull {
+                let bytes_per_checksum = info.checksum.bytes_per_checksum as usize;
+                for chunk in self.data.chunks(bytes_per_checksum) {
+                    let chunk_checksum = match checksum_type {
+                        hdfs::ChecksumTypeProto::ChecksumCrc32 => CRC32.checksum(chunk),
+                        hdfs::ChecksumTypeProto::ChecksumCrc32c => crc32c::crc32c(chunk),
+                        hdfs::ChecksumTypeProto::ChecksumNull => unreachable!(),
+                    };
                     if chunk_checksum != self.checksum.get_u32() {
                         return Err(HdfsError::ChecksumError);
                     }
@@ -208,8 +202,9 @@ impl WritePacket {
 
     pub(crate) fn set_last_packet(&mut self) {
         self.header.last_packet_in_block = true;
-        // Opinionated: always sync block for safety
-        self.set_sync_block();
+        // Match Hadoop's default close behavior. Callers that need a durable
+        // sync can mark a packet with set_sync_block() explicitly.
+        self.header.sync_block = Some(false);
     }
 
     fn max_packet_chunks(bytes_per_checksum: u32, max_packet_size: u32) -> usize {
@@ -244,7 +239,7 @@ impl WritePacket {
 
         let checksum_count = self.data.len().div_ceil(self.bytes_per_checksum);
         let mut checksum = BytesMut::with_capacity(checksum_count * CHECKSUM_BYTES);
-        let mut digest = CRC32C.digest();
+        let mut chunk_checksum = 0;
         let mut bytes_in_checksum_chunk = 0;
 
         for segment in self.data.iter() {
@@ -254,20 +249,20 @@ impl WritePacket {
                     self.bytes_per_checksum - bytes_in_checksum_chunk,
                     remaining.len(),
                 );
-                digest.update(&remaining[..bytes_to_hash]);
+                chunk_checksum = crc32c::crc32c_append(chunk_checksum, &remaining[..bytes_to_hash]);
                 remaining = &remaining[bytes_to_hash..];
                 bytes_in_checksum_chunk += bytes_to_hash;
 
                 if bytes_in_checksum_chunk == self.bytes_per_checksum {
-                    checksum.put_u32(digest.finalize());
-                    digest = CRC32C.digest();
+                    checksum.put_u32(chunk_checksum);
+                    chunk_checksum = 0;
                     bytes_in_checksum_chunk = 0;
                 }
             }
         }
 
         if bytes_in_checksum_chunk != 0 {
-            checksum.put_u32(digest.finalize());
+            checksum.put_u32(chunk_checksum);
         }
 
         checksum.freeze()
@@ -447,18 +442,26 @@ impl DatanodeWriter {
     pub(crate) async fn write_packet(&mut self, packet: &mut WritePacket) -> Result<()> {
         let checksum = packet.calculate_checksum();
 
-        let payload_len = (checksum.len() + packet.data.len() + 4) as u32;
+        let payload_len = ((checksum.len() + packet.data.len() + 4) as u32).to_be_bytes();
         let header_encoded = packet.header.encode_to_vec();
+        let header_len = (header_encoded.len() as u16).to_be_bytes();
 
-        self.writer.write_all(&payload_len.to_be_bytes()).await?;
-        self.writer
-            .write_all(&(header_encoded.len() as u16).to_be_bytes())
-            .await?;
-        self.writer.write_all(&header_encoded).await?;
-        self.writer.write_all(&checksum).await?;
-        self.writer
-            .write_all_vectored(&packet.data.segments)
-            .await?;
+        // Keep the packet's existing payload slices and send the framing,
+        // checksum, and payload together with scatter/gather I/O.
+        let mut slices = Vec::with_capacity(4 + packet.data.segments.len());
+        slices.push(IoSlice::new(&payload_len));
+        slices.push(IoSlice::new(&header_len));
+        slices.push(IoSlice::new(&header_encoded));
+        slices.push(IoSlice::new(&checksum));
+        slices.extend(
+            packet
+                .data
+                .segments
+                .iter()
+                .map(|segment| IoSlice::new(segment.as_ref())),
+        );
+
+        self.writer.write_all_vectored(&mut slices).await?;
         self.writer.flush().await?;
 
         Ok(())
@@ -526,7 +529,7 @@ mod test {
     use crate::{config::Configuration, proto::hdfs};
 
     use super::{
-        CRC32, CRC32C, DatanodeConnection, MAX_PACKET_HEADER_SIZE, Op, ReadPacket, WritePacket,
+        CRC32, DatanodeConnection, MAX_PACKET_HEADER_SIZE, Op, ReadPacket, WritePacket,
         datanode_url,
     };
     use crate::HdfsError;
@@ -585,8 +588,8 @@ mod test {
         packet.write(&mut second);
 
         let mut expected = BytesMut::new();
-        expected.put_u32(CRC32C.checksum(b"abcd"));
-        expected.put_u32(CRC32C.checksum(b"efgh"));
+        expected.put_u32(crc32c::crc32c(b"abcd"));
+        expected.put_u32(crc32c::crc32c(b"efgh"));
 
         assert_eq!(packet.calculate_checksum(), expected.freeze());
     }
