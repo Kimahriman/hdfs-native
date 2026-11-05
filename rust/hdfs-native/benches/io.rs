@@ -1,4 +1,4 @@
-use std::{collections::HashSet, hint::black_box, time::Duration};
+use std::{collections::HashSet};
 
 #[allow(unused_imports)]
 use bytes::{Buf, BufMut, BytesMut};
@@ -7,7 +7,6 @@ use hdfs_native::{
     Client, WriteOptions,
     minidfs::{DfsFeatures, MiniDfs},
 };
-use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 async fn write_file(client: &Client, path: &str, ints: usize) {
     let mut writer = client
@@ -26,78 +25,6 @@ async fn write_file(client: &Client, path: &str, ints: usize) {
         writer.write_bytes(data.freeze()).await.unwrap();
     }
     writer.close().await.unwrap();
-}
-
-fn bench_random_reads(
-    c: &mut Criterion,
-    client: &Client,
-    rt: &tokio::runtime::Runtime,
-    dfs_url: &str,
-) {
-    // https://github.com/Kimahriman/hdfs-native/issues/340: 16 MiB reads at
-    // random locations in a multi-GB file. Offsets are not block-aligned, so
-    // requests can cross block and checksum boundaries.
-    const FILE_SIZE: usize = 2 * 1024 * 1024 * 1024;
-    const READ_SIZE: usize = 16 * 1024 * 1024;
-    const READS_PER_ITER: usize = 64;
-    const PATH: &str = "/bench-random";
-
-    let mut rng = StdRng::seed_from_u64(340);
-    let offsets: Vec<usize> = (0..READS_PER_ITER)
-        .map(|_| rng.random_range(0..=FILE_SIZE - READ_SIZE))
-        .collect();
-
-    // Criterion only calls a benchmark's closure when its filter matches.
-    // Create the large fixture once, outside timing, only if it is needed.
-    let mut fixture_ready = false;
-    let mut prepare_fixture = || {
-        if !fixture_ready {
-            rt.block_on(write_file(client, PATH, FILE_SIZE / 4));
-            fixture_ready = true;
-        }
-    };
-
-    let mut group = c.benchmark_group("read-random");
-    group.throughput(Throughput::Bytes((READ_SIZE * READS_PER_ITER) as u64));
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(10));
-    group.sampling_mode(SamplingMode::Flat);
-
-    group.bench_function("read-native", |b| {
-        prepare_fixture();
-        let reader = rt.block_on(client.read(PATH)).unwrap();
-        b.to_async(rt).iter(|| async {
-            let mut buf = vec![0; READ_SIZE];
-            for &offset in &offsets {
-                reader.read_range_buf(&mut buf, offset).await.unwrap();
-                black_box(&buf);
-            }
-            buf
-        });
-    });
-
-    #[cfg(unix)]
-    group.bench_function("read-libhdfs", |b| {
-        prepare_fixture();
-        let fs = hdfs::hdfs::get_hdfs_by_full_path(dfs_url).unwrap();
-        let reader = fs.open(PATH).unwrap();
-        b.iter(|| {
-            let mut buf = vec![0; READ_SIZE];
-            for &offset in &offsets {
-                let mut bytes_read = 0;
-                while bytes_read < READ_SIZE {
-                    let count = reader
-                        .read_with_pos((offset + bytes_read) as i64, &mut buf[bytes_read..])
-                        .unwrap();
-                    assert!(count > 0, "Unexpected EOF during random read");
-                    bytes_read += count as usize;
-                }
-                black_box(&buf);
-            }
-            buf
-        });
-        reader.close().unwrap();
-    });
 }
 
 fn bench(c: &mut Criterion) {
@@ -146,8 +73,6 @@ fn bench(c: &mut Criterion) {
     });
 
     drop(group);
-
-    bench_random_reads(c, &client, &rt, &_dfs.url);
 
     rt.block_on(async { write_file(&client, "/ec-3-2/bench", ints_to_write).await });
 
