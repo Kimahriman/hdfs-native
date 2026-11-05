@@ -15,7 +15,7 @@ def minidfs():
         [
             "mvn",
             "-f",
-            "../rust/minidfs",
+            "../rust/hdfs-native/minidfs",
             "--quiet",
             "clean",
             "compile",
