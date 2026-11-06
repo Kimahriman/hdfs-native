@@ -1,7 +1,7 @@
 import io
 import os
-from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Dict, Iterator, List, Optional
+from collections.abc import AsyncIterator, Iterator
+from typing import TYPE_CHECKING, Self
 
 from typing_extensions import Buffer
 
@@ -25,18 +25,18 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
-    "Client",
-    "FileReader",
-    "FileWriter",
+    "AclEntry",
+    "AclStatus",
     "AsyncClient",
     "AsyncFileReader",
     "AsyncFileWriter",
+    "Client",
     "ContentSummary",
+    "FileReader",
     "FileStatus",
-    "WriteOptions",
-    "AclEntry",
-    "AclStatus",
+    "FileWriter",
     "TrashNotEnabledError",
+    "WriteOptions",
 ]
 
 
@@ -128,7 +128,7 @@ class FileWriter(io.RawIOBase):
         """Closes the file and saves the final metadata to the NameNode"""
         self.inner.close()
 
-    def __enter__(self) -> "FileWriter":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -138,13 +138,13 @@ class FileWriter(io.RawIOBase):
 class Client:
     def __init__(
         self,
-        url: Optional[str] = None,
-        config: Optional[Dict[str, str]] = None,
-        config_dir: Optional[str] = None,
+        url: str | None = None,
+        config: dict[str, str] | None = None,
+        config_dir: str | None = None,
         *,
-        kerberos_principal: Optional[str] = None,
-        kerberos_keytab: Optional[str] = None,
-        kerberos_cache: Optional[str] = None,
+        kerberos_principal: str | None = None,
+        kerberos_keytab: str | None = None,
+        kerberos_cache: str | None = None,
     ):
         self.inner = RawClient(
             url,
@@ -163,7 +163,7 @@ class Client:
         """Gets the status of files rooted at `path`. If `recursive` is true, lists all files recursively."""
         return self.inner.list_status(path, recursive)
 
-    def glob_status(self, pattern: str) -> List[FileStatus]:
+    def glob_status(self, pattern: str) -> list[FileStatus]:
         """Gets the status of files matching glob pattern `pattern`."""
         return self.inner.glob_status(pattern)
 
@@ -174,7 +174,7 @@ class Client:
     def create(
         self,
         path: str,
-        write_options: Optional[WriteOptions] = None,
+        write_options: WriteOptions | None = None,
     ) -> FileWriter:
         """Creates a new file and opens it for writing at `path`"""
         if not write_options:
@@ -224,7 +224,7 @@ class Client:
         """
         return self.inner.delete(path, recursive)
 
-    def trash(self, path: str) -> Optional[str]:
+    def trash(self, path: str) -> str | None:
         """
         Moves a file or directory at `path` into the user's trash. Returns the new location in the
         trash, or None if `path` is already in the trash.
@@ -240,8 +240,8 @@ class Client:
     def set_owner(
         self,
         path: str,
-        owner: Optional[str] = None,
-        group: Optional[str] = None,
+        owner: str | None = None,
+        group: str | None = None,
     ) -> None:
         """
         Sets the owner and/or group for the file at `path`
@@ -267,13 +267,13 @@ class Client:
         """
         return self.inner.get_content_summary(path)
 
-    def modify_acl_entries(self, path: str, entries: List[AclEntry]) -> None:
+    def modify_acl_entries(self, path: str, entries: list[AclEntry]) -> None:
         """
         Update ACL entries for file or directory at `path`. Existing entries will remain.
         """
         return self.inner.modify_acl_entries(path, entries)
 
-    def remove_acl_entries(self, path: str, entries: List[AclEntry]) -> None:
+    def remove_acl_entries(self, path: str, entries: list[AclEntry]) -> None:
         """
         Remove specific ACL entries for file or directory at `path`.
         """
@@ -291,7 +291,7 @@ class Client:
         """
         return self.inner.remove_acl(path)
 
-    def set_acl(self, path: str, entries: List[AclEntry]) -> None:
+    def set_acl(self, path: str, entries: list[AclEntry]) -> None:
         """
         Override all ACL entries for file or directory at `path`. If only access ACLs are provided,
         default ACLs are maintained. Likewise if only default ACLs are provided, access ACLs are
@@ -394,7 +394,7 @@ class AsyncFileWriter:
         """Closes the file and saves the final metadata to the NameNode"""
         await self.inner.close()
 
-    async def __aenter__(self) -> "AsyncFileWriter":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *_args):
@@ -404,13 +404,13 @@ class AsyncFileWriter:
 class AsyncClient:
     def __init__(
         self,
-        url: Optional[str] = None,
-        config: Optional[Dict[str, str]] = None,
-        config_dir: Optional[str] = None,
+        url: str | None = None,
+        config: dict[str, str] | None = None,
+        config_dir: str | None = None,
         *,
-        kerberos_principal: Optional[str] = None,
-        kerberos_keytab: Optional[str] = None,
-        kerberos_cache: Optional[str] = None,
+        kerberos_principal: str | None = None,
+        kerberos_keytab: str | None = None,
+        kerberos_cache: str | None = None,
     ):
         self.inner = AsyncRawClient(
             url,
@@ -433,7 +433,7 @@ class AsyncClient:
         """Gets the status of files rooted at `path`. If `recursive` is true, lists all files recursively."""
         return self.inner.list_status(path, recursive)
 
-    async def glob_status(self, pattern: str) -> List[FileStatus]:
+    async def glob_status(self, pattern: str) -> list[FileStatus]:
         """Gets the status of files matching glob pattern `pattern`."""
         return await self.inner.glob_status(pattern)
 
@@ -444,7 +444,7 @@ class AsyncClient:
     async def create(
         self,
         path: str,
-        write_options: Optional[WriteOptions] = None,
+        write_options: WriteOptions | None = None,
     ) -> AsyncFileWriter:
         """Creates a new file and opens it for writing at `path`"""
         if not write_options:
@@ -494,7 +494,7 @@ class AsyncClient:
         """
         return await self.inner.delete(path, recursive)
 
-    async def trash(self, path: str) -> Optional[str]:
+    async def trash(self, path: str) -> str | None:
         """
         Moves a file or directory at `path` into the user's trash. Returns the new location in the
         trash, or None if `path` is already in the trash.
@@ -510,8 +510,8 @@ class AsyncClient:
     async def set_owner(
         self,
         path: str,
-        owner: Optional[str] = None,
-        group: Optional[str] = None,
+        owner: str | None = None,
+        group: str | None = None,
     ) -> None:
         """
         Sets the owner and/or group for the file at `path`
@@ -537,13 +537,13 @@ class AsyncClient:
         """
         return await self.inner.get_content_summary(path)
 
-    async def modify_acl_entries(self, path: str, entries: List[AclEntry]) -> None:
+    async def modify_acl_entries(self, path: str, entries: list[AclEntry]) -> None:
         """
         Update ACL entries for file or directory at `path`. Existing entries will remain.
         """
         return await self.inner.modify_acl_entries(path, entries)
 
-    async def remove_acl_entries(self, path: str, entries: List[AclEntry]) -> None:
+    async def remove_acl_entries(self, path: str, entries: list[AclEntry]) -> None:
         """
         Remove specific ACL entries for file or directory at `path`.
         """
@@ -561,7 +561,7 @@ class AsyncClient:
         """
         return await self.inner.remove_acl(path)
 
-    async def set_acl(self, path: str, entries: List[AclEntry]) -> None:
+    async def set_acl(self, path: str, entries: list[AclEntry]) -> None:
         """
         Override all ACL entries for file or directory at `path`. If only access ACLs are provided,
         default ACLs are maintained. Likewise if only default ACLs are provided, access ACLs are

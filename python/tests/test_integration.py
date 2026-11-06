@@ -36,7 +36,7 @@ def test_sync(client: Client):
     with client.create("/testfile") as file:
         data = io.BytesIO()
 
-        for i in range(0, 32 * 1024 * 1024):
+        for i in range(32 * 1024 * 1024):
             data.write(i.to_bytes(4, "big"))
 
         file.write(data.getbuffer())
@@ -44,7 +44,7 @@ def test_sync(client: Client):
     with client.read("/testfile") as file:
         data = io.BytesIO(file.read())
 
-    for i in range(0, 32 * 1024 * 1024):
+    for i in range(32 * 1024 * 1024):
         assert data.read(4) == i.to_bytes(4, "big")
 
     with client.append("/testfile") as file:
@@ -58,7 +58,7 @@ def test_sync(client: Client):
     with client.read("/testfile") as file:
         data = io.BytesIO(file.read())
 
-        for i in range(0, 33 * 1024 * 1024):
+        for i in range(33 * 1024 * 1024):
             assert data.read(4) == i.to_bytes(4, "big")
 
         data = io.BytesIO()
@@ -67,7 +67,7 @@ def test_sync(client: Client):
 
         data.seek(0)
 
-        for i in range(0, 33 * 1024 * 1024):
+        for i in range(33 * 1024 * 1024):
             assert data.read(4) == i.to_bytes(4, "big")
 
     with client.read("/testfile") as file:
@@ -198,7 +198,7 @@ async def test_async(async_client: AsyncClient):
     async with await async_client.create("/testfile") as file:
         data = io.BytesIO()
 
-        for i in range(0, 32 * 1024 * 1024):
+        for i in range(32 * 1024 * 1024):
             data.write(i.to_bytes(4, "big"))
 
         await file.write(data.getbuffer())
@@ -206,7 +206,7 @@ async def test_async(async_client: AsyncClient):
     async with await async_client.read("/testfile") as file:
         data = io.BytesIO(await file.read())
 
-    for i in range(0, 32 * 1024 * 1024):
+    for i in range(32 * 1024 * 1024):
         assert data.read(4) == i.to_bytes(4, "big")
 
     async with await async_client.append("/testfile") as file:
@@ -220,7 +220,7 @@ async def test_async(async_client: AsyncClient):
     async with await async_client.read("/testfile") as file:
         data = io.BytesIO(await file.read())
 
-        for i in range(0, 33 * 1024 * 1024):
+        for i in range(33 * 1024 * 1024):
             assert data.read(4) == i.to_bytes(4, "big")
 
         data = io.BytesIO()
@@ -229,7 +229,7 @@ async def test_async(async_client: AsyncClient):
 
         data.seek(0)
 
-        for i in range(0, 33 * 1024 * 1024):
+        for i in range(33 * 1024 * 1024):
             assert data.read(4) == i.to_bytes(4, "big")
 
     async with await async_client.read("/testfile") as file:

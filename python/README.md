@@ -10,6 +10,7 @@ pip install hdfs-native
 
 ```python
 from hdfs_native import Client
+
 client = Client("hdfs://localhost:9000")
 
 status = client.get_file_info("/file.txt")
