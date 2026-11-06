@@ -12,27 +12,37 @@ language = "system"
 entry = "cargo fmt --all"
 types = ["rust"]
 pass_filenames = false
-
-[[repos.hooks]]
-id = "ruff-check"
-name = "Ruff check"
-language = "system"
-entry = "uv run --project python ruff check --fix --force-exclude"
-types_or = ["python"]
 priority = 0
 
 [[repos.hooks]]
-id = "ruff-format"
-name = "Ruff format"
-entry = "uv run --project python ruff format --force-exclude"
+id = "python-sync"
+name = "sync python check environment"
 language = "system"
+entry = "uv sync --locked --project python --no-install-project"
+types_or = ["python"]
+pass_filenames = false
+priority = 0
+
+[[repos.hooks]]
+id = "ruff-check"
+name = "ruff check"
+language = "system"
+entry = "uv run --project python --no-sync ruff check --fix --force-exclude"
 types_or = ["python"]
 priority = 1
+
+[[repos.hooks]]
+id = "ruff-format"
+name = "ruff format"
+entry = "uv run --project python --no-sync ruff format --force-exclude"
+language = "system"
+types_or = ["python"]
+priority = 2
 
 [[repos.hooks]]
 id = "ty-check"
 name = "ty check"
 language = "system"
-entry = "uv run --project python ty check --error-on-warning --force-exclude"
+entry = "uv run --project python --no-sync ty check --error-on-warning --force-exclude"
 types_or = ["python"]
-priority = 2
+priority = 3
