@@ -110,7 +110,7 @@ impl ProxyConnection {
         write: bool,
     ) -> std::result::Result<Bytes, ProxyCallError> {
         for attempt in 0..2 {
-            let receiver = {
+            let rpc_response = {
                 let mut connection = self.inner.lock().await;
                 match &mut *connection {
                     Some(c) if c.is_alive() => (),
@@ -143,19 +143,11 @@ impl ProxyConnection {
                 connection
                     .as_ref()
                     .unwrap()
-                    .call(method_name, message)
+                    .call_with_rpc_timeout(method_name, message)
                     .await
                     .map_err(|error| ProxyCallError::after_request(error.into()))?
             };
-            let result: Result<Bytes> = receiver
-                .await
-                .map_err(|_| {
-                    ProxyCallError::after_request(HdfsError::IOError(std::io::Error::new(
-                        std::io::ErrorKind::ConnectionAborted,
-                        "RPC listener disconnected",
-                    )))
-                })?
-                .map_err(HdfsError::from);
+            let result: Result<Bytes> = rpc_response.wait().await.map_err(HdfsError::from);
 
             #[cfg(feature = "integration-test")]
             let result = if result.is_ok()

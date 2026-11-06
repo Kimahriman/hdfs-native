@@ -32,7 +32,7 @@ regex = "1"
 roxmltree = { workspace = true }
 socket2 = "0.6"
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["rt", "net", "io-util", "sync"] }
+tokio = { workspace = true, features = ["rt", "net", "io-util", "sync", "time"] }
 whoami = "2"
 uuid = { version = "1", features = ["v4"] }
 
