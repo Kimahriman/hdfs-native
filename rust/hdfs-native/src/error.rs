@@ -54,6 +54,8 @@ pub enum HdfsError {
     NoSASLMechanism,
     #[error("XML parse error: {0}")]
     XmlParseError(#[from] roxmltree::Error),
+    #[error("DNS lookup error: {0}")]
+    LookupError(#[from] dns_lookup::LookupError),
 }
 
 pub type Result<T> = std::result::Result<T, HdfsError>;

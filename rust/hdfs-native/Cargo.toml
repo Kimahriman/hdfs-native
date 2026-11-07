@@ -1,6 +1,6 @@
 [package]
 name = "hdfs-native"
-version = "0.14.8"
+version = "0.15.0"
 edition = "2024"
 authors = ["Adam Binford <adamq43@gmail.com>"]
 homepage = "https://github.com/Kimahriman/hdfs-native"
@@ -12,14 +12,14 @@ license = "Apache-2.0"
 
 [dependencies]
 aes = "0.9"
-base64 = "0.22"
+base64 = "0.23"
 bytes = { workspace = true }
 chrono = "0.4"
 cipher = "0.5"
 crc = "3.4"
 crc32c = "0.6.9"
 ctr = "0.10"
-dns-lookup = "3"
+dns-lookup = "4"
 futures = { workspace = true }
 g2p = "1"
 hadoop-native = { version = "0.1.0", path = "../hadoop-native" }
@@ -37,7 +37,7 @@ serde_json = { version = "1", optional = true }
 socket2 = "0.6"
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "io-util", "macros", "sync", "time"] }
-tokio-util = { version = "0.7.19", features = ["io"] }
+tokio-util = { version = "0.7.20", features = ["io"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 which = { version = "8", optional = true }
@@ -54,7 +54,7 @@ protobuf-src = { version = "2", optional = true }
 [dev-dependencies]
 criterion = { version = "0.8", features = ["async_tokio", "async_futures"] }
 env_logger = { workspace = true }
-serial_test = "3"
+serial_test = "4"
 tempfile = "3"
 which = "8"
 indoc = "2"
