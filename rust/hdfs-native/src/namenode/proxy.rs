@@ -140,14 +140,9 @@ impl ProxyConnection {
                     }
                 }
 
-                connection
-                    .as_ref()
-                    .unwrap()
-                    .call_with_rpc_timeout(method_name, message)
-                    .await
-                    .map_err(|error| ProxyCallError::after_request(error.into()))?
+                connection.as_ref().unwrap().call(method_name, message)
             };
-            let result: Result<Bytes> = rpc_response.wait().await.map_err(HdfsError::from);
+            let result: Result<Bytes> = rpc_response.await.map_err(HdfsError::from);
 
             #[cfg(feature = "integration-test")]
             let result = if result.is_ok()

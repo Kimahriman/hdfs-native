@@ -113,7 +113,7 @@ pub struct RpcConnection<C: RpcAlignmentContext> {
 }
 
 /// A pending RPC response that uses the configured Hadoop RPC timeout.
-pub struct RpcCallResponse {
+struct PendingRpcCall {
     call_id: i32,
     method_name: String,
     receiver: Option<oneshot::Receiver<Result<Bytes>>>,
@@ -122,9 +122,8 @@ pub struct RpcCallResponse {
     handle: Handle,
 }
 
-impl RpcCallResponse {
-    /// Wait for the RPC response, returning a timed-out I/O error when the configured limit expires.
-    pub async fn wait(mut self) -> Result<Bytes> {
+impl PendingRpcCall {
+    async fn wait(mut self) -> Result<Bytes> {
         let receiver = self
             .receiver
             .take()
@@ -159,7 +158,7 @@ impl RpcCallResponse {
     }
 }
 
-impl Drop for RpcCallResponse {
+impl Drop for PendingRpcCall {
     fn drop(&mut self) {
         if let Some(call_map) = self.call_map.lock().unwrap().as_mut() {
             call_map.remove(&self.call_id);
@@ -311,54 +310,17 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
     }
 
     async fn write_messages(&self, messages: &[&[u8]]) -> Result<()> {
-        let mut size = 0u32;
-        for msg in messages.iter() {
-            size += msg.len() as u32;
-        }
-
-        let mut buf: Vec<u8> = Vec::with_capacity(size as usize + 4);
-
-        buf.extend(size.to_be_bytes());
-        for msg in messages.iter() {
-            buf.extend(*msg);
-        }
-
-        let _ = self.sender.send(buf).await;
+        let _ = self.sender.send(encode_messages(messages)).await;
 
         Ok(())
     }
 
-    pub async fn call(
+    /// Send an RPC and await its response, applying `ipc.client.rpc-timeout.ms`.
+    pub fn call(
         &self,
         method_name: &str,
         message: &[u8],
-    ) -> Result<oneshot::Receiver<Result<Bytes>>> {
-        let (_, receiver) = self.start_call(method_name, message).await?;
-        Ok(receiver)
-    }
-
-    /// Start an RPC call whose response wait uses `ipc.client.rpc-timeout.ms`.
-    pub async fn call_with_rpc_timeout(
-        &self,
-        method_name: &str,
-        message: &[u8],
-    ) -> Result<RpcCallResponse> {
-        let (call_id, receiver) = self.start_call(method_name, message).await?;
-        Ok(RpcCallResponse {
-            call_id,
-            method_name: method_name.to_owned(),
-            receiver: Some(receiver),
-            call_map: Arc::clone(&self.call_map),
-            timeout: self.rpc_timeout,
-            handle: self.handle.clone(),
-        })
-    }
-
-    async fn start_call(
-        &self,
-        method_name: &str,
-        message: &[u8],
-    ) -> Result<(i32, oneshot::Receiver<Result<Bytes>>)> {
+    ) -> impl Future<Output = Result<Bytes>> + Send + 'static {
         let call_id = self.get_next_call_id();
         let conn_header = self.get_connection_header(call_id, 0);
 
@@ -374,29 +336,59 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
         debug!("RPC request header: {:?}", msg_header);
 
         let header_buf = msg_header.encode_length_delimited_to_vec();
+        let request = encode_messages(&[&conn_header_buf, &header_buf, message]);
+        let method_name = method_name.to_owned();
+        let call_map = Arc::clone(&self.call_map);
+        let sender = self.sender.clone();
+        let timeout = self.rpc_timeout;
+        let handle = self.handle.clone();
 
-        let (sender, receiver) = oneshot::channel::<Result<Bytes>>();
-
-        {
-            let mut map = self.call_map.lock().unwrap();
-            match map.as_mut() {
-                Some(m) => {
-                    m.insert(call_id, sender);
-                }
-                None => {
-                    return Err(HadoopError::IOError(std::io::Error::new(
-                        std::io::ErrorKind::ConnectionAborted,
-                        "RPC listener disconnected",
-                    )));
+        async move {
+            let (response_sender, receiver) = oneshot::channel::<Result<Bytes>>();
+            {
+                let mut map = call_map.lock().unwrap();
+                match map.as_mut() {
+                    Some(m) => {
+                        m.insert(call_id, response_sender);
+                    }
+                    None => {
+                        return Err(HadoopError::IOError(std::io::Error::new(
+                            ErrorKind::ConnectionAborted,
+                            "RPC listener disconnected",
+                        )));
+                    }
                 }
             }
+
+            let response = PendingRpcCall {
+                call_id,
+                method_name,
+                receiver: Some(receiver),
+                call_map,
+                timeout,
+                handle,
+            };
+
+            if sender.send(request).await.is_err() {
+                return Err(HadoopError::IOError(std::io::Error::new(
+                    ErrorKind::ConnectionAborted,
+                    "RPC sender disconnected",
+                )));
+            }
+
+            response.wait().await
         }
-
-        self.write_messages(&[&conn_header_buf, &header_buf, message])
-            .await?;
-
-        Ok((call_id, receiver))
     }
+}
+
+fn encode_messages(messages: &[&[u8]]) -> Vec<u8> {
+    let size: u32 = messages.iter().map(|message| message.len() as u32).sum();
+    let mut buf = Vec::with_capacity(size as usize + 4);
+    buf.extend(size.to_be_bytes());
+    for message in messages {
+        buf.extend(*message);
+    }
+    buf
 }
 
 struct RpcListener<C: RpcAlignmentContext> {
@@ -518,7 +510,7 @@ mod tests {
 
     use tokio::sync::oneshot;
 
-    use super::{RpcCallResponse, RpcConnection, connect_with_timeout};
+    use super::{PendingRpcCall, RpcConnection, connect_with_timeout};
     use crate::security::user::UserInfo;
 
     #[test]
@@ -585,7 +577,7 @@ mod tests {
         let (sender, receiver) = oneshot::channel();
         call_map.lock().unwrap().as_mut().unwrap().insert(1, sender);
 
-        let response = RpcCallResponse {
+        let response = PendingRpcCall {
             call_id: 1,
             method_name: "getFileInfo".to_owned(),
             receiver: Some(receiver),
