@@ -2,12 +2,17 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::{HadoopError, Result};
 
 const HADOOP_CONF_DIR: &str = "HADOOP_CONF_DIR";
 const HADOOP_HOME: &str = "HADOOP_HOME";
 const HADOOP_SECURITY_AUTHENTICATION: &str = "hadoop.security.authentication";
+const IPC_CLIENT_CONNECT_TIMEOUT: &str = "ipc.client.connect.timeout";
+const DEFAULT_IPC_CLIENT_CONNECT_TIMEOUT_MILLIS: u64 = 20_000;
+const IPC_CLIENT_RPC_TIMEOUT: &str = "ipc.client.rpc-timeout.ms";
+const DEFAULT_IPC_CLIENT_RPC_TIMEOUT_MILLIS: u64 = 120_000;
 
 /// Hadoop configuration loaded from XML files and explicit overrides.
 #[derive(Debug, Clone)]
@@ -73,6 +78,24 @@ impl Configuration {
     pub fn security_enabled(&self) -> bool {
         self.get(HADOOP_SECURITY_AUTHENTICATION)
             .is_some_and(|value| value != "simple")
+    }
+
+    pub(crate) fn ipc_client_connect_timeout(&self) -> Option<Duration> {
+        let timeout_millis = self
+            .get(IPC_CLIENT_CONNECT_TIMEOUT)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_IPC_CLIENT_CONNECT_TIMEOUT_MILLIS);
+
+        (timeout_millis != 0).then(|| Duration::from_millis(timeout_millis))
+    }
+
+    pub(crate) fn ipc_client_rpc_timeout(&self) -> Option<Duration> {
+        let timeout_millis = self
+            .get(IPC_CLIENT_RPC_TIMEOUT)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_IPC_CLIENT_RPC_TIMEOUT_MILLIS);
+
+        (timeout_millis != 0).then(|| Duration::from_millis(timeout_millis))
     }
 
     fn read_from_file(path: &Path) -> Result<Vec<(String, String)>> {
@@ -224,8 +247,12 @@ impl EntityResolver {
 mod tests {
     use std::collections::HashMap;
     use std::fs;
+    use std::time::Duration;
 
-    use super::Configuration;
+    use super::{
+        Configuration, DEFAULT_IPC_CLIENT_CONNECT_TIMEOUT_MILLIS,
+        DEFAULT_IPC_CLIENT_RPC_TIMEOUT_MILLIS, IPC_CLIENT_CONNECT_TIMEOUT, IPC_CLIENT_RPC_TIMEOUT,
+    };
 
     #[test]
     fn explicit_values_override_defaults() {
@@ -238,6 +265,72 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.get("example.key"), Some("value"));
+    }
+
+    #[test]
+    fn reads_ipc_client_connect_timeout() {
+        let default_config = Configuration::new(None, None).unwrap();
+        assert_eq!(
+            default_config.ipc_client_connect_timeout(),
+            Some(Duration::from_millis(
+                DEFAULT_IPC_CLIENT_CONNECT_TIMEOUT_MILLIS
+            ))
+        );
+
+        let custom_config = Configuration::new(
+            None,
+            Some(HashMap::from([(
+                IPC_CLIENT_CONNECT_TIMEOUT.to_owned(),
+                "250".to_owned(),
+            )])),
+        )
+        .unwrap();
+        assert_eq!(
+            custom_config.ipc_client_connect_timeout(),
+            Some(Duration::from_millis(250))
+        );
+
+        let disabled_config = Configuration::new(
+            None,
+            Some(HashMap::from([(
+                IPC_CLIENT_CONNECT_TIMEOUT.to_owned(),
+                "0".to_owned(),
+            )])),
+        )
+        .unwrap();
+        assert_eq!(disabled_config.ipc_client_connect_timeout(), None);
+    }
+
+    #[test]
+    fn reads_ipc_client_rpc_timeout() {
+        let default_config = Configuration::new(None, None).unwrap();
+        assert_eq!(
+            default_config.ipc_client_rpc_timeout(),
+            Some(Duration::from_millis(DEFAULT_IPC_CLIENT_RPC_TIMEOUT_MILLIS))
+        );
+
+        let custom_config = Configuration::new(
+            None,
+            Some(HashMap::from([(
+                IPC_CLIENT_RPC_TIMEOUT.to_owned(),
+                "250".to_owned(),
+            )])),
+        )
+        .unwrap();
+        assert_eq!(
+            custom_config.ipc_client_rpc_timeout(),
+            Some(Duration::from_millis(250))
+        );
+
+        let disabled_config = Configuration::new(
+            None,
+            Some(HashMap::from([(
+                IPC_CLIENT_RPC_TIMEOUT.to_owned(),
+                "0".to_owned(),
+            )])),
+        )
+        .unwrap();
+        assert_eq!(disabled_config.ipc_client_rpc_timeout(), None);
     }
 
     #[test]

@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::future::Future;
 use std::io::ErrorKind;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
 use log::{debug, warn};
@@ -22,11 +24,41 @@ use crate::security::user::UserInfo;
 use crate::{HadoopError, Result};
 
 // Connect to a remote host and return a TcpStream with standard options we want
-async fn connect(addr: &str, handle: &Handle) -> Result<TcpStream> {
+async fn connect_with_timeout<T, F>(
+    addr: &str,
+    timeout: Option<Duration>,
+    connect: F,
+) -> std::io::Result<T>
+where
+    F: Future<Output = std::io::Result<T>>,
+{
+    let Some(timeout) = timeout else {
+        return connect.await;
+    };
+
+    tokio::time::timeout(timeout, connect).await.map_err(|_| {
+        std::io::Error::new(
+            ErrorKind::TimedOut,
+            format!(
+                "Timed out connecting to {addr} after {}ms",
+                timeout.as_millis()
+            ),
+        )
+    })?
+}
+
+async fn connect(addr: &str, config: &Configuration, handle: &Handle) -> Result<TcpStream> {
     let addr = addr.to_string();
+    let timeout = config.ipc_client_connect_timeout();
     // Spawn a task to create the TcpStream so it captures the tokio runtime in case we
     // are not called from one
-    let stream = handle.spawn(TcpStream::connect(addr)).await.unwrap()?;
+    let stream = handle
+        .spawn(async move {
+            let connect = TcpStream::connect(addr.as_str());
+            connect_with_timeout(&addr, timeout, connect).await
+        })
+        .await
+        .unwrap()?;
     stream.set_nodelay(true)?;
 
     let sf = SockRef::from(&stream);
@@ -74,8 +106,64 @@ pub struct RpcConnection<C: RpcAlignmentContext> {
     next_call_id: AtomicI32,
     alignment_context: Option<Arc<Mutex<C>>>,
     call_map: Arc<Mutex<Option<HashMap<i32, CallResult>>>>,
+    rpc_timeout: Option<Duration>,
+    handle: Handle,
     sender: mpsc::Sender<Vec<u8>>,
     listener: Option<JoinHandle<()>>,
+}
+
+/// A pending RPC response that uses the configured Hadoop RPC timeout.
+struct PendingRpcCall {
+    call_id: i32,
+    method_name: String,
+    receiver: Option<oneshot::Receiver<Result<Bytes>>>,
+    call_map: Arc<Mutex<Option<HashMap<i32, CallResult>>>>,
+    timeout: Option<Duration>,
+    handle: Handle,
+}
+
+impl PendingRpcCall {
+    async fn wait(mut self) -> Result<Bytes> {
+        let receiver = self
+            .receiver
+            .take()
+            .expect("RPC response receiver should only be consumed once");
+
+        let response = match self.timeout {
+            Some(timeout) => {
+                let timed_response = {
+                    let _runtime = self.handle.enter();
+                    tokio::time::timeout(timeout, receiver)
+                };
+                timed_response.await.map_err(|_| {
+                    HadoopError::IOError(std::io::Error::new(
+                        ErrorKind::TimedOut,
+                        format!(
+                            "Timed out waiting for RPC response to {} after {}ms",
+                            self.method_name,
+                            timeout.as_millis()
+                        ),
+                    ))
+                })?
+            }
+            None => receiver.await,
+        };
+
+        response.map_err(|_| {
+            HadoopError::IOError(std::io::Error::new(
+                ErrorKind::ConnectionAborted,
+                "RPC listener disconnected",
+            ))
+        })?
+    }
+}
+
+impl Drop for PendingRpcCall {
+    fn drop(&mut self) {
+        if let Some(call_map) = self.call_map.lock().unwrap().as_mut() {
+            call_map.remove(&self.call_id);
+        }
+    }
 }
 
 impl<C: RpcAlignmentContext> RpcConnection<C> {
@@ -90,7 +178,7 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
         let next_call_id = AtomicI32::new(0);
         let call_map = Arc::new(Mutex::new(Some(HashMap::new())));
 
-        let mut stream = connect(url, handle).await?;
+        let mut stream = connect(url, config, handle).await?;
         stream.write_all("hrpc".as_bytes()).await?;
         // Current version
         stream.write_all(&[9u8]).await?;
@@ -121,6 +209,8 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
             next_call_id,
             alignment_context,
             call_map,
+            rpc_timeout: config.ipc_client_rpc_timeout(),
+            handle: handle.clone(),
             listener: None,
             sender,
         };
@@ -220,28 +310,17 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
     }
 
     async fn write_messages(&self, messages: &[&[u8]]) -> Result<()> {
-        let mut size = 0u32;
-        for msg in messages.iter() {
-            size += msg.len() as u32;
-        }
-
-        let mut buf: Vec<u8> = Vec::with_capacity(size as usize + 4);
-
-        buf.extend(size.to_be_bytes());
-        for msg in messages.iter() {
-            buf.extend(*msg);
-        }
-
-        let _ = self.sender.send(buf).await;
+        let _ = self.sender.send(encode_messages(messages)).await;
 
         Ok(())
     }
 
-    pub async fn call(
+    /// Send an RPC and await its response, applying `ipc.client.rpc-timeout.ms`.
+    pub fn call(
         &self,
         method_name: &str,
         message: &[u8],
-    ) -> Result<oneshot::Receiver<Result<Bytes>>> {
+    ) -> impl Future<Output = Result<Bytes>> + Send + 'static {
         let call_id = self.get_next_call_id();
         let conn_header = self.get_connection_header(call_id, 0);
 
@@ -257,29 +336,59 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
         debug!("RPC request header: {:?}", msg_header);
 
         let header_buf = msg_header.encode_length_delimited_to_vec();
+        let request = encode_messages(&[&conn_header_buf, &header_buf, message]);
+        let method_name = method_name.to_owned();
+        let call_map = Arc::clone(&self.call_map);
+        let sender = self.sender.clone();
+        let timeout = self.rpc_timeout;
+        let handle = self.handle.clone();
 
-        let (sender, receiver) = oneshot::channel::<Result<Bytes>>();
-
-        {
-            let mut map = self.call_map.lock().unwrap();
-            match map.as_mut() {
-                Some(m) => {
-                    m.insert(call_id, sender);
-                }
-                None => {
-                    return Err(HadoopError::IOError(std::io::Error::new(
-                        std::io::ErrorKind::ConnectionAborted,
-                        "RPC listener disconnected",
-                    )));
+        async move {
+            let (response_sender, receiver) = oneshot::channel::<Result<Bytes>>();
+            {
+                let mut map = call_map.lock().unwrap();
+                match map.as_mut() {
+                    Some(m) => {
+                        m.insert(call_id, response_sender);
+                    }
+                    None => {
+                        return Err(HadoopError::IOError(std::io::Error::new(
+                            ErrorKind::ConnectionAborted,
+                            "RPC listener disconnected",
+                        )));
+                    }
                 }
             }
+
+            let response = PendingRpcCall {
+                call_id,
+                method_name,
+                receiver: Some(receiver),
+                call_map,
+                timeout,
+                handle,
+            };
+
+            if sender.send(request).await.is_err() {
+                return Err(HadoopError::IOError(std::io::Error::new(
+                    ErrorKind::ConnectionAborted,
+                    "RPC sender disconnected",
+                )));
+            }
+
+            response.wait().await
         }
-
-        self.write_messages(&[&conn_header_buf, &header_buf, message])
-            .await?;
-
-        Ok(receiver)
     }
+}
+
+fn encode_messages(messages: &[&[u8]]) -> Vec<u8> {
+    let size: u32 = messages.iter().map(|message| message.len() as u32).sum();
+    let mut buf = Vec::with_capacity(size as usize + 4);
+    buf.extend(size.to_be_bytes());
+    for message in messages {
+        buf.extend(*message);
+    }
+    buf
 }
 
 struct RpcListener<C: RpcAlignmentContext> {
@@ -392,16 +501,24 @@ impl<C: RpcAlignmentContext> RpcListener<C> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::io::ErrorKind;
     use std::sync::atomic::AtomicI32;
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     use tokio::sync::mpsc;
 
-    use super::RpcConnection;
+    use tokio::sync::oneshot;
+
+    use super::{PendingRpcCall, RpcConnection, connect_with_timeout};
     use crate::security::user::UserInfo;
 
     #[test]
     fn connection_context_contains_protocol_and_user() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
         let (sender, _receiver) = mpsc::channel(1);
         let connection = RpcConnection::<()> {
             protocol: "org.apache.hadoop.example.Protocol".to_owned(),
@@ -413,6 +530,8 @@ mod tests {
             next_call_id: AtomicI32::new(0),
             alignment_context: None,
             call_map: Arc::new(Mutex::new(Some(HashMap::new()))),
+            rpc_timeout: None,
+            handle: runtime.handle().clone(),
             sender,
             listener: None,
         };
@@ -425,5 +544,52 @@ mod tests {
         let user = context.user_info.unwrap();
         assert_eq!(user.real_user.as_deref(), Some("real-user"));
         assert_eq!(user.effective_user.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn connect_timeout_returns_timed_out_io_error() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let error = runtime
+            .block_on(connect_with_timeout(
+                "namenode.example.com:8020",
+                Some(Duration::from_millis(1)),
+                std::future::pending::<std::io::Result<()>>(),
+            ))
+            .unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::TimedOut);
+        assert_eq!(
+            error.to_string(),
+            "Timed out connecting to namenode.example.com:8020 after 1ms"
+        );
+    }
+
+    #[test]
+    fn rpc_timeout_returns_timed_out_error_and_removes_pending_call() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let call_map = Arc::new(Mutex::new(Some(HashMap::new())));
+        let (sender, receiver) = oneshot::channel();
+        call_map.lock().unwrap().as_mut().unwrap().insert(1, sender);
+
+        let response = PendingRpcCall {
+            call_id: 1,
+            method_name: "getFileInfo".to_owned(),
+            receiver: Some(receiver),
+            call_map: Arc::clone(&call_map),
+            timeout: Some(Duration::from_millis(1)),
+            handle: runtime.handle().clone(),
+        };
+        let error = runtime.block_on(response.wait()).unwrap_err();
+
+        assert!(
+            matches!(error, crate::HadoopError::IOError(ref e) if e.kind() == ErrorKind::TimedOut)
+        );
+        assert!(call_map.lock().unwrap().as_ref().unwrap().is_empty());
     }
 }
