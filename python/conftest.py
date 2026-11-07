@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import os
 import subprocess
 
@@ -70,7 +71,7 @@ async def aio_benchmark(benchmark: BenchmarkFixture):
         return await func(*args, **kwargs)
 
     def _wrapper(func, *args, **kwargs):
-        assert asyncio.iscoroutinefunction(func)
+        assert inspect.iscoroutinefunction(func)
 
         @benchmark
         def _():

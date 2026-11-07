@@ -1,6 +1,7 @@
 import urllib.parse
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import cast
 
 import fsspec
 import pytest
@@ -115,7 +116,11 @@ class TestFsspecBase(ABC):
             assert fs.read_bytes("/cp_src") == b"other"
 
             # No temporary file is left behind.
-            assert sorted(fs.ls("/", detail=False)) == ["/cp_dir", "/cp_dst", "/cp_src"]
+            assert sorted(cast(list[str], fs.ls("/", detail=False))) == [
+                "/cp_dir",
+                "/cp_dst",
+                "/cp_src",
+            ]
             assert fs.ls("/cp_dir", detail=False) == ["/cp_dir/cp_dst"]
         finally:
             for path in ("/cp_src", "/cp_dst", "/cp_dir"):
