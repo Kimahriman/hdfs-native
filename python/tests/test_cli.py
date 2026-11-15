@@ -5,9 +5,10 @@ import os
 import re
 import stat
 import time
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from tempfile import TemporaryDirectory
-from typing import Callable, Iterator, List, Literal, Optional, Tuple, overload
+from typing import Literal, overload
 
 import pytest
 
@@ -383,9 +384,9 @@ def test_ls(client: Client):
         size: str
         path: str
 
-    def parse_output(output: str) -> Iterator[Tuple[int, List[FileOutput]]]:
-        current_items: Optional[int] = None
-        current_batch: List[FileOutput] = []
+    def parse_output(output: str) -> Iterator[tuple[int, list[FileOutput]]]:
+        current_items: int | None = None
+        current_batch: list[FileOutput] = []
 
         for line in output.split("\n"):
             if match := re.match(r"Found (\d)+ items", line):
@@ -434,7 +435,7 @@ def test_ls(client: Client):
     file1 = FileOutput("-rw-r--r--", "3", "10", "/testfile1")
     file2 = FileOutput("-rw-r--r--", "3", "4096", "/testfile2")
 
-    def check_output(command: List[str], expected: List[FileOutput]):
+    def check_output(command: list[str], expected: list[FileOutput]):
         groups = list(parse_output(capture_stdout(lambda: cli_main(command))))
         assert len(groups) == 1
         assert groups[0][0] == 3

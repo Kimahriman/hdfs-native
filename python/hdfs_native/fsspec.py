@@ -1,11 +1,12 @@
 import io
+import posixpath
 import secrets
 import shutil
 import time
 import urllib.parse
 from contextlib import suppress
 from datetime import datetime
-from typing import TYPE_CHECKING, Dict, List, Optional, Union
+from typing import TYPE_CHECKING
 
 from fsspec import AbstractFileSystem
 from fsspec.utils import tokenize
@@ -23,8 +24,8 @@ class BaseFileSystem(AbstractFileSystem):
 
     def __init__(
         self,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
+        host: str | None = None,
+        port: int | None = None,
         *args,
         **storage_options,
     ):
@@ -63,7 +64,7 @@ class BaseFileSystem(AbstractFileSystem):
         url = urllib.parse.urlparse(path)
         return {"host": url.hostname, "port": url.port}
 
-    def _convert_file_status(self, file_status: "FileStatus") -> Dict:
+    def _convert_file_status(self, file_status: "FileStatus") -> dict:
         return {
             "name": file_status.path,
             "size": file_status.length,
@@ -75,7 +76,7 @@ class BaseFileSystem(AbstractFileSystem):
             "access_time": file_status.access_time,
         }
 
-    def info(self, path, **_kwargs) -> Dict:
+    def info(self, path, **_kwargs) -> dict:
         file_status = self.client.get_file_info(self._strip_protocol(path))
         return self._convert_file_status(file_status)
 
@@ -86,7 +87,7 @@ class BaseFileSystem(AbstractFileSystem):
         except FileNotFoundError:
             return False
 
-    def ls(self, path: str, detail=True, **kwargs) -> List[Union[str, Dict]]:
+    def ls(self, path: str, detail=True, **kwargs) -> list[str | dict]:
         listing = self.client.list_status(self._strip_protocol(path), False)
         if detail:
             return [self._convert_file_status(status) for status in listing]
@@ -106,10 +107,10 @@ class BaseFileSystem(AbstractFileSystem):
         self,
         path: str,
         total=True,
-        maxdepth: Optional[int] = None,
+        maxdepth: int | None = None,
         withdirs=False,
         **kwargs,
-    ) -> Union[int, Dict[str, int]]:
+    ) -> int | dict[str, int]:
         if total:
             if maxdepth is not None:
                 raise NotImplementedError("maxdepth is not supported with total")
@@ -134,20 +135,32 @@ class BaseFileSystem(AbstractFileSystem):
         return self.mkdir(path, create_parents=True)
 
     def mv(self, path1: str, path2: str, **kwargs):  # ty:ignore[invalid-method-override]
+        """Move a file or directory.
+
+        Like ``shutil.move`` and the ``mv`` of the other fsspec filesystems, an
+        existing destination is replaced. Pass ``overwrite=False`` to get the
+        behavior of ``hdfs dfs -mv``, which fails with ``FileExistsError``.
+        """
         self.client.rename(
             self._strip_protocol(path1),
             self._strip_protocol(path2),
-            kwargs.get("overwrite", False),
+            kwargs.get("overwrite", True),
         )
 
     def cp_file(self, path1, path2, **kwargs):
         with self._open(self._strip_protocol(path1), "rb") as lstream:
-            tmp_fname = f".{self._strip_protocol(path2)}.tmp.{secrets.token_hex(6)}"
+            dst = self._strip_protocol(path2)
+            # Hidden temporary file next to the destination, so the final rename
+            # stays within one directory.
+            tmp_fname = posixpath.join(
+                posixpath.dirname(dst),
+                f".{posixpath.basename(dst)}.tmp.{secrets.token_hex(6)}",
+            )
             try:
                 with self.open(tmp_fname, "wb") as rstream:
                     shutil.copyfileobj(lstream, rstream)
-                self.mv(tmp_fname, path2)
-            except BaseException:  # noqa
+                self.mv(tmp_fname, dst, overwrite=True)
+            except BaseException:
                 with suppress(FileNotFoundError):
                     self.rm(tmp_fname)
                 raise
@@ -155,7 +168,7 @@ class BaseFileSystem(AbstractFileSystem):
     def rmdir(self, path: str) -> None:
         self.client.delete(self._strip_protocol(path), False)
 
-    def rm(self, path: str, recursive=False, maxdepth: Optional[int] = None) -> None:
+    def rm(self, path: str, recursive=False, maxdepth: int | None = None) -> None:
         if maxdepth is not None:
             raise NotImplementedError("maxdepth is not supported")
         self.client.delete(self._strip_protocol(path), recursive)
@@ -172,8 +185,8 @@ class BaseFileSystem(AbstractFileSystem):
         path: str,
         mode="rb",
         overwrite=True,
-        replication: Optional[int] = None,
-        block_size: Optional[int] = None,
+        replication: int | None = None,
+        block_size: int | None = None,
         **_kwargs,
     ):  # ty:ignore[invalid-method-override]
         path = self._strip_protocol(path)

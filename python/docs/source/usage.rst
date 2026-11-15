@@ -257,3 +257,34 @@ Once enabled, you can use Tab to auto-complete HDFS paths:
     $ hdfsn cat /data/file<TAB>
     /data/file.txt
     /data/file.csv
+
+Durable checkpoints and lease recovery
+-------------------------------------
+
+Both synchronous and asynchronous writers expose an explicit ``hsync()`` method.
+It synchronizes written data and updates the visible length without closing the
+writer. Replicated files are supported; erasure-coded files are not. Persist an
+application recovery record only after ``hsync()`` succeeds. Python ``flush()``
+is not a substitute for this explicit durability operation.
+
+After process death, use ``Client.recover_lease(path)`` or
+``await AsyncClient.recover_lease(path)``. The result is ``True`` once the file is
+closed, or ``False`` while recovery proceeds. The caller must first acquire
+exclusive recovery authority: this operation fences the previous writer.
+
+After validating the source version and acquiring recovery ownership::
+
+    import time
+
+    deadline = time.monotonic() + 120
+    while not client.recover_lease(stage_path):
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Lease recovery has not completed")
+        time.sleep(0.25)
+
+    offset = client.get_file_info(stage_path).length
+    # Append the source suffix starting at this stable recovered offset.
+
+The asynchronous equivalent awaits ``recover_lease`` and uses ``asyncio.sleep``.
+Polling intervals, cancellation and RPC deadlines belong to the application.
+Independent paths can recover concurrently with an application-selected bound.

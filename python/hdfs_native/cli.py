@@ -8,9 +8,9 @@ import stat
 import sys
 from argparse import ArgumentParser, Namespace
 from collections import defaultdict
+from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
-from typing import Dict, Iterator, List, Optional, Sequence, Tuple, Union
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 from argcomplete import autocomplete
@@ -23,7 +23,7 @@ __all__ = ["main"]
 
 
 @functools.cache
-def _get_client(connection_url: Optional[str] = None):
+def _get_client(connection_url: str | None = None):
     return Client(connection_url)
 
 
@@ -55,10 +55,10 @@ def _client_for_url(url: str) -> Client:
         return _get_client()
 
 
-def _verify_nameservices_match(url: str, *urls: str) -> None:
-    first = urlparse(url)
+def _verify_nameservices_match(*urls: str) -> None:
+    first = urlparse(urls[0])
 
-    for url in urls:
+    for url in urls[1:]:
         parsed = urlparse(url)
         if first.scheme != parsed.scheme or first.hostname != parsed.hostname:
             raise ValueError(
@@ -70,7 +70,7 @@ def _path_for_url(url: str) -> str:
     return urlparse(url).path
 
 
-def _glob_path(client: Client, glob: str) -> List[str]:
+def _glob_path(client: Client, glob: str) -> list[str]:
     statuses = client.glob_status(glob)
     if len(statuses) == 0:
         raise FileNotFoundError(glob)
@@ -78,7 +78,7 @@ def _glob_path(client: Client, glob: str) -> List[str]:
     return [status.path for status in statuses]
 
 
-def _glob_status(client: Client, glob: str) -> List[FileStatus]:
+def _glob_status(client: Client, glob: str) -> list[FileStatus]:
     statuses = client.glob_status(glob)
     if len(statuses) == 0:
         raise FileNotFoundError(glob)
@@ -86,7 +86,7 @@ def _glob_status(client: Client, glob: str) -> List[FileStatus]:
     return statuses
 
 
-def _glob_local_path(glob_pattern: str) -> List[str]:
+def _glob_local_path(glob_pattern: str) -> list[str]:
     return glob.glob(glob_pattern)
 
 
@@ -100,10 +100,8 @@ def _download_file(
     if not force and os.path.exists(local_dst):
         raise FileExistsError(f"{local_dst} already exists, use --force to overwrite")
 
-    with client.read(remote_src) as remote_file:
-        with open(local_dst, "wb") as local_file:
-            for chunk in remote_file.read_range_stream(0, len(remote_file)):
-                local_file.write(chunk)
+    with client.read(remote_src) as remote_file, open(local_dst, "wb") as local_file:
+        local_file.writelines(remote_file.read_range_stream(0, len(remote_file)))
 
     if preserve:
         status = client.get_file_info(remote_src)
@@ -137,12 +135,14 @@ def _upload_file(
     else:
         write_destination = f"{remote_dst}.__COPYING__"
 
-    with open(local_src, "rb") as local_file:
-        with client.create(
+    with (
+        open(local_src, "rb") as local_file,
+        client.create(
             write_destination,
             WriteOptions(overwrite=force),
-        ) as remote_file:
-            shutil.copyfileobj(local_file, remote_file)
+        ) as remote_file,
+    ):
+        shutil.copyfileobj(local_file, remote_file)
 
     if preserve:
         st = os.stat(local_src)
@@ -242,7 +242,7 @@ def chown(args: Namespace):
 
 
 def du(args: Namespace):
-    parsed: List[Dict[str, str]] = []
+    parsed: list[dict[str, str]] = []
 
     if args.verbose:
         header = {
@@ -293,7 +293,7 @@ def du(args: Namespace):
     widths = _get_widths(parsed)
 
     def format(
-        file: Dict[str, str],
+        file: dict[str, str],
         field: str,
         right_align: bool = False,
     ):
@@ -321,7 +321,7 @@ def du(args: Namespace):
 
 
 def get(args: Namespace):
-    paths: List[Tuple[Client, str]] = []
+    paths: list[tuple[Client, str]] = []
 
     if len(args.src) > 1:
         srcs = args.src[:-1]
@@ -485,7 +485,7 @@ def getfacl(args: Namespace):
                     file_full_path = prefix + status.path
                     acl_status = client.get_acl_status(status.path)
                     _print_acl_status(acl_status, file_full_path)
-                    print("")
+                    print()
             else:
                 # For non-recursive, just get the path and its ACL
                 full_path = prefix + path
@@ -497,7 +497,7 @@ def _apply_setfacl_operation(
     client: Client,
     path: str,
     operation: str,
-    entries: Optional[List[AclEntry]],
+    entries: list[AclEntry] | None,
 ) -> None:
     """Apply the specified setfacl operation to a path"""
     if operation == "remove_all":
@@ -521,7 +521,7 @@ def _apply_setfacl_operation(
 
 
 def ls(args: Namespace):
-    def parse_status(status: FileStatus, prefix: str) -> Dict[str, Union[int, str]]:
+    def parse_status(status: FileStatus, prefix: str) -> dict[str, int | str]:
         file_time = status.modification_time
         if args.access_time:
             file_time = status.access_time
@@ -558,8 +558,8 @@ def ls(args: Namespace):
         }
 
     def print_files(
-        parsed: List[Dict[str, Union[int, str]]],
-        widths: Optional[Dict[str, int]] = None,
+        parsed: list[dict[str, int | str]],
+        widths: dict[str, int] | None = None,
     ):
         if args.sort_time:
             parsed = sorted(parsed, key=lambda x: x["time"], reverse=not args.reverse)
@@ -567,7 +567,7 @@ def ls(args: Namespace):
             parsed = sorted(parsed, key=lambda x: x["length"], reverse=not args.reverse)
 
         def format(
-            file: Dict[str, Union[int, str]],
+            file: dict[str, int | str],
             field: str,
             right_align: bool = False,
         ):
@@ -660,11 +660,10 @@ def mv(args: Namespace):
 
 
 def put(args: Namespace):
-    paths: List[str] = []
+    paths: list[str] = []
 
     for pattern in args.localsrc:
-        for path in _glob_local_path(pattern):
-            paths.append(path)
+        paths.extend(_glob_local_path(pattern))
 
     if len(paths) == 0:
         raise FileNotFoundError("No files matched patterns")
@@ -754,7 +753,7 @@ def rmdir(args: Namespace):
             client.delete(path)
 
 
-def _parse_acl_spec(acl_spec: str) -> List[AclEntry]:
+def _parse_acl_spec(acl_spec: str) -> list[AclEntry]:
     """
     Parse an ACL specification string into a list of AclEntry objects.
 
@@ -816,9 +815,9 @@ def _parse_acl_spec(acl_spec: str) -> List[AclEntry]:
 
         entries.append(
             AclEntry(
-                type=entry_type,  # type: ignore
+                type=entry_type,
                 scope=scope,
-                permissions=permissions,  # type: ignore
+                permissions=permissions,
                 name=name,
             )
         )
@@ -894,7 +893,7 @@ def touch(args: Namespace):
     for url in args.path:
         client = _client_for_url(url)
         path = _path_for_url(url)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         try:
             for status in _glob_status(client, _path_for_url(url)):
@@ -925,7 +924,7 @@ def touch(args: Namespace):
                 client.set_times(path, modification_time, access_time)
 
 
-def main(in_args: Optional[Sequence[str]] = None):
+def main(in_args: Sequence[str] | None = None):
     parser = ArgumentParser(
         description="""Command line utility for interacting with HDFS using hdfs-native."""
     )

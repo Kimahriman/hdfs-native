@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import os
 import subprocess
 
@@ -15,12 +16,12 @@ def minidfs():
         [
             "mvn",
             "-f",
-            "../rust/minidfs",
+            "../rust/hdfs-native/minidfs",
             "--quiet",
             "clean",
             "compile",
-            "exec:java",
-            "-Dexec.args=trash",
+            "exec:exec",
+            "-Dexec.args=-cp %classpath main.Main trash",
         ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -70,7 +71,7 @@ async def aio_benchmark(benchmark: BenchmarkFixture):
         return await func(*args, **kwargs)
 
     def _wrapper(func, *args, **kwargs):
-        assert asyncio.iscoroutinefunction(func)
+        assert inspect.iscoroutinefunction(func)
 
         @benchmark
         def _():

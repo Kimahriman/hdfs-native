@@ -36,7 +36,7 @@ def test_sync(client: Client):
     with client.create("/testfile") as file:
         data = io.BytesIO()
 
-        for i in range(0, 32 * 1024 * 1024):
+        for i in range(32 * 1024 * 1024):
             data.write(i.to_bytes(4, "big"))
 
         file.write(data.getbuffer())
@@ -44,7 +44,7 @@ def test_sync(client: Client):
     with client.read("/testfile") as file:
         data = io.BytesIO(file.read())
 
-    for i in range(0, 32 * 1024 * 1024):
+    for i in range(32 * 1024 * 1024):
         assert data.read(4) == i.to_bytes(4, "big")
 
     with client.append("/testfile") as file:
@@ -58,7 +58,7 @@ def test_sync(client: Client):
     with client.read("/testfile") as file:
         data = io.BytesIO(file.read())
 
-        for i in range(0, 33 * 1024 * 1024):
+        for i in range(33 * 1024 * 1024):
             assert data.read(4) == i.to_bytes(4, "big")
 
         data = io.BytesIO()
@@ -67,7 +67,7 @@ def test_sync(client: Client):
 
         data.seek(0)
 
-        for i in range(0, 33 * 1024 * 1024):
+        for i in range(33 * 1024 * 1024):
             assert data.read(4) == i.to_bytes(4, "big")
 
     with client.read("/testfile") as file:
@@ -198,7 +198,7 @@ async def test_async(async_client: AsyncClient):
     async with await async_client.create("/testfile") as file:
         data = io.BytesIO()
 
-        for i in range(0, 32 * 1024 * 1024):
+        for i in range(32 * 1024 * 1024):
             data.write(i.to_bytes(4, "big"))
 
         await file.write(data.getbuffer())
@@ -206,7 +206,7 @@ async def test_async(async_client: AsyncClient):
     async with await async_client.read("/testfile") as file:
         data = io.BytesIO(await file.read())
 
-    for i in range(0, 32 * 1024 * 1024):
+    for i in range(32 * 1024 * 1024):
         assert data.read(4) == i.to_bytes(4, "big")
 
     async with await async_client.append("/testfile") as file:
@@ -220,7 +220,7 @@ async def test_async(async_client: AsyncClient):
     async with await async_client.read("/testfile") as file:
         data = io.BytesIO(await file.read())
 
-        for i in range(0, 33 * 1024 * 1024):
+        for i in range(33 * 1024 * 1024):
             assert data.read(4) == i.to_bytes(4, "big")
 
         data = io.BytesIO()
@@ -229,7 +229,7 @@ async def test_async(async_client: AsyncClient):
 
         data.seek(0)
 
-        for i in range(0, 33 * 1024 * 1024):
+        for i in range(33 * 1024 * 1024):
             assert data.read(4) == i.to_bytes(4, "big")
 
     async with await async_client.read("/testfile") as file:
@@ -280,3 +280,45 @@ async def test_async(async_client: AsyncClient):
     assert content_summary.length == 33 * 1024 * 1024 * 4
 
     await async_client.delete("/testfile", False)
+
+
+def test_hsync_and_recover_lease(client: Client):
+    path = "/sync-checkpoint"
+    first = b"partial checksum chunk"
+    second = b" and more data"
+    with client.create(path) as writer:
+        writer.write(first)
+        writer.hsync()
+        assert client.get_file_info(path).length == len(first)
+        writer.write(second)
+        writer.hsync()
+        assert client.get_file_info(path).length == len(first + second)
+    assert client.recover_lease(path) is True
+    with client.append(path) as empty_append:
+        empty_append.hsync()
+    with client.read(path) as reader:
+        assert reader.read() == first + second
+    with pytest.raises(FileNotFoundError):
+        client.recover_lease("/missing-lease-target")
+
+
+@pytest.mark.asyncio
+async def test_async_hsync_and_recover_lease(async_client: AsyncClient):
+    path = "/async-checkpoint"
+    first = b"partial checksum chunk"
+    second = b" and more data"
+    async with await async_client.create(path) as writer:
+        await writer.write(first)
+        await writer.hsync()
+        assert (await async_client.get_file_info(path)).length == len(first)
+        await writer.write(second)
+        await writer.hsync()
+        assert (await async_client.get_file_info(path)).length == len(first + second)
+    assert await async_client.recover_lease(path) is True
+    async with await async_client.append(path) as empty_append:
+        await empty_append.hsync()
+    async with await async_client.read(path) as reader:
+        assert await reader.read() == first + second
+    with pytest.raises(FileNotFoundError):
+        await async_client.recover_lease("/missing-async-lease-target")
+    await async_client.delete(path, False)
