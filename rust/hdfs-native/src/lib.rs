@@ -45,7 +45,7 @@
 //! ```
 // The libhdfs crate is only used by benchmark targets; keep its optional
 // dependency visible to Cargo's unused-dependency lint when benchmarks are enabled.
-#[cfg(feature = "benchmark")]
+#[cfg(all(feature = "benchmark", unix))]
 use hdfs as _;
 
 pub mod acl;

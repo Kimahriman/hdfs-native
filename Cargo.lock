@@ -916,7 +916,6 @@ name = "hadoop-native"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
- "bitflags 2.13.2",
  "bumpalo",
  "bytes",
  "cbc",
@@ -925,7 +924,6 @@ dependencies = [
  "des",
  "hex",
  "hmac",
- "libc",
  "libloading 0.9.1",
  "log",
  "md-5",
