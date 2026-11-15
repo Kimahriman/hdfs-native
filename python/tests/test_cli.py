@@ -14,6 +14,7 @@ import pytest
 
 from hdfs_native import AclEntry, Client
 from hdfs_native.cli import main as cli_main
+from hdfs_native.error import RPCError
 
 
 def assert_not_exists(client: Client, path: str):
@@ -569,7 +570,7 @@ def test_rm(client: Client):
     client.create("/testdir/testfile").close()
     client.create("/testdir/testfile2").close()
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RPCError):
         cli_main(["rm", "-s", "/testdir"])
 
     cli_main(["rm", "-r", "-s", "/testdir"])
@@ -596,7 +597,7 @@ def test_rmdir(client: Client):
     client.mkdirs("/testdir")
     client.create("/testdir/testfile").close()
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RPCError):
         cli_main(["rmdir", "/testdir"])
 
     client.delete("/testdir/testfile")

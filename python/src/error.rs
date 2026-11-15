@@ -60,6 +60,7 @@ impl From<PythonHdfsError> for PyErr {
             RustHdfsError::GSSAPIError(_, _, _) => GSSAPIError::new_err(message),
             RustHdfsError::NoSASLMechanism => NoSASLMechanism::new_err(message),
             RustHdfsError::XmlParseError(_) => XmlParseError::new_err(message),
+            _ => HdfsError::new_err(message),
         }
     }
 }
