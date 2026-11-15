@@ -6,6 +6,7 @@ from typing import cast
 import fsspec
 import pytest
 
+from hdfs_native.error import RPCError
 from hdfs_native.fsspec import BaseFileSystem
 
 
@@ -16,13 +17,15 @@ def test_config(minidfs: str):
 
 
 class TestFsspecBase(ABC):
+    @classmethod
     @abstractmethod
-    def file_system(self, minidfs: str) -> BaseFileSystem:
+    def file_system(cls, minidfs: str) -> BaseFileSystem:
         pass
 
     @pytest.fixture(scope="class")
-    def fs(self, minidfs: str) -> BaseFileSystem:
-        return self.file_system(minidfs)
+    @classmethod
+    def fs(cls, minidfs: str) -> BaseFileSystem:
+        return cls.file_system(minidfs)
 
     def test_dirs(self, fs: BaseFileSystem):
         fs.mkdir("/testdir")
@@ -39,7 +42,7 @@ class TestFsspecBase(ABC):
         with pytest.raises(FileNotFoundError):
             fs.mkdir("/testdir/nested2/dir", create_parents=False)
 
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RPCError):
             fs.rm("/testdir", recursive=False)
 
         fs.rm("/testdir", recursive=True)
@@ -160,14 +163,16 @@ class TestFsspecBase(ABC):
 
 
 class TestBaseFileSystem(TestFsspecBase):
-    def file_system(self, minidfs: str):
+    @classmethod
+    def file_system(cls, minidfs: str):
         url = urllib.parse.urlparse(minidfs)
 
         return fsspec.filesystem("hdfs", host=url.hostname, port=url.port)
 
 
 class TestViewfsFileSystem(TestFsspecBase):
-    def file_system(self, minidfs: str):
+    @classmethod
+    def file_system(cls, minidfs: str):
         return fsspec.filesystem(
             "viewfs",
             host="test",

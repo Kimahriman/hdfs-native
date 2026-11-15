@@ -536,6 +536,7 @@ impl NameServiceProxy {
             "org.apache.hadoop.hdfs.protocol.AlreadyBeingCreatedException" => {
                 HdfsError::AlreadyExists(msg)
             }
+            "java.io.FileNotFoundException" => HdfsError::FileNotFound(msg),
             _ => HdfsError::RPCError(exception, msg),
         }
     }
