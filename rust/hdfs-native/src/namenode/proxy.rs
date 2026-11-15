@@ -353,9 +353,9 @@ impl NameServiceProxy {
     }
 
     async fn find_observer(&self) -> std::result::Result<Option<usize>, ProxyCallError> {
-        for i in 0..self.proxy_connections.len() {
+        for (i, connection) in self.proxy_connections.iter().enumerate() {
             let ha_state_msg = hdfs::HaServiceStateRequestProto::default();
-            let response = self.proxy_connections[i]
+            let response = connection
                 .call(
                     "getHAServiceState",
                     &ha_state_msg.encode_length_delimited_to_vec(),

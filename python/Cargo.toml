@@ -3,7 +3,6 @@ name = "hdfs-native-python"
 version = "0.15.0"
 edition = "2024"
 authors = ["Adam Binford <adamq43@gmail.com>"]
-homepage = "https://github.com/Kimahriman/hdfs-native"
 repository = "https://github.com/Kimahriman/hdfs-native"
 keywords = ["hadoop", "hdfs"]
 description = "Python bindings for native HDFS client implementation in Rust"
