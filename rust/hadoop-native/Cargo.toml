@@ -3,7 +3,6 @@ name = "hadoop-native"
 version = "0.1.0"
 edition = "2024"
 authors = ["Adam Binford <adamq43@gmail.com>"]
-homepage = "https://github.com/Kimahriman/hdfs-native"
 repository = "https://github.com/Kimahriman/hdfs-native"
 keywords = ["hadoop"]
 description = "Native Hadoop client foundations for Rust"
@@ -13,7 +12,7 @@ links = "hadoop_native"
 [dependencies]
 base64 = "0.23"
 bitflags = "2"
-bumpalo = "3.20.3"
+bumpalo = "3"
 bytes = { workspace = true }
 cbc = "0.2"
 chrono = "0.4"

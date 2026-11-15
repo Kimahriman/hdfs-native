@@ -43,6 +43,11 @@
 //!
 //! let client = ClientBuilder::new().with_url("hdfs://localhost:9000").build().unwrap();
 //! ```
+// The libhdfs crate is only used by benchmark targets; keep its optional
+// dependency visible to Cargo's unused-dependency lint when benchmarks are enabled.
+#[cfg(feature = "benchmark")]
+use hdfs as _;
+
 pub mod acl;
 pub mod client;
 pub(crate) mod config;
