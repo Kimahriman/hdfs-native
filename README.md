@@ -106,11 +106,14 @@ Reading and writing files in an HDFS encryption zone requires the `kms` Cargo fe
 # Pure-Rust TLS (rustls)
 hdfs-native = { version = "...", features = ["kms-rustls-tls"] }
 
+# rustls with the crypto provider selected by the final binary
+hdfs-native = { version = "...", features = ["kms-rustls-no-provider"] }
+
 # System TLS (OpenSSL / Secure Transport / SChannel)
 hdfs-native = { version = "...", features = ["kms-native-tls"] }
 ```
 
-The bare `kms` feature supports plaintext `http://` KMS endpoints only; use a TLS variant for `https://`. The KMS endpoint comes from `hadoop.security.key.provider.path`. The Python package enables `kms-rustls-tls` by default.
+The bare `kms` feature supports plaintext `http://` KMS endpoints only; use a TLS variant for `https://`. `kms-rustls-tls` enables reqwest's default rustls crypto provider. With `kms-rustls-no-provider`, the final binary must enable a rustls provider (such as `ring`) and install it as the default provider. The KMS endpoint comes from `hadoop.security.key.provider.path`. The Python package enables `kms-rustls-tls` by default.
 
 ## Supported HDFS Settings
 
