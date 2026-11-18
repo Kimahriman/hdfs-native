@@ -3247,6 +3247,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
+name = "yarn-native"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "hadoop-native",
+ "libc",
+ "log",
+ "prost",
+ "prost-build",
+ "protobuf-src",
+ "tempfile",
+ "tokio",
+ "which 8.0.6",
+]
+
+[[package]]
 name = "yoke"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

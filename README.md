@@ -149,12 +149,14 @@ All other settings are generally assumed to be the defaults currently. For insta
 cargo build
 ```
 
-The Rust implementation is split into two crates:
+The Rust implementation is split into three crates:
 
 - `rust/hadoop-native` contains reusable Hadoop configuration, common protobuf,
   authentication, and IPC/RPC functionality.
 - `rust/hdfs-native` contains the HDFS client, NameNode/DataNode protocols,
   glob handling, erasure coding, and filesystem APIs.
+- `rust/yarn-native` contains YARN configuration, ResourceManager RPC proxying,
+  and YARN protocol definitions.
 
 ## Object store implementation
 
@@ -166,6 +168,14 @@ The tests are mostly integration tests that utilize a small Java application in 
 
 ```bash
 cargo test -p hdfs-native --features integration-test
+```
+
+YARN integration tests use a separate Java `MiniYARNCluster` harness under
+`rust/yarn-native/miniyarn/`. They require Java and Maven, but do not need the
+Hadoop command-line binaries:
+
+```bash
+cargo test -p yarn-native --features integration-test --test miniyarn
 ```
 
 Add `kms-rustls-tls` to the feature list to also run the encryption-zone (KMS) tests: `--features integration-test,kms-rustls-tls`.

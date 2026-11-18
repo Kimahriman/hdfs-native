@@ -1,0 +1,29 @@
+[package]
+name = "yarn-native"
+version = "0.1.0"
+edition = "2024"
+authors = ["Adam Binford <adamq43@gmail.com>"]
+repository = "https://github.com/Kimahriman/hdfs-native"
+keywords = ["hadoop", "yarn"]
+description = "Native YARN client foundations for Rust"
+license = "Apache-2.0"
+
+[dependencies]
+bytes = { workspace = true }
+hadoop-native = { version = "0.1.0", path = "../hadoop-native" }
+log = { workspace = true }
+prost = "0.14"
+tempfile = { version = "3", optional = true }
+tokio = { workspace = true, features = ["rt", "net", "io-util", "sync", "time"] }
+which = { version = "8", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }
+
+[build-dependencies]
+prost-build = { version = "0.14", optional = true }
+protobuf-src = { version = "2", optional = true }
+
+[features]
+generate-protobuf = ["prost-build", "protobuf-src", "hadoop-native/generate-protobuf"]
+integration-test = ["dep:libc", "dep:tempfile", "dep:which"]

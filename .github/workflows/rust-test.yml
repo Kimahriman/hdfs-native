@@ -41,7 +41,7 @@ jobs:
           python-version: "3.11"
 
       - name: build and lint with clippy (kms)
-        run: cargo clippy --all-targets --features integration-test,benchmark,kms-rustls-tls -- -D warnings
+        run: cargo clippy --workspace --all-targets --features hdfs-native/integration-test,hdfs-native/benchmark,hdfs-native/kms-rustls-tls,yarn-native/integration-test -- -D warnings
 
       - name: Check docs
         run: cargo doc
@@ -50,13 +50,16 @@ jobs:
         run: cargo check --tests
 
       - name: Check all features
-        run: cargo check --all-targets --features integration-test,benchmark,kms-rustls-tls
+        run: cargo check --workspace --all-targets --features hdfs-native/integration-test,hdfs-native/benchmark,hdfs-native/kms-rustls-tls,yarn-native/integration-test
 
       - name: Run unit tests
         run: cargo test -p hdfs-native --lib
 
       - name: Run unit tests (kms)
         run: cargo test -p hdfs-native --lib --features kms-rustls-tls
+
+      - name: Run YARN unit tests
+        run: cargo test -p yarn-native --lib
 
   test-integration:
     strategy:
@@ -101,4 +104,7 @@ jobs:
         run: cargo test --features integration-test,kms-rustls-tls --lib
 
       - name: Run integration tests
-        run: cargo test --features integration-test,kms-rustls-tls --test '*' -- --test-threads=1
+        run: cargo test -p hdfs-native --features integration-test,kms-rustls-tls --test '*' -- --test-threads=1
+
+      - name: Run YARN integration tests
+        run: cargo test -p yarn-native --features integration-test --test miniyarn -- --test-threads=1
