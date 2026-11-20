@@ -26,6 +26,8 @@ pub enum HdfsError {
     OperationFailed(String),
     #[error("file not found: {0}")]
     FileNotFound(String),
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
     #[error("blocks not found for {0}")]
     BlocksNotFound(String),
     #[error("path is a directory: {0}")]

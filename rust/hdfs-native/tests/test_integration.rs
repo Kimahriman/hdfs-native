@@ -6,8 +6,8 @@ mod test {
     use crate::common::{EnvVarGuard, TEST_FILE_INTS, assert_bufs_equal};
     use bytes::{BufMut, Bytes, BytesMut};
     use hdfs_native::{
-        Client, Result, WriteOptions,
-        acl::AclEntry,
+        Client, HdfsError, Result, WriteOptions,
+        acl::{AclEntry, FsAction},
         client::{ClientBuilder, FileStatus},
         minidfs::{DfsFeatures, MiniDfs},
         sync::ClientBuilder as SyncClientBuilder,
@@ -328,6 +328,7 @@ mod test {
         test_set_replication(&client).await?;
         test_get_content_summary(&client).await?;
         test_acls(&client).await?;
+        test_permission_checks(&client, features.contains(&DfsFeatures::Token)).await?;
 
         if features.contains(&DfsFeatures::HA) {
             test_observer_read(&client).await?;
@@ -793,6 +794,83 @@ mod test {
         client.delete("/testdir", true).await?;
 
         Ok(())
+    }
+
+    async fn test_permission_checks(client: &Client, token_auth: bool) -> Result<()> {
+        client.mkdirs("/perm", 0o755, false).await?;
+        client
+            .create("/perm/file", WriteOptions::default().permission(0o644))
+            .await?
+            .close()
+            .await?;
+
+        client
+            .check_access("/perm/file", FsAction::ReadWrite)
+            .await?;
+        assert!(matches!(
+            client.check_access("/perm/missing", FsAction::Read).await,
+            Err(HdfsError::FileNotFound(_))
+        ));
+
+        // The test user is the superuser and is never denied, so a denial is checked as
+        // another user:
+        // - Simple authentication: the client names the user.
+        // - Kerberos: the client impersonates the user.
+        // - Delegation token: skipped, since a token only authenticates the user it was
+        //   issued to.
+        if !token_auth {
+            let other = ClientBuilder::new()
+                .with_user("check-access-user")
+                .build()?;
+
+            // No write access to the directory
+            assert_denied(other.mkdirs("/perm/dir", 0o755, false).await);
+            assert_denied(other.create("/perm/new", WriteOptions::default()).await);
+            assert_denied(other.rename("/perm/file", "/perm/moved", false).await);
+            assert_denied(other.delete("/perm/file", false).await);
+            assert_denied(other.check_access("/perm", FsAction::Write).await);
+
+            // No write access to the file
+            assert_denied(other.append("/perm/file").await);
+            assert_denied(other.check_access("/perm/file", FsAction::Write).await);
+
+            // Read access to the file
+            other.read("/perm/file").await?;
+            other.check_access("/perm/file", FsAction::Read).await?;
+
+            // Granting write access allows what was denied
+            client.set_permission("/perm", 0o777).await?;
+            client.set_permission("/perm/file", 0o666).await?;
+
+            other.append("/perm/file").await?.close().await?;
+            other.check_access("/perm/file", FsAction::Write).await?;
+
+            other.mkdirs("/perm/dir", 0o755, false).await?;
+            other
+                .create("/perm/new", WriteOptions::default())
+                .await?
+                .close()
+                .await?;
+            other.rename("/perm/file", "/perm/moved", false).await?;
+            assert!(other.delete("/perm/moved", false).await?);
+            other.check_access("/perm", FsAction::Write).await?;
+
+            // Only the owner can change permissions, even with full access to the directory
+            assert_denied(other.set_permission("/perm", 0o700).await);
+        }
+
+        client.delete("/perm", true).await?;
+
+        Ok(())
+    }
+
+    #[track_caller]
+    fn assert_denied<T>(result: Result<T>) {
+        match result {
+            Err(HdfsError::PermissionDenied(_)) => {}
+            Err(e) => panic!("expected PermissionDenied, got {e:?}"),
+            Ok(_) => panic!("expected PermissionDenied, got Ok"),
+        }
     }
 
     async fn test_observer_read(client: &Client) -> Result<()> {

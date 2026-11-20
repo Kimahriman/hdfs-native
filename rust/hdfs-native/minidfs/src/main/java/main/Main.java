@@ -69,6 +69,10 @@ public class Main {
 
             conf.set(HADOOP_SECURITY_AUTHENTICATION, "kerberos");
             conf.set(HADOOP_SECURITY_AUTHORIZATION, "true");
+            // The tests authenticate as hdfs/localhost, which is the superuser. Let it
+            // impersonate other users, so tests can also run as a regular user.
+            conf.set("hadoop.proxyuser.hdfs.users", "*");
+            conf.set("hadoop.proxyuser.hdfs.hosts", "*");
             if (flags.contains("privacy")) {
                 conf.set(HADOOP_RPC_PROTECTION, "privacy");
                 conf.set(DFS_DATA_TRANSFER_PROTECTION_KEY, "privacy");

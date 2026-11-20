@@ -21,6 +21,7 @@ Here is a list of currently supported and unsupported but possible future featur
 - [x] Delete
 - [x] Basic Permissions and ownership
 - [x] ACLs
+- [x] Access checks
 - [x] Content summary
 - [x] Set replication
 - [x] Set timestamps

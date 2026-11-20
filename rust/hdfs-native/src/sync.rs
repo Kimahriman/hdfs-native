@@ -13,7 +13,7 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use tokio::runtime::Runtime;
 
-use crate::acl::{AclEntry, AclStatus};
+use crate::acl::{AclEntry, AclStatus, FsAction};
 use crate::client::{self, ContentSummary, FileStatus, WriteOptions};
 use crate::file::{FileReader as AsyncFileReader, FileWriter as AsyncFileWriter};
 use crate::{Result, client::IORuntime};
@@ -225,6 +225,11 @@ impl Client {
     /// Get ACL status for the file or directory at `path`.
     pub fn get_acl_status(&self, path: &str) -> Result<AclStatus> {
         self.block_on(self.inner.get_acl_status(path))
+    }
+
+    /// Check that the client's user is allowed to access `path` with every permission in `mode`.
+    pub fn check_access(&self, path: &str, mode: FsAction) -> Result<()> {
+        self.block_on(self.inner.check_access(path, mode))
     }
 
     /// Get all file statuses matching the glob `pattern`.

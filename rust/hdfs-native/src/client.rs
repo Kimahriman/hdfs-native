@@ -7,7 +7,7 @@ use futures::{StreamExt, stream};
 use tokio::runtime::{Handle, Runtime};
 use url::Url;
 
-use crate::acl::{AclEntry, AclStatus};
+use crate::acl::{AclEntry, AclStatus, FsAction};
 use crate::config::{self, Configuration};
 use crate::ec::resolve_ec_policy;
 use crate::encryption::codec::FileCryptoCodec;
@@ -1198,6 +1198,18 @@ impl Client {
             .await?
             .result
             .into())
+    }
+
+    /// Check that the client's user is allowed to access `path` with every permission in `mode`.
+    ///
+    /// Returns [`HdfsError::PermissionDenied`] if access is denied and
+    /// [`HdfsError::FileNotFound`] if `path` doesn't exist. Permissions can change after the
+    /// check, so later operations on `path` can still be denied.
+    pub async fn check_access(&self, path: &str, mode: FsAction) -> Result<()> {
+        let (link, resolved_path) = self.mount_table.resolve(path);
+        link.protocol.check_access(&resolved_path, mode).await?;
+
+        Ok(())
     }
 
     /// Get all file statuses matching the glob `pattern`. Supports Hadoop-style globbing

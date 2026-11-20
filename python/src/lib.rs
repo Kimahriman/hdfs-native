@@ -16,7 +16,7 @@ use ::hdfs_native::{
 use bytes::Bytes;
 use futures::StreamExt;
 use futures::stream::BoxStream;
-use hdfs_native::acl::{AclEntry, AclStatus};
+use hdfs_native::acl::{AclEntry, AclStatus, FsAction};
 use hdfs_native::client::{ClientBuilder, ContentSummary};
 use pyo3::exceptions::PyStopAsyncIteration;
 use pyo3::prelude::*;
@@ -586,6 +586,11 @@ impl RawClient {
     pub fn get_acl_status(&self, path: &str, py: Python) -> PyHdfsResult<PyAclStatus> {
         Ok(py.detach(|| self.inner.get_acl_status(path))?.into())
     }
+
+    pub fn check_access(&self, path: &str, mode: &str, py: Python) -> PyHdfsResult<()> {
+        let mode = FsAction::from(mode);
+        Ok(py.detach(|| self.inner.check_access(path, mode))?)
+    }
 }
 
 #[pyclass(name = "FileStatusIter")]
@@ -899,6 +904,11 @@ impl AsyncRawClient {
 
     pub async fn get_acl_status(&self, path: String) -> PyHdfsResult<PyAclStatus> {
         Ok(self.inner.get_acl_status(&path).await?.into())
+    }
+
+    pub async fn check_access(&self, path: String, mode: String) -> PyHdfsResult<()> {
+        let mode = FsAction::from(mode);
+        Ok(self.inner.check_access(&path, mode).await?)
     }
 }
 
