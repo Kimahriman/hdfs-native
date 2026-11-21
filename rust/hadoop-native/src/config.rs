@@ -13,6 +13,8 @@ const IPC_CLIENT_CONNECT_TIMEOUT: &str = "ipc.client.connect.timeout";
 const DEFAULT_IPC_CLIENT_CONNECT_TIMEOUT_MILLIS: u64 = 20_000;
 const IPC_CLIENT_RPC_TIMEOUT: &str = "ipc.client.rpc-timeout.ms";
 const DEFAULT_IPC_CLIENT_RPC_TIMEOUT_MILLIS: u64 = 120_000;
+const IPC_CLIENT_FALLBACK_TO_SIMPLE_AUTH_ALLOWED: &str =
+    "ipc.client.fallback-to-simple-auth-allowed";
 
 /// Hadoop configuration loaded from XML files and explicit overrides.
 #[derive(Debug, Clone)]
@@ -78,6 +80,12 @@ impl Configuration {
     pub fn security_enabled(&self) -> bool {
         self.get(HADOOP_SECURITY_AUTHENTICATION)
             .is_some_and(|value| value != "simple")
+    }
+
+    /// Whether a client with security enabled may use simple authentication when a server
+    /// asks it to.
+    pub(crate) fn ipc_client_fallback_to_simple_auth_allowed(&self) -> bool {
+        self.get_boolean(IPC_CLIENT_FALLBACK_TO_SIMPLE_AUTH_ALLOWED, false)
     }
 
     pub(crate) fn ipc_client_connect_timeout(&self) -> Option<Duration> {

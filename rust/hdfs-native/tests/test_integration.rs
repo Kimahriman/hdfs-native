@@ -27,6 +27,30 @@ mod test {
 
     #[tokio::test]
     #[serial]
+    async fn test_security_enabled_client_does_not_fall_back_to_simple_auth() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let _dfs = MiniDfs::with_features(&HashSet::new());
+        let secure_client = |fallback_allowed: bool| {
+            ClientBuilder::new()
+                .with_config([
+                    ("hadoop.security.authentication", "kerberos".to_string()),
+                    (
+                        "ipc.client.fallback-to-simple-auth-allowed",
+                        fallback_allowed.to_string(),
+                    ),
+                ])
+                .build()
+                .unwrap()
+        };
+
+        let result = secure_client(false).get_file_info("/").await;
+        assert!(matches!(result, Err(HdfsError::SASLError(_))), "{result:?}");
+
+        secure_client(true).get_file_info("/").await.unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn test_security_kerberos() {
         test_with_features(&HashSet::from([DfsFeatures::Security]))
             .await
