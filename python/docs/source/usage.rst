@@ -143,6 +143,12 @@ File Metadata
     for entry in acl.entries:
         print(entry)
 
+    # Check whether the current user can read and write the file
+    try:
+        client.check_access("/path/to/file.txt", "rw-")
+    except PermissionError:
+        print("Access denied")
+
 Async Operations
 ~~~~~~~~~~~~~~~~
 
