@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from ._internal import (
         AsyncRawFileReader,
         AsyncRawFileWriter,
+        FsAction,
         RawFileReader,
         RawFileWriter,
     )
@@ -303,6 +304,14 @@ class Client:
         """
         return self.inner.get_acl_status(path)
 
+    def check_access(self, path: str, mode: "FsAction") -> None:
+        """
+        Check that the client's user is allowed to access `path` with every permission in
+        `mode`, such as "r--" or "rw-". Raises `PermissionError` if access is denied and
+        `FileNotFoundError` if `path` doesn't exist.
+        """
+        return self.inner.check_access(path, mode)
+
 
 class AsyncFileReader:
     def __init__(self, inner: "AsyncRawFileReader"):
@@ -572,3 +581,11 @@ class AsyncClient:
         Get the ACL status for the file or directory at `path`.
         """
         return await self.inner.get_acl_status(path)
+
+    async def check_access(self, path: str, mode: "FsAction") -> None:
+        """
+        Check that the client's user is allowed to access `path` with every permission in
+        `mode`, such as "r--" or "rw-". Raises `PermissionError` if access is denied and
+        `FileNotFoundError` if `path` doesn't exist.
+        """
+        return await self.inner.check_access(path, mode)

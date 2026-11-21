@@ -10,10 +10,11 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::Result;
-use crate::acl::AclEntry;
+use crate::acl::{AclEntry, FsAction};
 use crate::namenode::proxy::NameServiceProxy;
 use crate::proto::hdfs::{
     self, DataEncryptionKeyProto, FsServerDefaultsProto, GetDataEncryptionKeyResponseProto,
+    acl_entry_proto::FsActionProto,
 };
 
 const LEASE_RENEWAL_INTERVAL_SECS: u64 = 30;
@@ -488,6 +489,18 @@ impl NamenodeProtocol {
             src: path.to_string(),
         };
         self.call("getAclStatus", message, false).await
+    }
+
+    pub(crate) async fn check_access(
+        &self,
+        path: &str,
+        mode: FsAction,
+    ) -> Result<hdfs::CheckAccessResponseProto> {
+        let message = hdfs::CheckAccessRequestProto {
+            path: path.to_string(),
+            mode: FsActionProto::from(mode) as i32,
+        };
+        self.call("checkAccess", message, false).await
     }
 
     pub(crate) async fn get_additional_datanode(

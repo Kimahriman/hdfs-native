@@ -70,8 +70,16 @@ impl ProxyCallError {
         }
     }
 
+    /// Converts this into the error that [`NameServiceProxy::call`] returns.
+    ///
+    /// Only an exception the NameNode raised for the request is mapped to a dedicated variant,
+    /// such as [`HdfsError::PermissionDenied`]. Connection and authentication errors are
+    /// returned unchanged.
     fn into_error(self) -> HdfsError {
         match self {
+            Self::AfterRequest(HdfsError::RPCError(exception, msg)) => {
+                NameServiceProxy::convert_rpc_error(exception, msg)
+            }
             Self::BeforeRequest(error) | Self::AfterRequest(error) => error,
         }
     }
@@ -487,12 +495,7 @@ impl NameServiceProxy {
                         HdfsError::RPCError(exception, _) if !Self::is_retriable(exception)
                     ) =>
                 {
-                    match e.into_error() {
-                        HdfsError::RPCError(exception, msg) => {
-                            return Err(Self::convert_rpc_error(exception, msg));
-                        }
-                        _ => unreachable!(),
-                    }
+                    return Err(e.into_error());
                 }
                 // A write may already have been committed when the response is lost. Only a
                 // standby-style response proves that the request was not handled by this node.
@@ -537,6 +540,7 @@ impl NameServiceProxy {
                 HdfsError::AlreadyExists(msg)
             }
             "java.io.FileNotFoundException" => HdfsError::FileNotFound(msg),
+            ACCESS_CONTROL_EXCEPTION => HdfsError::PermissionDenied(msg),
             _ => HdfsError::RPCError(exception, msg),
         }
     }
@@ -571,6 +575,10 @@ mod tests {
                 ACCESS_CONTROL_EXCEPTION.to_string(),
                 "Access denied".to_string(),
             ),
+            HdfsError::RPCError(
+                ACCESS_CONTROL_EXCEPTION.to_string(),
+                "Permission denied".to_string(),
+            ),
             HdfsError::FatalRPCError(
                 INVALID_TOKEN_EXCEPTION.to_string(),
                 "Invalid token".to_string(),
@@ -582,6 +590,25 @@ mod tests {
                 .iter()
                 .all(NameServiceProxy::is_authentication_error)
         );
+    }
+
+    #[test]
+    fn test_only_a_denied_request_is_permission_denied() {
+        let access_control_error = || {
+            HdfsError::RPCError(
+                ACCESS_CONTROL_EXCEPTION.to_string(),
+                "Permission denied".to_string(),
+            )
+        };
+
+        let denied = ProxyCallError::after_request(access_control_error());
+        assert!(matches!(
+            denied.into_error(),
+            HdfsError::PermissionDenied(_)
+        ));
+
+        let rejected = ProxyCallError::before_request(access_control_error());
+        assert!(matches!(rejected.into_error(), HdfsError::RPCError(..)));
     }
 
     #[test]

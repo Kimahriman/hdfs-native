@@ -166,6 +166,44 @@ def test_acls(client: Client):
     assert len(acl_status.entries) == 0
 
 
+def test_check_access(client: Client, minidfs: str, monkeypatch: pytest.MonkeyPatch):
+    client.create("/test", WriteOptions(permission=0o644)).close()
+
+    client.check_access("/test", "rw-")
+    with pytest.raises(FileNotFoundError):
+        client.check_access("/missing", "r--")
+
+    monkeypatch.setenv("HADOOP_USER_NAME", "check-access-user")
+    other = Client(minidfs)
+
+    other.check_access("/test", "r--")
+    with pytest.raises(PermissionError):
+        other.check_access("/test", "rw-")
+    with pytest.raises(PermissionError):
+        other.mkdirs("/check-access-denied")
+
+
+@pytest.mark.asyncio
+async def test_async_check_access(
+    client: Client,
+    async_client: AsyncClient,
+    minidfs: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client.create("/test", WriteOptions(permission=0o644)).close()
+
+    await async_client.check_access("/test", "rw-")
+    with pytest.raises(FileNotFoundError):
+        await async_client.check_access("/missing", "r--")
+
+    monkeypatch.setenv("HADOOP_USER_NAME", "check-access-user")
+    other = AsyncClient(minidfs)
+
+    await other.check_access("/test", "r--")
+    with pytest.raises(PermissionError):
+        await other.check_access("/test", "rw-")
+
+
 @pytest.mark.asyncio
 async def test_async(async_client: AsyncClient):
     await (await async_client.create("/testfile")).close()
