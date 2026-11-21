@@ -246,7 +246,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "maturin", specifier = ">=1.10.2" },
+    { name = "maturin", specifier = ">=1.14" },
     { name = "pytest", specifier = "~=9.0" },
     { name = "pytest-asyncio", specifier = "~=1.3" },
     { name = "pytest-benchmark", specifier = "~=5.2" },
