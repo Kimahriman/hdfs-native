@@ -191,15 +191,37 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
             stream.write_all(&(0i8).to_be_bytes()).await?;
         }
 
-        let (user_info, reader, writer) = negotiate_sasl_session(
+        let negotiation = negotiate_sasl_session(
             stream,
             options.token_kind,
             options.token_service,
             config,
             options.effective_user,
             options.auth,
-        )
-        .await?;
+        );
+
+        let rpc_timeout = config.ipc_client_rpc_timeout();
+
+        // Apply the RPC timeout to the SASL negotiation, so connecting fails if the server stops
+        // responding
+        let (user_info, reader, writer) = match rpc_timeout {
+            Some(timeout) => {
+                let timed_negotiation = {
+                    let _runtime = handle.enter();
+                    tokio::time::timeout(timeout, negotiation)
+                };
+                timed_negotiation.await.map_err(|_| {
+                    HadoopError::IOError(std::io::Error::new(
+                        ErrorKind::TimedOut,
+                        format!(
+                            "Timed out negotiating the connection to {url} after {}ms",
+                            timeout.as_millis()
+                        ),
+                    ))
+                })??
+            }
+            None => negotiation.await?,
+        };
         let (sender, receiver) = mpsc::channel::<Vec<u8>>(1000);
 
         let mut conn = RpcConnection {
@@ -209,7 +231,7 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
             next_call_id,
             alignment_context,
             call_map,
-            rpc_timeout: config.ipc_client_rpc_timeout(),
+            rpc_timeout,
             handle: handle.clone(),
             listener: None,
             sender,
@@ -506,12 +528,30 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpListener;
     use tokio::sync::mpsc;
 
     use tokio::sync::oneshot;
 
-    use super::{PendingRpcCall, RpcConnection, connect_with_timeout};
+    use super::{PendingRpcCall, RpcConnection, RpcConnectionOptions, connect_with_timeout};
+    use crate::config::Configuration;
     use crate::security::user::UserInfo;
+
+    /// Starts a server that accepts connections and reads from them, but never responds.
+    async fn silent_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    while socket.read(&mut buf).await.is_ok_and(|read| read > 0) {}
+                });
+            }
+        });
+        addr
+    }
 
     #[test]
     fn connection_context_contains_protocol_and_user() {
@@ -591,5 +631,56 @@ mod tests {
             matches!(error, crate::HadoopError::IOError(ref e) if e.kind() == ErrorKind::TimedOut)
         );
         assert!(call_map.lock().unwrap().as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn negotiation_times_out_when_server_does_not_respond() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let config = Configuration::new(
+            None,
+            Some(HashMap::from([
+                (
+                    "hadoop.security.authentication".to_owned(),
+                    "kerberos".to_owned(),
+                ),
+                ("ipc.client.rpc-timeout.ms".to_owned(), "50".to_owned()),
+            ])),
+        )
+        .unwrap();
+
+        let options = RpcConnectionOptions {
+            protocol: "org.apache.hadoop.example.Protocol",
+            token_kind: "EXAMPLE_TOKEN",
+            token_service: "example",
+            effective_user: None,
+            auth: None,
+        };
+
+        let error = runtime
+            .block_on(async {
+                let url = silent_server().await;
+                let connect =
+                    RpcConnection::<()>::connect(&url, options, None, &config, runtime.handle());
+                tokio::time::timeout(Duration::from_secs(10), connect)
+                    .await
+                    .expect("the negotiation should time out on its own")
+            })
+            .err()
+            .unwrap();
+
+        assert!(
+            matches!(error, crate::HadoopError::IOError(ref e) if e.kind() == ErrorKind::TimedOut),
+            "{error:?}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("Timed out negotiating the connection to 127.0.0.1:"),
+            "{error}"
+        );
     }
 }
