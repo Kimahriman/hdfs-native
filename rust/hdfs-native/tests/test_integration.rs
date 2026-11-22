@@ -331,22 +331,22 @@ mod test {
         file.write_bytes(test_file.freeze()).await?;
         file.close().await?;
 
-        test_file_info(&client).await?;
-        test_listing(&client).await?;
-        test_rename(&client).await?;
-        test_dirs(&client).await?;
-        test_read_write(&client).await?;
-        test_relative_paths(&client, false).await?;
+        test_file_info(client).await?;
+        test_listing(client).await?;
+        test_rename(client).await?;
+        test_dirs(client).await?;
+        test_read_write(client).await?;
+        test_relative_paths(client, false).await?;
         // We use writing to create files, so do this after
-        test_recursive_listing(&client).await?;
-        test_glob(&client).await?;
-        test_set_times(&client).await?;
-        test_set_owner(&client).await?;
-        test_set_permission(&client).await?;
-        test_set_replication(&client).await?;
-        test_get_content_summary(&client).await?;
-        test_acls(&client).await?;
-        test_permission_checks(&client, false).await?;
+        test_recursive_listing(client).await?;
+        test_glob(client).await?;
+        test_set_times(client).await?;
+        test_set_owner(client).await?;
+        test_set_permission(client).await?;
+        test_set_replication(client).await?;
+        test_get_content_summary(client).await?;
+        test_acls(client).await?;
+        test_permission_checks(client, false).await?;
 
         Ok(())
     }
