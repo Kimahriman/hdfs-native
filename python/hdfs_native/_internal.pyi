@@ -140,7 +140,6 @@ class AclEntry:
             permissions: Permissions for this entry.
             name: Optional user or group name.
         """
-        ...
 
 class AclStatus:
     """ACL owner, permissions, and entries for an HDFS path.
@@ -193,7 +192,6 @@ class WriteOptions:
             overwrite: Whether to replace an existing file.
             create_parent: Whether to create missing parent directories.
         """
-        ...
 
 class RawFileReader:
     def file_length(self) -> int:
