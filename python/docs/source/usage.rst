@@ -143,6 +143,12 @@ File Metadata
     for entry in acl.entries:
         print(entry)
 
+    # Check whether the current user can read and write the file
+    try:
+        client.check_access("/path/to/file.txt", "rw-")
+    except PermissionError:
+        print("Access denied")
+
 Async Operations
 ~~~~~~~~~~~~~~~~
 
@@ -259,7 +265,7 @@ Once enabled, you can use Tab to auto-complete HDFS paths:
     /data/file.csv
 
 Durable checkpoints and lease recovery
--------------------------------------
+--------------------------------------
 
 Both synchronous and asynchronous writers expose an explicit ``hsync()`` method.
 It synchronizes written data and updates the visible length without closing the

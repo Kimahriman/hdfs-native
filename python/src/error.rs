@@ -38,6 +38,7 @@ impl From<PythonHdfsError> for PyErr {
             RustHdfsError::IOError(err) => PyIOError::new_err(err),
             RustHdfsError::AlreadyExists(path) => PyFileExistsError::new_err(path),
             RustHdfsError::FileNotFound(path) => PyFileNotFoundError::new_err(path),
+            RustHdfsError::PermissionDenied(msg) => PyPermissionError::new_err(msg),
             RustHdfsError::IsADirectoryError(path) => PyIsADirectoryError::new_err(path),
             RustHdfsError::UnsupportedFeature(feat) => PyNotImplementedError::new_err(feat),
             RustHdfsError::DataTransferError(_) => DataTransferError::new_err(message),

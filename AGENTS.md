@@ -21,6 +21,7 @@ This project provides native Hadoop, HDFS, and YARN clients for Rust and Python.
 - Run a single Rust test with `cargo test -p <crate> <testname>`.
 - Run HDFS integration tests with `cargo test -p hdfs-native --features integration-test`. This requires Java and Maven to be installed.
 - Run YARN integration tests with `cargo test -p yarn-native --features integration-test --test miniyarn`. This starts a local `MiniYARNCluster` and requires Java and Maven; Hadoop command-line binaries are not needed.
+- On macOS with Homebrew Kerberos, export `DYLD_LIBRARY_PATH="$(brew --prefix krb5)/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"` before running integration tests. Homebrew's GSSAPI supports the credential stores exercised by the explicit keytab/cache tests.
 
 #### Rust benchmarks
 - Run the I/O benchmarks from the repository root. They start a MiniDFS cluster, so Java, Maven, and Hadoop's `hadoop` command must be available.
@@ -36,6 +37,10 @@ This project provides native Hadoop, HDFS, and YARN clients for Rust and Python.
 - Use the Python venv at `python/.venv` for building and running tests.
 - Build Python wheels with `maturin build` (see `python/README.md` for details). Include `-E devel` to install development tools.
 - Run Python tests with `pytest` in the `python/` directory.
+- Install Sphinx dependencies with `uv sync --group dev --group docs`, then build HTML docs with `python/.venv/bin/sphinx-build -b html python/docs/source python/docs/build/html`.
+- Write public Python function and method docstrings in Google style. Include
+  `Args`, `Returns`, and `Raises` sections when applicable. Sphinx Napoleon is
+  enabled in `python/docs/source/conf.py` to parse Google-style docstrings.
 
 ## Agents and Automation
 

@@ -925,6 +925,14 @@ def touch(args: Namespace):
 
 
 def main(in_args: Sequence[str] | None = None):
+    """Run the HDFS command-line interface.
+
+    Args:
+        in_args: Command-line arguments to parse. If omitted, parse the process arguments.
+
+    Raises:
+        SystemExit: If argument parsing exits, such as after displaying help or an error.
+    """
     parser = ArgumentParser(
         description="""Command line utility for interacting with HDFS using hdfs-native."""
     )

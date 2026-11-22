@@ -21,6 +21,7 @@ Here is a list of currently supported and unsupported but possible future featur
 - [x] Delete
 - [x] Basic Permissions and ownership
 - [x] ACLs
+- [x] Access checks
 - [x] Content summary
 - [x] Set replication
 - [x] Set timestamps
@@ -106,11 +107,14 @@ Reading and writing files in an HDFS encryption zone requires the `kms` Cargo fe
 # Pure-Rust TLS (rustls)
 hdfs-native = { version = "...", features = ["kms-rustls-tls"] }
 
+# rustls with the crypto provider selected by the final binary
+hdfs-native = { version = "...", features = ["kms-rustls-no-provider"] }
+
 # System TLS (OpenSSL / Secure Transport / SChannel)
 hdfs-native = { version = "...", features = ["kms-native-tls"] }
 ```
 
-The bare `kms` feature supports plaintext `http://` KMS endpoints only; use a TLS variant for `https://`. The KMS endpoint comes from `hadoop.security.key.provider.path`. The Python package enables `kms-rustls-tls` by default.
+The bare `kms` feature supports plaintext `http://` KMS endpoints only; use a TLS variant for `https://`. `kms-rustls-tls` enables reqwest's default rustls crypto provider. With `kms-rustls-no-provider`, the final binary must enable a rustls provider (such as `ring`) and install it as the default provider. The KMS endpoint comes from `hadoop.security.key.provider.path`. The Python package enables `kms-rustls-tls` by default.
 
 ## Supported HDFS Settings
 
@@ -131,7 +135,8 @@ The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xm
 - `dfs.client.use.datanode.hostname` - Use DataNode hostnames instead of IP addresses for DataNode connections
 - `dfs.client.socket-timeout` - Milliseconds a DataNode connection can go without receiving data before a read fails over to the next replica. Defaults to 60000; 0 disables it
 - `ipc.client.connect.timeout` - Milliseconds to wait for a NameNode RPC connection before failing over. Defaults to 20000; 0 disables it
-- `ipc.client.rpc-timeout.ms` - Milliseconds to wait for a NameNode RPC response. Defaults to 120000; 0 disables the response timeout
+- `ipc.client.rpc-timeout.ms` - Milliseconds to wait for a NameNode RPC response. Also limits how long authenticating a new NameNode connection can take. Defaults to 120000; 0 disables the timeout
+- `ipc.client.fallback-to-simple-auth-allowed` - Lets a client with security enabled connect to a NameNode that only uses SIMPLE authentication. Defaults to false
 - `dfs.client.block.write.replace-datanode-on-failure.enable`
 - `dfs.client.block.write.replace-datanode-on-failure.policy`
 - `dfs.client.block.write.replace-datanode-on-failure.best-effort`
@@ -141,7 +146,7 @@ The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xm
 - `fs.viewfs.mounttable.*.link.*` - ViewFS links
 - `fs.viewfs.mounttable.*.linkFallback` - ViewFS link fallback
 
-All other settings are generally assumed to be the defaults currently. For instance, security is assumed to be enabled and SASL negotiation is always done, but on insecure clusters this will just do SIMPLE authentication. Any setups that require other customized Hadoop client configs may not work correctly.
+All other settings are generally assumed to be the defaults currently. Any setups that require other customized Hadoop client configs may not work correctly.
 
 ## Building
 
@@ -179,6 +184,14 @@ cargo test -p yarn-native --features integration-test --test miniyarn
 ```
 
 Add `kms-rustls-tls` to the feature list to also run the encryption-zone (KMS) tests: `--features integration-test,kms-rustls-tls`.
+
+On macOS with Homebrew Kerberos, make sure the test binaries load Homebrew's
+GSSAPI library. This version supports credential stores used by the explicit
+keytab/cache integration tests:
+
+```bash
+export DYLD_LIBRARY_PATH="$(brew --prefix krb5)/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+```
 
 ### Python tests
 

@@ -166,6 +166,41 @@ def test_acls(client: Client):
     assert len(acl_status.entries) == 0
 
 
+def test_check_access(client: Client, minidfs: str):
+    client.create("/test", WriteOptions(permission=0o644)).close()
+
+    client.check_access("/test", "rw-")
+    with pytest.raises(FileNotFoundError):
+        client.check_access("/missing", "r--")
+
+    other = Client(minidfs, user="check-access-user")
+
+    other.check_access("/test", "r--")
+    with pytest.raises(PermissionError):
+        other.check_access("/test", "rw-")
+    with pytest.raises(PermissionError):
+        other.mkdirs("/check-access-denied")
+
+
+@pytest.mark.asyncio
+async def test_async_check_access(
+    client: Client,
+    async_client: AsyncClient,
+    minidfs: str,
+):
+    client.create("/test", WriteOptions(permission=0o644)).close()
+
+    await async_client.check_access("/test", "rw-")
+    with pytest.raises(FileNotFoundError):
+        await async_client.check_access("/missing", "r--")
+
+    other = AsyncClient(minidfs, user="check-access-user")
+
+    await other.check_access("/test", "r--")
+    with pytest.raises(PermissionError):
+        await other.check_access("/test", "rw-")
+
+
 @pytest.mark.asyncio
 async def test_async(async_client: AsyncClient):
     await (await async_client.create("/testfile")).close()
