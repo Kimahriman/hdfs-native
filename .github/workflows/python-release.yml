@@ -47,11 +47,18 @@ jobs:
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
           container: quay.io/pypa/manylinux2014_${{ matrix.target }}
-      - name: Build wheels free-threaded
+      - name: Build wheels for Python 3.14t
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter python3.14t --manifest-path python/Cargo.toml
+          sccache: 'true'
+          container: quay.io/pypa/manylinux2014_${{ matrix.target }}
+      - name: Build wheels for Python 3.15 abi3t
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --interpreter python3.15t --manifest-path python/Cargo.toml
           sccache: 'true'
           container: quay.io/pypa/manylinux2014_${{ matrix.target }}
       - name: Upload wheels
@@ -67,21 +74,31 @@ jobs:
         target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v7
-      - name: Install free-threaded python
+      - name: Install Python 3.14 free-threaded
         uses: actions/setup-python@v6
         with:
           python-version: 3.14t
+      - name: Install Python 3.15 free-threaded
+        uses: actions/setup-python@v6
+        with:
+          python-version: 3.15t
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
-      - name: Build wheels free-threaded
+      - name: Build wheels for Python 3.14t
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter python3.14t --manifest-path python/Cargo.toml
+          sccache: 'true'
+      - name: Build wheels for Python 3.15 abi3t
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --interpreter python3.15t --manifest-path python/Cargo.toml
           sccache: 'true'
       - name: Upload wheels
         uses: actions/upload-artifact@v7
@@ -97,19 +114,28 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - name: Install free-threaded python
+      - name: Install Python 3.14 free-threaded
         uses: actions/setup-python@v6
         with:
           python-version: 3.14t
+      - name: Install Python 3.15 free-threaded
+        uses: actions/setup-python@v6
+        with:
+          python-version: 3.15t
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           args: --release --out dist --find-interpreter --manifest-path python/Cargo.toml
           sccache: 'true'
-      - name: Build wheels free-threaded
+      - name: Build wheels for Python 3.14t
         uses: PyO3/maturin-action@v1
         with:
           args: --release --out dist --interpreter python3.14t --manifest-path python/Cargo.toml
+          sccache: 'true'
+      - name: Build wheels for Python 3.15 abi3t
+        uses: PyO3/maturin-action@v1
+        with:
+          args: --release --out dist --interpreter python3.15t --manifest-path python/Cargo.toml
           sccache: 'true'
       - name: Upload wheels
         uses: actions/upload-artifact@v7

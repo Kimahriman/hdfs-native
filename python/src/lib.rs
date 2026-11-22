@@ -33,16 +33,27 @@ use crate::error::{
 type PyHdfsResult<T> = Result<T, PythonHdfsError>;
 
 #[pyclass(get_all, frozen, name = "FileStatus")]
+/// Metadata describing an HDFS file or directory.
 struct PyFileStatus {
+    /// HDFS path.
     path: String,
+    /// File length in bytes.
     length: usize,
+    /// Whether the path is a directory.
     isdir: bool,
+    /// Unix permission bits.
     permission: u16,
+    /// File or directory owner.
     owner: String,
+    /// File or directory group.
     group: String,
+    /// Modification time in milliseconds since the Unix epoch.
     modification_time: u64,
+    /// Access time in milliseconds since the Unix epoch.
     access_time: u64,
+    /// Replication factor, or `None` when not applicable.
     replication: Option<u32>,
+    /// Block size in bytes, or `None` when not applicable.
     blocksize: Option<u64>,
 }
 
@@ -109,12 +120,19 @@ impl PyFileStatusIter {
 }
 
 #[pyclass(get_all, frozen, name = "ContentSummary")]
+/// Aggregate counts, lengths, and quotas for an HDFS path.
 struct PyContentSummary {
+    /// Total file length in bytes.
     length: u64,
+    /// Number of files.
     file_count: u64,
+    /// Number of directories.
     directory_count: u64,
+    /// Namespace quota, or `-1` when unset.
     quota: u64,
+    /// Total space consumed in bytes.
     space_consumed: u64,
+    /// Space quota in bytes, or `-1` when unset.
     space_quota: u64,
 }
 
@@ -148,11 +166,17 @@ impl PyContentSummary {
 }
 
 #[pyclass(get_all, frozen, name = "AclStatus")]
+/// ACL owner, permissions, and entries for an HDFS path.
 struct PyAclStatus {
+    /// Path owner.
     owner: String,
+    /// Path group.
     group: String,
+    /// Whether the sticky bit is set.
     sticky: bool,
+    /// ACL entries attached to the path.
     entries: Vec<PyAclEntry>,
+    /// Unix permission bits.
     permission: u16,
 }
 
@@ -178,10 +202,15 @@ impl PyAclStatus {
 
 #[pyclass(get_all, set_all, name = "AclEntry", from_py_object)]
 #[derive(Clone, Default)]
+/// One access-control-list entry for a file or directory.
 struct PyAclEntry {
+    /// Entry type, such as `user` or `group`.
     r#type: String,
+    /// Whether the entry applies to the current path or as a default.
     scope: String,
+    /// Permissions expressed as a three-character mode such as `rwx`.
     permissions: String,
+    /// User or group name for named entries, or `None` for unnamed entries.
     name: Option<String>,
 }
 
@@ -301,11 +330,17 @@ impl RawFileReader {
 
 #[pyclass(get_all, set_all, name = "WriteOptions", from_py_object)]
 #[derive(Clone)]
+/// Options controlling how a new HDFS file is created.
 struct PyWriteOptions {
+    /// Requested block size in bytes, or `None` for the configured default.
     block_size: Option<u64>,
+    /// Requested replication factor, or `None` for the configured default.
     replication: Option<u32>,
+    /// Unix permission bits for the new file.
     permission: u32,
+    /// Whether to replace an existing file.
     overwrite: bool,
+    /// Whether to create missing parent directories.
     create_parent: bool,
 }
 
@@ -409,7 +444,7 @@ struct RawClient {
 #[pymethods]
 impl RawClient {
     #[new]
-    #[pyo3(signature = (url, config, config_dir, kerberos_principal=None, kerberos_keytab=None, kerberos_cache=None))]
+    #[pyo3(signature = (url, config, config_dir, kerberos_principal=None, kerberos_keytab=None, kerberos_cache=None, user=None))]
     pub fn new(
         url: Option<&str>,
         config: Option<HashMap<String, String>>,
@@ -417,6 +452,7 @@ impl RawClient {
         kerberos_principal: Option<&str>,
         kerberos_keytab: Option<&str>,
         kerberos_cache: Option<&str>,
+        user: Option<&str>,
     ) -> PyResult<Self> {
         // Initialize logging, ignore errors if this is called multiple times
         let _ = env_logger::try_init();
@@ -431,6 +467,10 @@ impl RawClient {
 
         if let Some(config_dir) = config_dir {
             builder = builder.with_config_dir(config_dir);
+        }
+
+        if let Some(user) = user {
+            builder = builder.with_user(user);
         }
 
         if let Some(principal) = kerberos_principal {
@@ -716,7 +756,7 @@ struct AsyncRawClient {
 #[pymethods]
 impl AsyncRawClient {
     #[new]
-    #[pyo3(signature = (url, config, config_dir, kerberos_principal=None, kerberos_keytab=None, kerberos_cache=None))]
+    #[pyo3(signature = (url, config, config_dir, kerberos_principal=None, kerberos_keytab=None, kerberos_cache=None, user=None))]
     pub fn new(
         url: Option<&str>,
         config: Option<HashMap<String, String>>,
@@ -724,6 +764,7 @@ impl AsyncRawClient {
         kerberos_principal: Option<&str>,
         kerberos_keytab: Option<&str>,
         kerberos_cache: Option<&str>,
+        user: Option<&str>,
     ) -> PyResult<Self> {
         // Initialize logging, ignore errors if this is called multiple times
         let _ = env_logger::try_init();
@@ -738,6 +779,10 @@ impl AsyncRawClient {
 
         if let Some(config_dir) = config_dir {
             builder = builder.with_config_dir(config_dir);
+        }
+
+        if let Some(user) = user {
+            builder = builder.with_user(user);
         }
 
         if let Some(principal) = kerberos_principal {

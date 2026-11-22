@@ -6,26 +6,76 @@ from typing_extensions import Buffer
 class HdfsError(Exception):
     """Base class for all errors raised by the native HDFS client."""
 
-class DataTransferError(HdfsError): ...
-class ChecksumError(HdfsError): ...
-class InvalidPath(HdfsError): ...
-class InvalidArgument(HdfsError): ...
-class UrlParseError(HdfsError): ...
-class OperationFailed(HdfsError): ...
-class BlocksNotFound(HdfsError): ...
-class TrashNotEnabled(HdfsError): ...
-class UnsupportedErasureCodingPolicy(HdfsError): ...
-class ErasureCodingError(HdfsError): ...
-class InternalError(HdfsError): ...
-class InvalidRPCResponse(HdfsError): ...
-class RPCError(HdfsError): ...
-class FatalRPCError(HdfsError): ...
-class SASLError(HdfsError): ...
-class GSSAPIError(HdfsError): ...
-class NoSASLMechanism(HdfsError): ...
-class XmlParseError(HdfsError): ...
+class DataTransferError(HdfsError):
+    """An error occurred while transferring file data to or from a DataNode."""
+
+class ChecksumError(HdfsError):
+    """A file block failed checksum verification."""
+
+class InvalidPath(HdfsError):
+    """The supplied HDFS path is invalid."""
+
+class InvalidArgument(HdfsError):
+    """An argument to an HDFS operation is invalid."""
+
+class UrlParseError(HdfsError):
+    """The HDFS URL could not be parsed."""
+
+class OperationFailed(HdfsError):
+    """An HDFS operation failed."""
+
+class BlocksNotFound(HdfsError):
+    """Block metadata required for a file operation could not be found."""
+
+class TrashNotEnabled(HdfsError):
+    """The HDFS trash feature is not enabled."""
+
+class UnsupportedErasureCodingPolicy(HdfsError):
+    """The requested erasure-coding policy is unsupported."""
+
+class ErasureCodingError(HdfsError):
+    """An erasure-coding operation failed."""
+
+class InternalError(HdfsError):
+    """An unexpected internal client error occurred."""
+
+class InvalidRPCResponse(HdfsError):
+    """The NameNode returned an invalid RPC response."""
+
+class RPCError(HdfsError):
+    """A non-fatal error was returned by a Hadoop RPC call."""
+
+class FatalRPCError(HdfsError):
+    """A fatal error was returned by a Hadoop RPC call."""
+
+class SASLError(HdfsError):
+    """SASL authentication or negotiation failed."""
+
+class GSSAPIError(HdfsError):
+    """GSSAPI or Kerberos authentication failed."""
+
+class NoSASLMechanism(HdfsError):
+    """No compatible SASL authentication mechanism was available."""
+
+class XmlParseError(HdfsError):
+    """A Hadoop XML configuration file could not be parsed."""
 
 class FileStatus:
+    """Metadata describing an HDFS file or directory.
+
+    Attributes:
+        path: HDFS path.
+        length: File length in bytes.
+        isdir: Whether the path is a directory.
+        permission: Unix permission bits.
+        owner: File or directory owner.
+        group: File or directory group.
+        modification_time: Modification time in milliseconds since the Unix epoch.
+        access_time: Access time in milliseconds since the Unix epoch.
+        replication: Replication factor, or ``None`` when not applicable.
+        blocksize: Block size in bytes, or ``None`` when not applicable.
+    """
+
     path: str
     length: int
     isdir: bool
@@ -38,6 +88,17 @@ class FileStatus:
     blocksize: int | None
 
 class ContentSummary:
+    """Aggregate counts, lengths, and quotas for an HDFS path.
+
+    Attributes:
+        length: Total file length in bytes.
+        file_count: Number of files.
+        directory_count: Number of directories.
+        quota: Namespace quota, or ``-1`` when unset.
+        space_consumed: Total space consumed in bytes.
+        space_quota: Space quota in bytes, or ``-1`` when unset.
+    """
+
     length: int
     file_count: int
     directory_count: int
@@ -50,6 +111,15 @@ AclEntryScope: TypeAlias = Literal["access", "default"]
 FsAction: TypeAlias = Literal["---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"]
 
 class AclEntry:
+    """One access-control-list entry for a file or directory.
+
+    Attributes:
+        type: Entry type, such as ``user`` or ``group``.
+        scope: Whether the entry applies to the current path or as a default.
+        permissions: Permissions expressed as a three-character mode such as ``rwx``.
+        name: User or group name for named entries, or ``None`` for unnamed entries.
+    """
+
     type: AclEntryType
     scope: AclEntryScope
     permissions: FsAction
@@ -61,9 +131,27 @@ class AclEntry:
         scope: AclEntryScope,
         permissions: FsAction,
         name: str | None = None,
-    ): ...
+    ):
+        """Create an ACL entry.
+
+        Args:
+            type: ACL entry type.
+            scope: ACL scope, either access or default.
+            permissions: Permissions for this entry.
+            name: Optional user or group name.
+        """
 
 class AclStatus:
+    """ACL owner, permissions, and entries for an HDFS path.
+
+    Attributes:
+        owner: Path owner.
+        group: Path group.
+        sticky: Whether the sticky bit is set.
+        entries: ACL entries attached to the path.
+        permission: Unix permission bits.
+    """
+
     owner: str
     group: str
     sticky: bool
@@ -71,6 +159,16 @@ class AclStatus:
     permission: int
 
 class WriteOptions:
+    """Options controlling how a new HDFS file is created.
+
+    Attributes:
+        block_size: Requested block size in bytes, or ``None`` for the configured default.
+        replication: Requested replication factor, or ``None`` for the configured default.
+        permission: Unix permission bits for the new file.
+        overwrite: Whether to replace an existing file.
+        create_parent: Whether to create missing parent directories.
+    """
+
     block_size: int | None
     replication: int | None
     permission: int
@@ -84,7 +182,16 @@ class WriteOptions:
         permission: int | None = None,
         overwrite: bool | None = None,
         create_parent: bool | None = None,
-    ): ...
+    ):
+        """Create file-creation options.
+
+        Args:
+            block_size: Requested block size in bytes.
+            replication: Requested replication factor.
+            permission: Unix permission bits for the file.
+            overwrite: Whether to replace an existing file.
+            create_parent: Whether to create missing parent directories.
+        """
 
 class RawFileReader:
     def file_length(self) -> int:
@@ -125,6 +232,7 @@ class RawClient:
         kerberos_principal: str | None = None,
         kerberos_keytab: str | None = None,
         kerberos_cache: str | None = None,
+        user: str | None = None,
     ) -> None: ...
     def get_file_info(self, path: str) -> FileStatus: ...
     def list_status(self, path: str, recursive: bool) -> Iterator[FileStatus]: ...
@@ -194,6 +302,7 @@ class AsyncRawClient:
         kerberos_principal: str | None = None,
         kerberos_keytab: str | None = None,
         kerberos_cache: str | None = None,
+        user: str | None = None,
     ) -> None: ...
     async def get_file_info(self, path: str) -> FileStatus: ...
     def list_status(self, path: str, recursive: bool) -> AsyncIterator[FileStatus]: ...

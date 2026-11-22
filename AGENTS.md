@@ -34,6 +34,10 @@ This project provides native Hadoop and HDFS clients for Rust and Python. The Ca
 - Use the Python venv at `python/.venv` for building and running tests.
 - Build Python wheels with `maturin build` (see `python/README.md` for details). Include `-E devel` to install development tools.
 - Run Python tests with `pytest` in the `python/` directory.
+- Install Sphinx dependencies with `uv sync --group dev --group docs`, then build HTML docs with `python/.venv/bin/sphinx-build -b html python/docs/source python/docs/build/html`.
+- Write public Python function and method docstrings in Google style. Include
+  `Args`, `Returns`, and `Raises` sections when applicable. Sphinx Napoleon is
+  enabled in `python/docs/source/conf.py` to parse Google-style docstrings.
 
 ## Agents and Automation
 

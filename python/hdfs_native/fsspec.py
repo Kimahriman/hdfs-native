@@ -29,6 +29,14 @@ class BaseFileSystem(AbstractFileSystem):
         *args,
         **storage_options,
     ):
+        """Create an fsspec adapter for an HDFS filesystem.
+
+        Args:
+            host: NameNode host, if specifying a host directly.
+            port: NameNode port, if specifying a host directly.
+            *args: Positional options forwarded to ``AbstractFileSystem``.
+            **storage_options: Hadoop configuration values passed to the HDFS client.
+        """
         super().__init__(host, port, *args, **storage_options)
         self.host = host
         self.port = port
@@ -41,6 +49,7 @@ class BaseFileSystem(AbstractFileSystem):
 
     @property
     def fsid(self):
+        """Return an identifier for this filesystem configuration."""
         return f"hdfs_native_{tokenize(self.protocol, self.host, self.port)}"
 
     @classmethod
@@ -49,6 +58,14 @@ class BaseFileSystem(AbstractFileSystem):
         return url.path or cls.root_marker
 
     def unstrip_protocol(self, name: str) -> str:
+        """Add this filesystem's protocol and authority to a path.
+
+        Args:
+            name: HDFS path to qualify.
+
+        Returns:
+            The fully qualified path.
+        """
         path = self._strip_protocol(name)
 
         url = f"{self.protocol}://"
@@ -77,10 +94,28 @@ class BaseFileSystem(AbstractFileSystem):
         }
 
     def info(self, path, **_kwargs) -> dict:
+        """Return metadata for a file or directory.
+
+        Args:
+            path: HDFS path to inspect.
+            **_kwargs: Additional fsspec options, accepted for interface compatibility.
+
+        Returns:
+            A dictionary containing file status fields.
+        """
         file_status = self.client.get_file_info(self._strip_protocol(path))
         return self._convert_file_status(file_status)
 
     def exists(self, path, **_kwargs):
+        """Check whether a path exists.
+
+        Args:
+            path: HDFS path to check.
+            **_kwargs: Additional fsspec options, accepted for interface compatibility.
+
+        Returns:
+            ``True`` if the path exists, otherwise ``False``.
+        """
         try:
             self.info(path)
             return True
@@ -88,6 +123,16 @@ class BaseFileSystem(AbstractFileSystem):
             return False
 
     def ls(self, path: str, detail=True, **kwargs) -> list[str | dict]:
+        """List entries in a directory.
+
+        Args:
+            path: HDFS directory path to list.
+            detail: Whether to return file status dictionaries instead of paths.
+            **kwargs: Additional fsspec options, accepted for interface compatibility.
+
+        Returns:
+            File paths or detailed file status dictionaries.
+        """
         listing = self.client.list_status(self._strip_protocol(path), False)
         if detail:
             return [self._convert_file_status(status) for status in listing]
@@ -95,6 +140,13 @@ class BaseFileSystem(AbstractFileSystem):
             return [status.path for status in listing]
 
     def touch(self, path: str, truncate=True, **kwargs):
+        """Create a file or update its timestamps.
+
+        Args:
+            path: HDFS path to create or update.
+            truncate: Whether to truncate an existing file. If false, preserve an existing file's contents and update its timestamps.
+            **kwargs: Options forwarded when opening a new file.
+        """
         path = self._strip_protocol(path)
         if truncate or not self.exists(path):
             with self.open(path, "wb", **kwargs):
@@ -111,6 +163,21 @@ class BaseFileSystem(AbstractFileSystem):
         withdirs=False,
         **kwargs,
     ) -> int | dict[str, int]:
+        """Return file or directory disk usage.
+
+        Args:
+            path: HDFS path to measure.
+            total: Whether to return a single total or per-path usage details.
+            maxdepth: Maximum directory depth for detailed usage. Unsupported when ``total`` is true.
+            withdirs: Whether detailed usage includes directories.
+            **kwargs: Additional options forwarded to the base fsspec implementation.
+
+        Returns:
+            Total bytes used, or a mapping of paths to byte counts.
+
+        Raises:
+            NotImplementedError: If ``total`` is true and ``maxdepth`` is specified.
+        """
         if total:
             if maxdepth is not None:
                 raise NotImplementedError("maxdepth is not supported with total")
@@ -121,6 +188,13 @@ class BaseFileSystem(AbstractFileSystem):
             return super().du(path, total, maxdepth, withdirs, **kwargs)
 
     def mkdir(self, path: str, create_parents=True, **kwargs):
+        """Create a directory.
+
+        Args:
+            path: HDFS directory path to create.
+            create_parents: Whether to create missing parent directories.
+            **kwargs: Additional options; ``permission`` sets the directory's Unix permission bits.
+        """
         self.client.mkdirs(
             self._strip_protocol(path),
             kwargs.get("permission", 0o755),
@@ -128,6 +202,12 @@ class BaseFileSystem(AbstractFileSystem):
         )
 
     def makedirs(self, path: str, exist_ok=False):
+        """Create a directory and any missing parents.
+
+        Args:
+            path: HDFS directory path to create.
+            exist_ok: Whether to allow the directory to already exist.
+        """
         path = self._strip_protocol(path)
         if not exist_ok and self.exists(path):
             raise FileExistsError("File or directory already exists")
@@ -140,6 +220,11 @@ class BaseFileSystem(AbstractFileSystem):
         Like ``shutil.move`` and the ``mv`` of the other fsspec filesystems, an
         existing destination is replaced. Pass ``overwrite=False`` to get the
         behavior of ``hdfs dfs -mv``, which fails with ``FileExistsError``.
+
+        Args:
+            path1: Source HDFS path.
+            path2: Destination HDFS path.
+            **kwargs: Additional options; ``overwrite`` controls replacement of an existing destination.
         """
         self.client.rename(
             self._strip_protocol(path1),
@@ -148,6 +233,13 @@ class BaseFileSystem(AbstractFileSystem):
         )
 
     def cp_file(self, path1, path2, **kwargs):
+        """Copy a file to another HDFS path.
+
+        Args:
+            path1: Source HDFS file path.
+            path2: Destination HDFS file path.
+            **kwargs: Additional fsspec options, accepted for interface compatibility.
+        """
         with self._open(self._strip_protocol(path1), "rb") as lstream:
             dst = self._strip_protocol(path2)
             # Hidden temporary file next to the destination, so the final rename
@@ -166,17 +258,45 @@ class BaseFileSystem(AbstractFileSystem):
                 raise
 
     def rmdir(self, path: str) -> None:
+        """Remove an empty directory.
+
+        Args:
+            path: HDFS directory path to remove.
+        """
         self.client.delete(self._strip_protocol(path), False)
 
     def rm(self, path: str, recursive=False, maxdepth: int | None = None) -> None:
+        """Remove a file or directory.
+
+        Args:
+            path: HDFS path to remove.
+            recursive: Whether to recursively remove a directory's contents.
+            maxdepth: Unsupported; must be ``None``.
+
+        Raises:
+            NotImplementedError: If ``maxdepth`` is specified.
+        """
         if maxdepth is not None:
             raise NotImplementedError("maxdepth is not supported")
         self.client.delete(self._strip_protocol(path), recursive)
 
     def rm_file(self, path: str):
+        """Remove a file.
+
+        Args:
+            path: HDFS file path to remove.
+        """
         self.rm(self._strip_protocol(path))
 
     def modified(self, path: str):
+        """Get a file's modification time.
+
+        Args:
+            path: HDFS path to inspect.
+
+        Returns:
+            The modification time as a ``datetime``.
+        """
         file_info = self.client.get_file_info(self._strip_protocol(path))
         return datetime.fromtimestamp(file_info.modification_time / 1000)
 
@@ -210,8 +330,12 @@ class BaseFileSystem(AbstractFileSystem):
 
 
 class HdfsFileSystem(BaseFileSystem):
+    """fsspec filesystem adapter for the ``hdfs://`` protocol."""
+
     protocol = "hdfs"
 
 
 class ViewfsFileSystem(BaseFileSystem):
+    """fsspec filesystem adapter for the ``viewfs://`` protocol."""
+
     protocol = "viewfs"
