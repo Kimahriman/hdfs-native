@@ -19,6 +19,7 @@ This project provides native Hadoop and HDFS clients for Rust and Python. The Ca
 - Run Rust tests with `cargo test --workspace`, or scope them with `cargo test -p hadoop-native` or `cargo test -p hdfs-native`.
 - Run a single Rust test with `cargo test -p <crate> <testname>`.
 - Run HDFS integration tests with `cargo test -p hdfs-native --features integration-test`. This requires Java and Maven to be installed.
+- On macOS with Homebrew Kerberos, export `DYLD_LIBRARY_PATH="$(brew --prefix krb5)/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"` before running integration tests. Homebrew's GSSAPI supports the credential stores exercised by the explicit keytab/cache tests.
 
 #### Rust benchmarks
 - Run the I/O benchmarks from the repository root. They start a MiniDFS cluster, so Java, Maven, and Hadoop's `hadoop` command must be available.

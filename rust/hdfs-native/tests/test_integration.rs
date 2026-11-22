@@ -21,15 +21,16 @@ mod test {
 
     #[tokio::test]
     #[serial]
-    async fn test_basic_non_ha() {
-        test_with_features(&HashSet::new()).await.unwrap();
+    async fn test_basic_hdfs_operations() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let _dfs = MiniDfs::default();
+        let client = ClientBuilder::new().build().unwrap();
+
+        test_basic_hdfs_suite(&client).await.unwrap();
+        assert_security_enabled_client_fallback().await;
     }
 
-    #[tokio::test]
-    #[serial]
-    async fn test_security_enabled_client_does_not_fall_back_to_simple_auth() {
-        let _ = env_logger::builder().is_test(true).try_init();
-        let _dfs = MiniDfs::with_features(&HashSet::new());
+    async fn assert_security_enabled_client_fallback() {
         let secure_client = |fallback_allowed: bool| {
             ClientBuilder::new()
                 .with_config([
@@ -52,15 +53,26 @@ mod test {
     #[tokio::test]
     #[serial]
     async fn test_security_kerberos() {
-        test_with_features(&HashSet::from([DfsFeatures::Security]))
-            .await
-            .unwrap();
+        let _ = env_logger::builder().is_test(true).try_init();
+        let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::Security]));
+        let client = ClientBuilder::new().build().unwrap();
+
+        test_feature_round_trip(&client).await.unwrap();
+        test_relative_paths(&client, true).await.unwrap();
+        test_permission_checks(&client, false).await.unwrap();
+        test_explicit_keytab_without_default_cache(&dfs).await;
+        test_explicit_cache_without_default_cache(&dfs).await;
     }
 
     #[tokio::test]
     #[serial]
-    async fn test_security_kerberos_explicit_keytab_without_default_cache() {
+    async fn test_security_kerberos_keytab_populates_explicit_cache() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::Security]));
+        test_keytab_populates_explicit_cache(&dfs).await;
+    }
+
+    async fn test_explicit_keytab_without_default_cache(dfs: &MiniDfs) {
         let _cache_guard = EnvVarGuard::set("KRB5CCNAME", "FILE:target/test/nonexistent-cache");
 
         let client = ClientBuilder::new()
@@ -72,10 +84,7 @@ mod test {
         assert_explicit_kerberos_io(&client, "/explicit-keytab").await;
     }
 
-    #[tokio::test]
-    #[serial]
-    async fn test_security_kerberos_explicit_cache_without_default_cache() {
-        let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::Security]));
+    async fn test_explicit_cache_without_default_cache(dfs: &MiniDfs) {
         let _cache_guard = EnvVarGuard::set("KRB5CCNAME", "FILE:target/test/nonexistent-cache");
 
         let client = ClientBuilder::new()
@@ -87,10 +96,12 @@ mod test {
         assert_explicit_kerberos_io(&client, "/explicit-cache").await;
     }
 
-    #[tokio::test]
-    #[serial]
-    async fn test_security_kerberos_keytab_populates_explicit_cache() {
-        let dfs = MiniDfs::with_features(&HashSet::from([DfsFeatures::Security]));
+    async fn test_keytab_populates_explicit_cache(dfs: &MiniDfs) {
+        match std::fs::remove_file("target/test/explicit-keytab-cache") {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to remove the previous explicit Kerberos cache: {error}"),
+        }
         let _cache_guard = EnvVarGuard::set("KRB5CCNAME", "FILE:target/test/nonexistent-cache");
 
         let client = ClientBuilder::new()
@@ -123,150 +134,141 @@ mod test {
     #[tokio::test]
     #[serial]
     async fn test_security_token() {
-        test_with_features(&HashSet::from([DfsFeatures::Security, DfsFeatures::Token]))
-            .await
-            .unwrap();
+        let _ = env_logger::builder().is_test(true).try_init();
+        let _dfs =
+            MiniDfs::with_features(&HashSet::from([DfsFeatures::Security, DfsFeatures::Token]));
+        let client = ClientBuilder::new().build().unwrap();
+
+        test_feature_round_trip(&client).await.unwrap();
+        test_permission_checks(&client, true).await.unwrap();
     }
 
     #[tokio::test]
     #[serial]
     async fn test_integrity_kerberos() {
-        test_with_features(&HashSet::from([
+        test_feature_configuration(HashSet::from([
             DfsFeatures::Security,
             DfsFeatures::Integrity,
         ]))
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     #[serial]
     async fn test_integrity_token() {
-        test_with_features(&HashSet::from([
+        test_feature_configuration(HashSet::from([
             DfsFeatures::Security,
             DfsFeatures::Token,
             DfsFeatures::Integrity,
         ]))
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     #[serial]
     async fn test_privacy_kerberos() {
-        test_with_features(&HashSet::from([
-            DfsFeatures::Security,
-            DfsFeatures::Privacy,
-        ]))
-        .await
-        .unwrap();
+        test_feature_configuration(HashSet::from([DfsFeatures::Security, DfsFeatures::Privacy]))
+            .await;
     }
 
     #[tokio::test]
     #[serial]
     async fn test_privacy_token() {
-        test_with_features(&HashSet::from([
+        test_feature_configuration(HashSet::from([
             DfsFeatures::Security,
             DfsFeatures::Token,
             DfsFeatures::Privacy,
         ]))
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     #[serial]
     async fn test_aes() {
-        test_with_features(&HashSet::from([
+        test_feature_configuration(HashSet::from([
             DfsFeatures::Security,
             DfsFeatures::Privacy,
             DfsFeatures::AES,
         ]))
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     #[serial]
     async fn test_forced_data_transfer_encryption() {
         // DataTransferEncryption enabled but privacy isn't, still force encryption
-        test_with_features(&HashSet::from([
+        test_feature_configuration(HashSet::from([
             DfsFeatures::Security,
             DfsFeatures::DataTransferEncryption,
         ]))
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     #[serial]
     async fn test_data_transfer_encryption() {
-        test_with_features(&HashSet::from([
+        test_feature_configuration(HashSet::from([
             DfsFeatures::Security,
             DfsFeatures::Privacy,
             DfsFeatures::DataTransferEncryption,
         ]))
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     #[serial]
     async fn test_data_transfer_encryption_aes() {
-        test_with_features(&HashSet::from([
+        test_feature_configuration(HashSet::from([
             DfsFeatures::Security,
             DfsFeatures::Privacy,
             DfsFeatures::DataTransferEncryption,
             DfsFeatures::AES,
         ]))
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     #[serial]
     async fn test_basic_ha() {
-        test_with_features(&HashSet::from([DfsFeatures::HA]))
-            .await
-            .unwrap();
+        test_feature_configuration(HashSet::from([DfsFeatures::HA])).await;
     }
 
     #[tokio::test]
     #[serial]
     async fn test_security_privacy_ha() {
-        test_with_features(&HashSet::from([
+        test_feature_configuration(HashSet::from([
             DfsFeatures::Security,
             DfsFeatures::Privacy,
             DfsFeatures::HA,
         ]))
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     #[serial]
     async fn test_security_token_ha() {
-        test_with_features(&HashSet::from([
+        test_feature_configuration(HashSet::from([
             DfsFeatures::Security,
             DfsFeatures::Token,
             DfsFeatures::HA,
         ]))
-        .await
-        .unwrap();
+        .await;
     }
 
     #[tokio::test]
     #[serial]
     async fn test_rbf() {
-        test_with_features(&HashSet::from([DfsFeatures::RBF]))
-            .await
-            .unwrap();
+        test_feature_configuration(HashSet::from([DfsFeatures::RBF])).await;
     }
 
     #[test]
     #[serial]
     fn test_no_tokio() {
-        futures::executor::block_on(test_with_features(&HashSet::new())).unwrap();
+        let _ = env_logger::builder().is_test(true).try_init();
+        let _dfs = MiniDfs::default();
+        let client = ClientBuilder::new().build().unwrap();
+
+        futures::executor::block_on(client.get_file_info("/")).unwrap();
     }
 
     #[test]
@@ -320,15 +322,7 @@ mod test {
         Ok(())
     }
 
-    pub async fn test_with_features(features: &HashSet<DfsFeatures>) -> Result<()> {
-        let _ = env_logger::builder().is_test(true).try_init();
-
-        let kerberos_enabled =
-            features.contains(&DfsFeatures::Security) && !features.contains(&DfsFeatures::Token);
-
-        let _dfs = MiniDfs::with_features(features);
-        let client = ClientBuilder::new().build().unwrap();
-
+    async fn test_basic_hdfs_suite(client: &Client) -> Result<()> {
         let mut file = client.create("/testfile", WriteOptions::default()).await?;
         let mut test_file = BytesMut::with_capacity(TEST_FILE_INTS * std::mem::size_of::<i32>());
         for i in 0..TEST_FILE_INTS as i32 {
@@ -342,7 +336,7 @@ mod test {
         test_rename(&client).await?;
         test_dirs(&client).await?;
         test_read_write(&client).await?;
-        test_relative_paths(&client, kerberos_enabled).await?;
+        test_relative_paths(&client, false).await?;
         // We use writing to create files, so do this after
         test_recursive_listing(&client).await?;
         test_glob(&client).await?;
@@ -352,12 +346,39 @@ mod test {
         test_set_replication(&client).await?;
         test_get_content_summary(&client).await?;
         test_acls(&client).await?;
-        test_permission_checks(&client, features.contains(&DfsFeatures::Token)).await?;
+        test_permission_checks(&client, false).await?;
 
-        if features.contains(&DfsFeatures::HA) {
-            test_observer_read(&client).await?;
+        Ok(())
+    }
+
+    async fn test_feature_configuration(features: HashSet<DfsFeatures>) {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let has_ha = features.contains(&DfsFeatures::HA);
+        let _dfs = MiniDfs::with_features(&features);
+        let client = ClientBuilder::new().build().unwrap();
+
+        test_feature_round_trip(&client).await.unwrap();
+        if has_ha {
+            test_observer_read(&client).await.unwrap();
         }
+    }
 
+    async fn test_feature_round_trip(client: &Client) -> Result<()> {
+        let path = "/feature-smoke-test";
+        let expected = b"feature-specific HDFS round trip";
+        let mut writer = client
+            .create(path, WriteOptions::default().overwrite(true))
+            .await?;
+        writer.write_bytes(Bytes::from_static(expected)).await?;
+        writer.close().await?;
+
+        let status = client.get_file_info(path).await?;
+        assert_eq!(status.length, expected.len());
+
+        let mut reader = client.read(path).await?;
+        let actual = reader.read_bytes(expected.len()).await?;
+        assert_eq!(actual.as_ref(), expected);
+        client.delete(path, false).await?;
         Ok(())
     }
 
