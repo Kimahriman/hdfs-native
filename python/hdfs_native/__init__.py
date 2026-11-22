@@ -160,7 +160,6 @@ class FileReader(io.RawIOBase):
 
     def close(self) -> None:
         """Provide a no-op close method for file-like compatibility."""
-        pass
 
 
 class FileWriter(io.RawIOBase):
@@ -658,7 +657,6 @@ class AsyncFileReader:
 
     async def close(self) -> None:
         """Provide a no-op close method for file-like compatibility."""
-        pass
 
 
 class AsyncFileWriter:
