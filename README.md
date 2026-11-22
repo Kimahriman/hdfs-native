@@ -135,7 +135,7 @@ The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xm
 - `dfs.client.use.datanode.hostname` - Use DataNode hostnames instead of IP addresses for DataNode connections
 - `dfs.client.socket-timeout` - Milliseconds a DataNode connection can go without receiving data before a read fails over to the next replica. Defaults to 60000; 0 disables it
 - `ipc.client.connect.timeout` - Milliseconds to wait for a NameNode RPC connection before failing over. Defaults to 20000; 0 disables it
-- `ipc.client.rpc-timeout.ms` - Milliseconds to wait for a NameNode RPC response. Defaults to 120000; 0 disables the response timeout
+- `ipc.client.rpc-timeout.ms` - Milliseconds to wait for a NameNode RPC response. Also limits how long authenticating a new NameNode connection can take. Defaults to 120000; 0 disables the timeout
 - `ipc.client.fallback-to-simple-auth-allowed` - Lets a client with security enabled connect to a NameNode that only uses SIMPLE authentication. Defaults to false
 - `dfs.client.block.write.replace-datanode-on-failure.enable`
 - `dfs.client.block.write.replace-datanode-on-failure.policy`
