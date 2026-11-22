@@ -148,6 +148,16 @@ pub(crate) async fn negotiate_sasl_session(
         }
     }
 
+    // No session means the server asked for simple authentication
+    if session.is_none() && !config.ipc_client_fallback_to_simple_auth_allowed() {
+        return Err(HdfsError::SASLError(
+            "The server only accepts SIMPLE authentication from this client, but the client is \
+             configured for secure authentication. Set ipc.client.fallback-to-simple-auth-allowed \
+             to allow it"
+                .to_string(),
+        ));
+    }
+
     let user_info = if let Some(session) = session.as_ref() {
         session.get_user_info()?
     } else {
