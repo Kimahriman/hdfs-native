@@ -175,6 +175,14 @@ cargo test -p hdfs-native --features integration-test
 
 Add `kms-rustls-tls` to the feature list to also run the encryption-zone (KMS) tests: `--features integration-test,kms-rustls-tls`.
 
+On macOS with Homebrew Kerberos, make sure the test binaries load Homebrew's
+GSSAPI library. This version supports credential stores used by the explicit
+keytab/cache integration tests:
+
+```bash
+export DYLD_LIBRARY_PATH="$(brew --prefix krb5)/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+```
+
 ### Python tests
 
 See the [Python README](./python/README.md)
