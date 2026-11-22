@@ -166,15 +166,14 @@ def test_acls(client: Client):
     assert len(acl_status.entries) == 0
 
 
-def test_check_access(client: Client, minidfs: str, monkeypatch: pytest.MonkeyPatch):
+def test_check_access(client: Client, minidfs: str):
     client.create("/test", WriteOptions(permission=0o644)).close()
 
     client.check_access("/test", "rw-")
     with pytest.raises(FileNotFoundError):
         client.check_access("/missing", "r--")
 
-    monkeypatch.setenv("HADOOP_USER_NAME", "check-access-user")
-    other = Client(minidfs)
+    other = Client(minidfs, user="check-access-user")
 
     other.check_access("/test", "r--")
     with pytest.raises(PermissionError):
@@ -188,7 +187,6 @@ async def test_async_check_access(
     client: Client,
     async_client: AsyncClient,
     minidfs: str,
-    monkeypatch: pytest.MonkeyPatch,
 ):
     client.create("/test", WriteOptions(permission=0o644)).close()
 
@@ -196,8 +194,7 @@ async def test_async_check_access(
     with pytest.raises(FileNotFoundError):
         await async_client.check_access("/missing", "r--")
 
-    monkeypatch.setenv("HADOOP_USER_NAME", "check-access-user")
-    other = AsyncClient(minidfs)
+    other = AsyncClient(minidfs, user="check-access-user")
 
     await other.check_access("/test", "r--")
     with pytest.raises(PermissionError):
