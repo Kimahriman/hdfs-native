@@ -4,7 +4,7 @@ use std::{
 };
 
 use base64::{Engine as _, engine::general_purpose};
-use cbc::cipher::{Array, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
+use cbc::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use cipher::KeyInit;
 use hmac::{Hmac, Mac};
 use md5::{Digest, Md5};
@@ -254,6 +254,83 @@ impl SecurityContext {
             seq_num: 0,
         }
     }
+
+    fn encode(&mut self, buf: &[u8]) -> Result<Vec<u8>> {
+        // HMAC of the seqno and the message
+        let mut mac = HmacMD5::new_from_slice(&self.integrity_keys.client).map_err(|_| {
+            HdfsError::SASLError("Invalid DIGEST-MD5 client integrity key".to_string())
+        })?;
+        mac.update(&self.seq_num.to_be_bytes());
+        mac.update(buf);
+        let hmac = mac.finalize().into_bytes();
+
+        // The body is [message][HMAC (10)], or with auth-conf, [message][padding (1-8)][HMAC (10)]
+        let mut body = buf.to_vec();
+        if self.encryptor.is_some() {
+            // Each padding byte is the padding length
+            let padding_len = 8 - (buf.len() + 10) % 8;
+            body.resize(body.len() + padding_len, padding_len as u8);
+        }
+        body.extend(&hmac[..10]);
+
+        // With auth-conf, the body is encrypted in blocks of 8 bytes
+        if let Some(encryptor) = &mut self.encryptor {
+            // The padding makes the body a multiple of 8 bytes, so there is no remainder
+            let (blocks, _) = body.as_chunks_mut::<8>();
+            for block in blocks {
+                encryptor.encrypt_block(block.into());
+            }
+        }
+
+        // The wrapped message is [body][type (2)][seqno (4)]
+        body.extend([0, 1]);
+        body.extend(self.seq_num.to_be_bytes());
+
+        self.seq_num += 1;
+        Ok(body)
+    }
+
+    fn decode(&mut self, buf: &[u8]) -> Result<Vec<u8>> {
+        let malformed = || HdfsError::SASLError("Malformed DIGEST-MD5 message".to_string());
+
+        // buf is [body][type (2)][seqno (4)]
+        let (rest, seq_num) = buf.split_last_chunk::<4>().ok_or_else(malformed)?;
+        let (body, _msg_type) = rest.split_last_chunk::<2>().ok_or_else(malformed)?;
+        let mut body = body.to_vec();
+
+        // With auth-conf, the body is encrypted in blocks of 8 bytes
+        if let Some(decryptor) = &mut self.decryptor {
+            let (blocks, remainder) = body.as_chunks_mut::<8>();
+            if !remainder.is_empty() {
+                return Err(HdfsError::SASLError(
+                    "Invalid DIGEST-MD5 decryption block length".to_string(),
+                ));
+            }
+            for block in blocks {
+                decryptor.decrypt_block(block.into());
+            }
+        }
+
+        // The body is [message][HMAC (10)], or with auth-conf, [message][padding (1-8)][HMAC (10)]
+        let (mut message, hmac) = body.split_last_chunk::<10>().ok_or_else(malformed)?;
+        if self.decryptor.is_some() {
+            // The last byte of the padding is the padding length
+            let padding = usize::from(*message.last().ok_or_else(malformed)?);
+            let message_len = message.len().checked_sub(padding).ok_or_else(malformed)?;
+            message = &message[..message_len];
+        }
+
+        let mut mac = HmacMD5::new_from_slice(&self.integrity_keys.server).map_err(|_| {
+            HdfsError::SASLError("Invalid DIGEST-MD5 server integrity key".to_string())
+        })?;
+        mac.update(seq_num);
+        mac.update(message);
+        mac.verify_truncated_left(hmac)
+            .map_err(|_| HdfsError::SASLError("Integrity HMAC check failed".to_string()))?;
+
+        body.truncate(message.len());
+        Ok(body)
+    }
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -486,46 +563,7 @@ impl SaslSession for DigestSaslSession {
 
     fn encode(&mut self, buf: &[u8]) -> crate::Result<Vec<u8>> {
         match &mut self.state {
-            DigestState::Completed(Some(ctx)) => {
-                let mut mac =
-                    HmacMD5::new_from_slice(&ctx.integrity_keys.client).map_err(|_| {
-                        HdfsError::SASLError("Invalid DIGEST-MD5 client integrity key".to_string())
-                    })?;
-                mac.update(&ctx.seq_num.to_be_bytes());
-                mac.update(buf);
-                let hmac = mac.finalize().into_bytes();
-
-                let mut message = if let Some(encryptor) = &mut ctx.encryptor {
-                    // 10 bytes of HMAC, 8 byte block size
-                    let padding_len = 8 - (buf.len() + 10) % 8;
-                    let mut message =
-                        [buf, &vec![padding_len as u8; padding_len], &hmac[..10]].concat();
-
-                    let enc_block: &mut [u8] = message.as_mut();
-                    let mut enc_bytes = 0;
-                    while enc_bytes < enc_block.len() {
-                        let block =
-                            <&mut Array<_, _>>::try_from(&mut enc_block[enc_bytes..enc_bytes + 8])
-                                .map_err(|_| {
-                                    HdfsError::SASLError(
-                                        "Invalid DIGEST-MD5 encryption block length".to_string(),
-                                    )
-                                })?;
-                        encryptor.encrypt_block(block);
-                        enc_bytes += 8;
-                    }
-                    message
-                } else {
-                    [buf, &hmac[..10]].concat()
-                };
-
-                // let message = [&message, &[0, 1], &ctx.seq_num.to_be_bytes()].concat();
-                message.extend(&[0, 1]);
-                message.extend(ctx.seq_num.to_be_bytes());
-
-                ctx.seq_num += 1;
-                Ok(message)
-            }
+            DigestState::Completed(Some(ctx)) => ctx.encode(buf),
             DigestState::Completed(None) => Err(HdfsError::SASLError(
                 "QOP doesn't support security layer".to_string(),
             )),
@@ -537,49 +575,7 @@ impl SaslSession for DigestSaslSession {
 
     fn decode(&mut self, buf: &[u8]) -> crate::Result<Vec<u8>> {
         match &mut self.state {
-            DigestState::Completed(Some(ctx)) => {
-                let malformed = || HdfsError::SASLError("Malformed DIGEST-MD5 message".to_string());
-
-                // buf is [body][type (2)][seqno (4)]
-                let (rest, seq_num) = buf.split_last_chunk::<4>().ok_or_else(malformed)?;
-                let (body, _msg_type) = rest.split_last_chunk::<2>().ok_or_else(malformed)?;
-                let mut body = body.to_vec();
-
-                // With auth-conf, the body is encrypted in blocks of 8 bytes
-                if let Some(decryptor) = &mut ctx.decryptor {
-                    let (blocks, remainder) = body.as_chunks_mut::<8>();
-                    if !remainder.is_empty() {
-                        return Err(HdfsError::SASLError(
-                            "Invalid DIGEST-MD5 decryption block length".to_string(),
-                        ));
-                    }
-                    for block in blocks {
-                        decryptor.decrypt_block(block.into());
-                    }
-                }
-
-                // The body is [message][HMAC (10)], or with auth-conf,
-                // [message][padding (1-8)][HMAC (10)]
-                let (mut message, hmac) = body.split_last_chunk::<10>().ok_or_else(malformed)?;
-                if ctx.decryptor.is_some() {
-                    // The last byte of the padding is the padding length
-                    let padding = usize::from(*message.last().ok_or_else(malformed)?);
-                    let message_len = message.len().checked_sub(padding).ok_or_else(malformed)?;
-                    message = &message[..message_len];
-                }
-
-                let mut mac =
-                    HmacMD5::new_from_slice(&ctx.integrity_keys.server).map_err(|_| {
-                        HdfsError::SASLError("Invalid DIGEST-MD5 server integrity key".to_string())
-                    })?;
-                mac.update(seq_num);
-                mac.update(message);
-                mac.verify_truncated_left(hmac)
-                    .map_err(|_| HdfsError::SASLError("Integrity HMAC check failed".to_string()))?;
-
-                body.truncate(message.len());
-                Ok(body)
-            }
+            DigestState::Completed(Some(ctx)) => ctx.decode(buf),
             DigestState::Completed(None) => Err(HdfsError::SASLError(
                 "QOP doesn't support security layer".to_string(),
             )),
