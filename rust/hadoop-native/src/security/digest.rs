@@ -1,3 +1,72 @@
+//! Client side of the SASL DIGEST-MD5 mechanism ([RFC 2831]).
+//!
+//! Hadoop uses DIGEST-MD5 where the client and the server share a secret, such as the password
+//! of a delegation token. [`DigestSaslSession`] does two things:
+//!
+//! - Authentication: [`SaslSession::step`] runs the exchange described below.
+//! - Security layer: after authentication, [`SaslSession::encode`] and [`SaslSession::decode`]
+//!   wrap and unwrap messages, if the negotiated QOP is `auth-int` or `auth-conf`.
+//!
+//! # Authentication
+//!
+//! Each side proves to the other that it knows the secret, without sending the secret:
+//!
+//! ```text
+//! client                                                  server
+//!   |                                                       |
+//!   |<-------------------- 1. challenge --------------------|
+//!   |      realm, nonce, offered QOPs, optional ciphers     |
+//!   |                                                       |
+//!   |--------------------- 2. response -------------------->|
+//!   |      username, cnonce, chosen QOP, optional cipher,   |
+//!   |      hash of the secret and both nonces               |
+//!   |                                                       |
+//!   |<--------------------- 3. rspauth ---------------------|
+//!   |      another hash of the secret and both nonces       |
+//! ```
+//!
+//! - nonce, cnonce: values that the server and the client choose anew for each exchange, so that a
+//!   hash from an earlier exchange can't be reused.
+//! - QOP (quality of protection): how messages are protected after authentication. `auth` adds no
+//!   protection, `auth-int` adds an HMAC to each message, and `auth-conf` also encrypts each
+//!   message. The client chooses the strongest QOP that the server offers.
+//! - cipher: only with `auth-conf`. The server offers ciphers, and the client chooses `3des`.
+//! - rspauth (response authentication): proves that the server knows the secret too.
+//!
+//! The first call to [`SaslSession::step`] takes the challenge and returns the response. The
+//! second call checks the rspauth and completes the session.
+//!
+//! # Wrapped message format
+//!
+//! Sizes are in bytes. With `auth-int`:
+//!
+//! ```text
+//! +---------+-----------+----------+-----------+
+//! | message | HMAC (10) | type (2) | seqno (4) |
+//! +---------+-----------+----------+-----------+
+//! ```
+//!
+//! With `auth-conf`, the message, the padding and the HMAC are encrypted together with 3DES-CBC.
+//! The cipher state carries over from one message to the next, so messages must be unwrapped in
+//! the order the sender wrapped them:
+//!
+//! ```text
+//! +---------+---------------+-----------+----------+-----------+
+//! | message | padding (1-8) | HMAC (10) | type (2) | seqno (4) |
+//! +---------+---------------+-----------+----------+-----------+
+//! |<------------ encrypted ------------>|
+//! ```
+//!
+//! - HMAC: the first 10 bytes of the HMAC-MD5 of the seqno and the message, keyed with the
+//!   sender's integrity key. The padding is not part of the HMAC input.
+//! - padding: only with `auth-conf`. Makes the encrypted part a multiple of 8 bytes. Each padding
+//!   byte is the padding length.
+//! - type: `[0, 1]`. [`SaslSession::decode`] does not check the type.
+//! - seqno: the number of messages the sender has wrapped before this one, big-endian.
+//!   [`SaslSession::decode`] does not check the seqno against the number of messages received.
+//!
+//! [RFC 2831]: https://www.rfc-editor.org/rfc/rfc2831
+
 use std::{
     collections::HashMap,
     fmt::{Display, Formatter},
@@ -255,6 +324,11 @@ impl SecurityContext {
         }
     }
 
+    /// Wraps a message to the server.
+    ///
+    /// - `buf`: the `message` part.
+    /// - Returns one message in the wrapped message format described in the module docs,
+    ///   encrypted if the QOP is `auth-conf`.
     fn encode(&mut self, buf: &[u8]) -> Result<Vec<u8>> {
         // HMAC of the seqno and the message
         let mut mac = HmacMD5::new_from_slice(&self.integrity_keys.client).map_err(|_| {
@@ -290,6 +364,11 @@ impl SecurityContext {
         Ok(body)
     }
 
+    /// Unwraps a message from the server.
+    ///
+    /// - `buf`: one message in the wrapped message format described in the module docs.
+    /// - Returns the `message` part, decrypted if the QOP is `auth-conf`.
+    /// - Fails if `buf` is malformed or the HMAC doesn't match.
     fn decode(&mut self, buf: &[u8]) -> Result<Vec<u8>> {
         let malformed = || HdfsError::SASLError("Malformed DIGEST-MD5 message".to_string());
 
