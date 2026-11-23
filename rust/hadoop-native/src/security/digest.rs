@@ -161,7 +161,10 @@ impl TryFrom<Vec<u8>> for Challenge {
     type Error = HdfsError;
 
     fn try_from(value: Vec<u8>) -> core::result::Result<Self, Self::Error> {
-        let decoded = String::from_utf8(value).unwrap();
+        let decoded = String::from_utf8(value).map_err(|_| {
+            HdfsError::SASLError("DIGEST challenge is not a UTF-8 string".to_string())
+        })?;
+
         let mut options: HashMap<String, String> = HashMap::new();
         for capture in CHALLENGE_PATTERN.captures_iter(&decoded) {
             let key = capture.get(1).unwrap().as_str().to_string();
@@ -191,7 +194,9 @@ impl TryFrom<Vec<u8>> for Challenge {
             .collect::<Result<Vec<Qop>>>()?;
         let maxbuf: u32 = options
             .get("maxbuf")
-            .map(|mb| mb.parse().unwrap())
+            .map(|mb| mb.parse())
+            .transpose()
+            .map_err(|_| HdfsError::SASLError("Invalid maxbuf in DIGEST challenge".to_string()))?
             .unwrap_or(65536);
         let cipher = options
             .remove("cipher")
@@ -383,7 +388,11 @@ impl SaslSession for DigestSaslSession {
         match core::mem::replace(&mut self.state, DigestState::Errored) {
             DigestState::Pending => {
                 // First step, token is a challenge
-                let challenge: Challenge = token.unwrap().try_into().unwrap();
+                let challenge: Challenge = token
+                    .ok_or_else(|| {
+                        HdfsError::SASLError("No DIGEST challenge from server".to_string())
+                    })?
+                    .try_into()?;
 
                 let qop = choose_qop(challenge.qop)?;
                 let cipher = match (qop, &challenge.cipher) {
@@ -425,9 +434,14 @@ impl SaslSession for DigestSaslSession {
                 Ok((message.as_bytes().to_vec(), false))
             }
             DigestState::Stepped(ctx) => {
-                let token_str = String::from_utf8(token.unwrap().to_vec()).map_err(|_| {
+                let token = token.ok_or_else(|| {
+                    HdfsError::SASLError("No DIGEST response from server".to_string())
+                })?;
+
+                let token_str = String::from_utf8(token.to_vec()).map_err(|_| {
                     HdfsError::SASLError("Failed to parse token as UTF-8 string".to_string())
                 })?;
+
                 if let Some(captures) = RESPONSE_PATTERN.captures(&token_str) {
                     let rspauth = captures.get(1).unwrap();
                     if rspauth.as_str() != self.compute(&ctx, false) {
@@ -524,46 +538,47 @@ impl SaslSession for DigestSaslSession {
     fn decode(&mut self, buf: &[u8]) -> crate::Result<Vec<u8>> {
         match &mut self.state {
             DigestState::Completed(Some(ctx)) => {
-                let (message, hmac) = if let Some(decryptor) = &mut ctx.decryptor {
-                    // All but last 6 bytes are encrypted
-                    let mut message = buf[..buf.len() - 6].to_vec();
-                    let mut dec_bytes = 0;
-                    while dec_bytes < message.len() {
-                        let block =
-                            <&mut Array<_, _>>::try_from(&mut message[dec_bytes..dec_bytes + 8])
-                                .map_err(|_| {
-                                    HdfsError::SASLError(
-                                        "Invalid DIGEST-MD5 decryption block length".to_string(),
-                                    )
-                                })?;
-                        decryptor.decrypt_block(block);
-                        dec_bytes += 8;
+                let malformed = || HdfsError::SASLError("Malformed DIGEST-MD5 message".to_string());
+
+                // buf is [body][type (2)][seqno (4)]
+                let (rest, seq_num) = buf.split_last_chunk::<4>().ok_or_else(malformed)?;
+                let (body, _msg_type) = rest.split_last_chunk::<2>().ok_or_else(malformed)?;
+                let mut body = body.to_vec();
+
+                // With auth-conf, the body is encrypted in blocks of 8 bytes
+                if let Some(decryptor) = &mut ctx.decryptor {
+                    let (blocks, remainder) = body.as_chunks_mut::<8>();
+                    if !remainder.is_empty() {
+                        return Err(HdfsError::SASLError(
+                            "Invalid DIGEST-MD5 decryption block length".to_string(),
+                        ));
                     }
+                    for block in blocks {
+                        decryptor.decrypt_block(block.into());
+                    }
+                }
 
-                    // Split HMAC off
-                    let hmac = message.split_off(message.len() - 10);
-                    // Remove padding at the end of the message
-                    let _ = message.split_off(message.len() - *message.last().unwrap() as usize);
-
-                    (message, hmac)
-                } else {
-                    // Not encrypted, last 16 bytes are 10 bytes of HMAC, 2 bytes of type, and 4 bytes of seqno
-                    let mut message = buf[..buf.len() - 6].to_vec();
-                    let hmac = message.split_off(message.len() - 10);
-                    (message, hmac)
-                };
+                // The body is [message][HMAC (10)], or with auth-conf,
+                // [message][padding (1-8)][HMAC (10)]
+                let (mut message, hmac) = body.split_last_chunk::<10>().ok_or_else(malformed)?;
+                if ctx.decryptor.is_some() {
+                    // The last byte of the padding is the padding length
+                    let padding = usize::from(*message.last().ok_or_else(malformed)?);
+                    let message_len = message.len().checked_sub(padding).ok_or_else(malformed)?;
+                    message = &message[..message_len];
+                }
 
                 let mut mac =
                     HmacMD5::new_from_slice(&ctx.integrity_keys.server).map_err(|_| {
                         HdfsError::SASLError("Invalid DIGEST-MD5 server integrity key".to_string())
                     })?;
-                mac.update(&buf[buf.len() - 4..]);
-                mac.update(&message);
-
-                mac.verify_truncated_left(&hmac)
+                mac.update(seq_num);
+                mac.update(message);
+                mac.verify_truncated_left(hmac)
                     .map_err(|_| HdfsError::SASLError("Integrity HMAC check failed".to_string()))?;
 
-                Ok(message.to_vec())
+                body.truncate(message.len());
+                Ok(body)
             }
             DigestState::Completed(None) => Err(HdfsError::SASLError(
                 "QOP doesn't support security layer".to_string(),
@@ -585,12 +600,126 @@ impl SaslSession for DigestSaslSession {
 
 #[cfg(test)]
 mod test {
+    use crate::HadoopError;
     use crate::security::{
-        digest::{Challenge, DigestContext, Qop},
+        digest::{Challenge, DigestContext, DigestState, KeyPair, Qop, SecurityContext},
+        sasl::SaslSession,
         user::Token,
     };
 
     use super::DigestSaslSession;
+
+    fn session(state: DigestState) -> DigestSaslSession {
+        DigestSaslSession {
+            state,
+            ..DigestSaslSession::new(
+                "hdfs".to_string(),
+                "0".to_string(),
+                "user".to_string(),
+                "password".to_string(),
+            )
+        }
+    }
+
+    /// Client and server keys are equal, so the session can decode its own messages
+    fn established_session(encrypted: bool) -> DigestSaslSession {
+        let keys = || KeyPair {
+            client: (0..16).collect(),
+            server: (0..16).collect(),
+        };
+        session(DigestState::Completed(Some(SecurityContext::new(
+            keys(),
+            encrypted.then(keys),
+        ))))
+    }
+
+    #[test]
+    fn test_invalid_challenge() {
+        let challenges: [Option<&[u8]>; 6] = [
+            None,
+            Some(&[0xff, 0xfe]),
+            Some(br#"nonce="abc",qop="auth""#),
+            Some(br#"realm="default",qop="auth""#),
+            Some(br#"realm="default",nonce="abc""#),
+            Some(br#"realm="default",nonce="abc",qop="auth",maxbuf=large"#),
+        ];
+
+        for challenge in challenges {
+            let result = session(DigestState::Pending).step(challenge);
+            assert!(
+                matches!(result, Err(HadoopError::SASLError(_))),
+                "{challenge:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_invalid_server_response() {
+        for response in [None, Some(&[0xff, 0xfe][..])] {
+            let mut session = session(DigestState::Stepped(DigestContext {
+                nonce: "nonce".to_string(),
+                cnonce: "cnonce".to_string(),
+                realm: "default".to_string(),
+                qop: Qop::Auth,
+            }));
+            assert!(
+                matches!(session.step(response), Err(HadoopError::SASLError(_))),
+                "{response:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_decode_round_trip() {
+        for encrypted in [false, true] {
+            for len in 0..=17 {
+                let message: Vec<u8> = (0..len).collect();
+                let mut session = established_session(encrypted);
+
+                let encoded = session.encode(&message).unwrap();
+                assert_eq!(
+                    session.decode(&encoded).unwrap(),
+                    message,
+                    "{encrypted} {len}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_truncated() {
+        for encrypted in [false, true] {
+            let encoded = established_session(encrypted).encode(b"message").unwrap();
+
+            for end in 0..encoded.len() {
+                let result = established_session(encrypted).decode(&encoded[..end]);
+                assert!(
+                    matches!(result, Err(HadoopError::SASLError(_))),
+                    "{encrypted} {end}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_corrupted() {
+        for encrypted in [false, true] {
+            let encoded = established_session(encrypted).encode(b"message").unwrap();
+
+            // Every byte except the 2 type bytes, which are not checked.
+            // With encryption, flipping byte 5 sets the padding length (byte 13) to 0xf8 via CBC.
+            let type_bytes = encoded.len() - 6..encoded.len() - 4;
+            for index in (0..encoded.len()).filter(|i| !type_bytes.contains(i)) {
+                let mut corrupted = encoded.clone();
+                corrupted[index] ^= 0xff;
+                let result = established_session(encrypted).decode(&corrupted);
+                assert!(
+                    matches!(result, Err(HadoopError::SASLError(_))),
+                    "{encrypted} {index}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_challenge_parse() {
