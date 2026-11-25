@@ -1,17 +1,20 @@
 use std::{
     collections::HashSet,
     env,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader},
     path::PathBuf,
     process::{Child, Command, Stdio},
+};
+#[cfg(unix)]
+use std::{
     thread,
     time::{Duration, Instant},
 };
 use which::which;
 
+#[cfg(unix)]
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(unix)]
-const TERMINATION_GRACE_PERIOD: Duration = Duration::from_secs(1);
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -94,7 +97,7 @@ impl MiniDfs {
                     feature_args.join(" ")
                 ),
             ])
-            .stdin(Stdio::piped())
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
 
@@ -208,13 +211,7 @@ impl Default for MiniDfs {
 impl Drop for MiniDfs {
     fn drop(&mut self) {
         println!("Dropping and killing minidfs");
-        if let Some(mut stdin) = self.process.stdin.take() {
-            let _ = stdin.write_all(b"\n");
-        }
-
-        if !wait_for_child_exit(&mut self.process, SHUTDOWN_TIMEOUT) {
-            terminate_process_tree(&mut self.process);
-        }
+        terminate_process_tree(&mut self.process);
         let _ = self.process.wait();
 
         if self.features.contains(&DfsFeatures::Security) {
@@ -223,16 +220,31 @@ impl Drop for MiniDfs {
     }
 }
 
-fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> bool {
+#[cfg(unix)]
+fn terminate_process_tree(child: &mut Child) {
+    let process_group = child.id() as libc::pid_t;
+    signal_process_group(process_group, libc::SIGTERM);
+    if !wait_for_process_group_exit(child, process_group, SHUTDOWN_TIMEOUT) {
+        signal_process_group(process_group, libc::SIGKILL);
+    }
+}
+
+#[cfg(unix)]
+fn wait_for_process_group_exit(
+    child: &mut Child,
+    process_group: libc::pid_t,
+    timeout: Duration,
+) -> bool {
     let start = Instant::now();
     loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return true,
-            Ok(None) => {}
-            Err(error) => {
-                eprintln!("Failed to check MiniDFS process status: {error}");
-                return false;
-            }
+        if let Err(error) = child.try_wait() {
+            eprintln!("Failed to check MiniDFS process status: {error}");
+        }
+
+        // Maven exits before its Java child has finished running shutdown hooks,
+        // so check the whole process group instead of only the Maven process.
+        if !process_group_exists(process_group) {
+            return true;
         }
 
         if start.elapsed() >= timeout {
@@ -243,11 +255,15 @@ fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> bool {
 }
 
 #[cfg(unix)]
-fn terminate_process_tree(child: &mut Child) {
-    let process_group = child.id() as libc::pid_t;
-    signal_process_group(process_group, libc::SIGTERM);
-    if !wait_for_child_exit(child, TERMINATION_GRACE_PERIOD) {
-        signal_process_group(process_group, libc::SIGKILL);
+fn process_group_exists(process_group: libc::pid_t) -> bool {
+    if unsafe { libc::kill(-process_group, 0) } == 0 {
+        return true;
+    }
+
+    match std::io::Error::last_os_error().raw_os_error() {
+        Some(libc::ESRCH) => false,
+        Some(libc::EPERM) => true,
+        _ => true,
     }
 }
 
