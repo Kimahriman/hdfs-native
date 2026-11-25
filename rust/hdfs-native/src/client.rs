@@ -100,6 +100,10 @@ struct MountLink {
     viewfs_path: String,
     hdfs_path: String,
     protocol: Arc<NamenodeProtocol>,
+    // KMS client from the `keyProviderUri` that this link's NameNode reports. Built on first
+    // use, and only when the config does not set `hadoop.security.key.provider.path`.
+    #[cfg(feature = "kms")]
+    server_kms_client: Arc<tokio::sync::OnceCell<Option<Arc<KmsClient>>>>,
 }
 
 impl MountLink {
@@ -109,6 +113,8 @@ impl MountLink {
             viewfs_path: viewfs_path.trim_end_matches("/").to_string(),
             hdfs_path: hdfs_path.trim_end_matches("/").to_string(),
             protocol,
+            #[cfg(feature = "kms")]
+            server_kms_client: Arc::default(),
         }
     }
     /// Convert a viewfs path into a name service path if it matches this link
@@ -439,13 +445,9 @@ pub struct Client {
     // inside a tokio runtime, we will create our own to use.
     rt_holder: RuntimeHolder,
     // Built once at client construction from `hadoop.security.key.provider.path`.
-    // `None` means the config does not set it; see `server_kms_clients`.
+    // `None` means the config does not set it; see `MountLink::server_kms_client`.
     #[cfg(feature = "kms")]
     kms_client: Option<Arc<KmsClient>>,
-    // Built on demand from the `keyProviderUri` that a NameNode reports, keyed by that URI,
-    // when `kms_client` is `None`. A ViewFS client can span NameNodes with different KMSs.
-    #[cfg(feature = "kms")]
-    server_kms_clients: Arc<tokio::sync::Mutex<HashMap<String, Arc<KmsClient>>>>,
     #[cfg(feature = "kms")]
     kms_user: String,
     #[cfg(feature = "kms")]
@@ -551,8 +553,6 @@ impl Client {
             rt_holder,
             #[cfg(feature = "kms")]
             kms_client,
-            #[cfg(feature = "kms")]
-            server_kms_clients: Arc::default(),
             #[cfg(feature = "kms")]
             kms_user: username.to_string(),
             #[cfg(feature = "kms")]
@@ -784,7 +784,7 @@ impl Client {
             };
 
             let crypto = self
-                .build_crypto_codec(&link.protocol, locations.file_encryption_info.as_ref())
+                .build_crypto_codec(link, locations.file_encryption_info.as_ref())
                 .await?;
 
             Ok(FileReader::new(
@@ -805,7 +805,7 @@ impl Client {
     /// is encrypted but no KMS is configured for this client.
     async fn build_crypto_codec(
         &self,
-        protocol: &NamenodeProtocol,
+        link: &MountLink,
         info: Option<&FileEncryptionInfoProto>,
     ) -> Result<Option<Arc<FileCryptoCodec>>> {
         let Some(info) = info else {
@@ -813,7 +813,7 @@ impl Client {
         };
         #[cfg(feature = "kms")]
         {
-            let kms = self.kms_client(protocol).await?.ok_or_else(|| {
+            let kms = self.kms_client(link).await?.ok_or_else(|| {
                 HdfsError::OperationFailed(
                     "File is in an HDFS encryption zone but no KMS provider is configured \
                      (set `hadoop.security.key.provider.path` in core-site.xml, or on the \
@@ -826,7 +826,7 @@ impl Client {
         }
         #[cfg(not(feature = "kms"))]
         {
-            let _ = (protocol, info);
+            let _ = (link, info);
             Err(HdfsError::UnsupportedFeature(
                 "file is in an HDFS encryption zone; reading or writing it requires \
                  building hdfs-native with the `kms` cargo feature"
@@ -835,36 +835,26 @@ impl Client {
         }
     }
 
-    /// The KMS client for a file served by `protocol`. Uses `hadoop.security.key.provider.path`
-    /// when the config sets it. Otherwise uses the `keyProviderUri` in the NameNode's server
-    /// defaults, like the Java client.
+    /// The KMS client for a file behind `link`. Uses `hadoop.security.key.provider.path` when
+    /// the config sets it. Otherwise uses the `keyProviderUri` in the server defaults of the
+    /// link's NameNode, like the Java client.
     #[cfg(feature = "kms")]
-    async fn kms_client(&self, protocol: &NamenodeProtocol) -> Result<Option<Arc<KmsClient>>> {
+    async fn kms_client(&self, link: &MountLink) -> Result<Option<Arc<KmsClient>>> {
         if let Some(kms) = &self.kms_client {
             return Ok(Some(Arc::clone(kms)));
         }
-        let Some(uri) = protocol
-            .get_cached_server_defaults()
-            .await?
-            .key_provider_uri
-            .filter(|uri| !uri.trim().is_empty())
-        else {
-            return Ok(None);
-        };
-        let mut clients = self.server_kms_clients.lock().await;
-        if let Some(kms) = clients.get(&uri) {
-            return Ok(Some(Arc::clone(kms)));
-        }
-        let kms = KmsClient::from_config(
-            self.config.as_ref(),
-            Some(&uri),
-            self.kms_user.clone(),
-            self.kms_auth.clone(),
-        )?;
-        if let Some(kms) = &kms {
-            clients.insert(uri, Arc::clone(kms));
-        }
-        Ok(kms)
+        link.server_kms_client
+            .get_or_try_init(|| async {
+                let defaults = link.protocol.get_cached_server_defaults().await?;
+                KmsClient::from_config(
+                    self.config.as_ref(),
+                    defaults.key_provider_uri.as_deref(),
+                    self.kms_user.clone(),
+                    self.kms_auth.clone(),
+                )
+            })
+            .await
+            .cloned()
     }
 
     /// Opens a new file for writing. See [WriteOptions] for options and behavior for different
@@ -893,7 +883,7 @@ impl Client {
         match create_response.fs {
             Some(status) => {
                 let crypto = match self
-                    .build_crypto_codec(&link.protocol, status.file_encryption_info.as_ref())
+                    .build_crypto_codec(link, status.file_encryption_info.as_ref())
                     .await
                 {
                     Ok(c) => c,
@@ -942,7 +932,7 @@ impl Client {
         match append_response.stat {
             Some(status) => {
                 let crypto = match self
-                    .build_crypto_codec(&link.protocol, status.file_encryption_info.as_ref())
+                    .build_crypto_codec(link, status.file_encryption_info.as_ref())
                     .await
                 {
                     Ok(c) => c,
