@@ -29,6 +29,27 @@ mod test {
         assert_append_to_encrypted_file(&client).await;
     }
 
+    /// Without `hadoop.security.key.provider.path` in the client config, the
+    /// client uses the `keyProviderUri` that the NameNode reports.
+    #[tokio::test]
+    #[serial]
+    async fn test_kms_provider_from_namenode() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let features = HashSet::from([DfsFeatures::Kms]);
+        let dfs = MiniDfs::with_features(&features);
+        let empty_conf_dir = tempfile::tempdir().unwrap();
+        let client = ClientBuilder::new()
+            .with_url(&dfs.url)
+            .with_config_dir(empty_conf_dir.path().to_str().unwrap())
+            .build()
+            .unwrap();
+
+        assert_read_encrypted_file(&client).await;
+        assert_write_then_read_encrypted_file(&client).await;
+        assert_append_to_encrypted_file(&client).await;
+    }
+
     async fn assert_read_encrypted_file(client: &hdfs_native::Client) {
         // Java side wrote this exact payload into /ezone/file.
         let expected = b"hdfs-native TDE round-trip test payload";
