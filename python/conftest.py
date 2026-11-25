@@ -1,7 +1,9 @@
 import asyncio
 import inspect
 import os
+import signal
 import subprocess
+import time
 
 import pytest
 import pytest_asyncio
@@ -23,9 +25,10 @@ def minidfs():
             "exec:exec",
             "-Dexec.args=-cp %classpath main.Main trash",
         ],
-        stdin=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
+        start_new_session=os.name == "posix",
         universal_newlines=True,
         encoding="utf8",
         bufsize=0,
@@ -40,10 +43,33 @@ def minidfs():
 
     yield "hdfs://127.0.0.1:9000"
 
-    try:
-        child.communicate(input="\n", timeout=30)
-    except:  # noqa: E722
-        child.kill()
+    if os.name == "posix":
+        try:
+            os.killpg(child.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            child.poll()
+            try:
+                os.killpg(child.pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    else:
+        child.send_signal(signal.SIGTERM)
+        try:
+            child.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            child.kill()
+
+    child.wait()
 
 
 @pytest.fixture
