@@ -14,7 +14,6 @@ base64 = "0.23"
 bumpalo = "3"
 bytes = { workspace = true }
 cbc = "0.2"
-chrono = "0.4"
 cipher = "0.5"
 des = "0.9"
 hex = "0.4"
