@@ -94,6 +94,9 @@ pub struct RpcConnectionOptions<'a> {
     pub protocol: &'a str,
     pub token_kind: &'a str,
     pub token_service: &'a str,
+    /// Other services to look tokens up by in `HADOOP_TOKEN_FILE_LOCATION`, after
+    /// `token_service`, such as the address a token issued under an older naming scheme names.
+    pub token_service_aliases: Vec<String>,
     pub effective_user: Option<String>,
     pub auth: Option<Arc<crate::security::ClientAuth>>,
     /// A token to authenticate with, taking precedence over tokens of `token_kind` in
@@ -189,11 +192,14 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
         // Service class
         stream.write_all(&[0u8]).await?;
         // Auth protocol
+        let token_services: Vec<String> = std::iter::once(options.token_service.to_string())
+            .chain(options.token_service_aliases)
+            .collect();
         let sasl = use_sasl(
             config,
             options.token.as_ref(),
             options.token_kind,
-            options.token_service,
+            &token_services,
         );
         if sasl {
             stream.write_all(&(-33i8).to_be_bytes()).await?;
@@ -204,7 +210,7 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
         let negotiation = negotiate_sasl_session(
             stream,
             options.token_kind,
-            options.token_service,
+            &token_services,
             config,
             options.effective_user,
             options.auth,
@@ -675,6 +681,7 @@ mod tests {
             protocol: "org.apache.hadoop.example.Protocol",
             token_kind: "EXAMPLE_TOKEN",
             token_service: "example",
+            token_service_aliases: Vec::new(),
             effective_user: None,
             auth: None,
             token: None,
@@ -733,6 +740,7 @@ mod tests {
                 protocol: "org.apache.hadoop.example.Protocol",
                 token_kind: "EXAMPLE_TOKEN",
                 token_service: "example",
+                token_service_aliases: Vec::new(),
                 effective_user: None,
                 auth: None,
                 token: Some(crate::security::user::Token::new(
@@ -803,6 +811,7 @@ mod tests {
                 protocol: "org.apache.hadoop.example.Protocol",
                 token_kind: "EXAMPLE_TOKEN",
                 token_service: "example",
+                token_service_aliases: Vec::new(),
                 effective_user: None,
                 auth: None,
                 token: None,
@@ -902,6 +911,7 @@ mod tests {
             protocol: "org.apache.hadoop.example.Protocol",
             token_kind: "EXAMPLE_TOKEN",
             token_service: "example",
+            token_service_aliases: Vec::new(),
             effective_user: None,
             auth: None,
             token: Some(crate::security::user::Token::new(
@@ -984,6 +994,7 @@ mod tests {
             protocol: "org.apache.hadoop.example.Protocol",
             token_kind: "EXAMPLE_TOKEN",
             token_service: "example",
+            token_service_aliases: Vec::new(),
             effective_user: None,
             auth: None,
             token: Some(crate::security::user::Token::new(

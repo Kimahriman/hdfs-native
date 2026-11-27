@@ -58,7 +58,7 @@ pub trait SaslSession: Send + Sync {
 pub(crate) async fn negotiate_sasl_session(
     stream: TcpStream,
     token_kind: &str,
-    service: &str,
+    services: &[String],
     config: &Configuration,
     effective_user: Option<String>,
     auth: Option<std::sync::Arc<crate::security::ClientAuth>>,
@@ -93,7 +93,7 @@ pub(crate) async fn negotiate_sasl_session(
             SaslState::Negotiate => {
                 let auths = std::mem::take(&mut message.auths);
                 let token_kind = token_kind.to_owned();
-                let service = service.to_owned();
+                let services = services.to_vec();
                 let effective_user = effective_user.clone();
                 let auth = auth.clone();
                 let token = token.clone();
@@ -101,7 +101,7 @@ pub(crate) async fn negotiate_sasl_session(
                     select_method(
                         &auths,
                         &token_kind,
-                        &service,
+                        &services,
                         effective_user,
                         auth,
                         token,
@@ -214,16 +214,16 @@ pub(crate) async fn negotiate_sasl_session(
 
 /// Whether a connection should negotiate SASL rather than use simple authentication. Like
 /// Hadoop's Java client, it does when security is enabled or when it has a token to use: one the
-/// caller supplied, or one for this connection's service in `HADOOP_TOKEN_FILE_LOCATION`.
+/// caller supplied, or one for this connection's services in `HADOOP_TOKEN_FILE_LOCATION`.
 pub(crate) fn use_sasl(
     config: &Configuration,
     token: Option<&Token>,
     token_kind: &str,
-    service: &str,
+    services: &[String],
 ) -> bool {
     config.security_enabled()
         || token.is_some()
-        || User::get().get_token(token_kind, service).is_some()
+        || User::get().find_token(token_kind, services).is_some()
 }
 
 async fn step_session(
@@ -259,7 +259,7 @@ where
 fn select_method(
     auths: &[SaslAuth],
     token_kind: &str,
-    service: &str,
+    services: &[String],
     effective_user: Option<String>,
     client_auth: Option<std::sync::Arc<crate::security::ClientAuth>>,
     explicit_token: Option<Token>,
@@ -271,7 +271,7 @@ fn select_method(
     let token = explicit_token.as_ref().or_else(|| {
         client_auth
             .is_none()
-            .then(|| user.get_token(token_kind, service))
+            .then(|| user.find_token(token_kind, services))
             .flatten()
     });
     for auth in auths.iter() {
@@ -460,6 +460,10 @@ impl std::fmt::Debug for SaslWriter {
 
 #[cfg(test)]
 mod tests {
+    fn rm() -> Vec<String> {
+        vec!["rm:8030".to_string()]
+    }
+
     use std::collections::HashMap;
 
     use super::{select_method, use_sasl};
@@ -498,14 +502,9 @@ mod tests {
         )
         .unwrap();
 
-        assert!(!use_sasl(&simple, None, "YARN_AM_RM_TOKEN", "rm:8030"));
-        assert!(use_sasl(
-            &simple,
-            Some(&token()),
-            "YARN_AM_RM_TOKEN",
-            "rm:8030"
-        ));
-        assert!(use_sasl(&kerberos, None, "YARN_AM_RM_TOKEN", "rm:8030"));
+        assert!(!use_sasl(&simple, None, "YARN_AM_RM_TOKEN", &rm()));
+        assert!(use_sasl(&simple, Some(&token()), "YARN_AM_RM_TOKEN", &rm()));
+        assert!(use_sasl(&kerberos, None, "YARN_AM_RM_TOKEN", &rm()));
     }
 
     #[test]
@@ -513,7 +512,7 @@ mod tests {
         let (selected, session) = select_method(
             &[auth("TOKEN", "DIGEST-MD5")],
             "YARN_AM_RM_TOKEN",
-            "rm:8030",
+            &rm(),
             None,
             None,
             Some(token()),
@@ -530,7 +529,7 @@ mod tests {
         let (selected, _) = select_method(
             &[auth("KERBEROS", "GSSAPI"), auth("TOKEN", "DIGEST-MD5")],
             "YARN_AM_RM_TOKEN",
-            "rm:8030",
+            &rm(),
             None,
             None,
             Some(token()),
@@ -546,7 +545,7 @@ mod tests {
         let error = select_method(
             &[auth("TOKEN", "DIGEST-MD5")],
             "YARN_AM_RM_TOKEN",
-            "rm:8030",
+            &rm(),
             None,
             None,
             None,
@@ -563,7 +562,7 @@ mod tests {
         let (selected, session) = select_method(
             &[auth("SIMPLE", "")],
             "YARN_AM_RM_TOKEN",
-            "rm:8030",
+            &rm(),
             None,
             None,
             Some(token()),

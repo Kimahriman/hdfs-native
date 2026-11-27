@@ -678,6 +678,13 @@ impl User {
                 .any(|token_service| token_service.trim() == service)
     }
 
+    /// The first usable token of `kind` for any of `services`, tried in order.
+    pub(crate) fn find_token(&self, kind: &str, services: &[String]) -> Option<&Token> {
+        services
+            .iter()
+            .find_map(|service| self.get_token(kind, service))
+    }
+
     pub(crate) fn get_token(&self, kind: &str, service: &str) -> Option<&Token> {
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -831,6 +838,33 @@ mod tests {
         let identifier = vec![0x0a, 0x04, 0x08, 0x01, 0x10, 0x02];
         assert!(TokenIdentifier::try_from(identifier).is_err());
         assert!(TokenIdentifier::try_from(Vec::new()).is_err());
+    }
+
+    #[test]
+    fn test_find_token_tries_services_in_order() {
+        let token = |service: &str| Token::new(b"id".to_vec(), b"pw".to_vec(), "KIND", service);
+        let user = User {
+            tokens: vec![token("namenode:9000"), token("10.0.0.1:9000")],
+        };
+        let services = |names: &[&str]| {
+            names
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>()
+        };
+
+        let found = user
+            .find_token("KIND", &services(&["10.0.0.1:9000", "namenode:9000"]))
+            .unwrap();
+        assert_eq!(found.service(), "10.0.0.1:9000");
+        let found = user
+            .find_token("KIND", &services(&["10.0.0.2:9000", "namenode:9000"]))
+            .unwrap();
+        assert_eq!(found.service(), "namenode:9000");
+        assert!(
+            user.find_token("KIND", &services(&["other:9000"]))
+                .is_none()
+        );
     }
 
     #[test]

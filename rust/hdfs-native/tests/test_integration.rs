@@ -110,6 +110,21 @@ mod test {
             if let Some(by_hostname) = hostname_url(url) {
                 let hostname_client = ClientBuilder::new().with_url(&by_hostname).build().unwrap();
                 test_feature_round_trip(&hostname_client).await.unwrap();
+
+                // Tokens named by the hostname, as hdfs-native named them before, still work
+                let mut named_by_host = token.clone();
+                named_by_host.set_service(by_hostname.trim_start_matches("hdfs://"));
+                let host_token_file = "target/test/rust_delegation_token_by_host";
+                Credentials::from(vec![named_by_host])
+                    .write_token_file(
+                        std::path::Path::new(host_token_file),
+                        SerializedFormat::Writable,
+                    )
+                    .unwrap();
+                let _host_token_guard =
+                    EnvVarGuard::set("HADOOP_TOKEN_FILE_LOCATION", host_token_file);
+                let hostname_client = ClientBuilder::new().with_url(&by_hostname).build().unwrap();
+                test_feature_round_trip(&hostname_client).await.unwrap();
             }
 
             client.cancel_delegation_token(token).await.unwrap();

@@ -44,6 +44,8 @@ struct ProxyConnection {
     alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
     /// The service of delegation tokens for this NameNode
     token_service: String,
+    /// Other services that name tokens for this NameNode, tried after `token_service`
+    token_service_aliases: Vec<String>,
     effective_user: Option<String>,
     auth: Option<Arc<ClientAuth>>,
     config: Arc<Configuration>,
@@ -100,11 +102,21 @@ impl ProxyConnection {
         config: Arc<Configuration>,
         handle: Handle,
     ) -> Self {
+        // Tokens named by the address in the URL, as hdfs-native named them before resolving
+        // addresses like Java, and, in an HA name service, tokens for this NameNode's own
+        // address, like the ones Hadoop clones from the logical token
+        let mut token_service_aliases = Vec::new();
+        for alias in [config.token_service(&url), url.clone()] {
+            if alias != token_service && !token_service_aliases.contains(&alias) {
+                token_service_aliases.push(alias);
+            }
+        }
         ProxyConnection {
             url,
             inner: Arc::new(tokio::sync::Mutex::new(None)),
             alignment_context,
             token_service,
+            token_service_aliases,
             effective_user,
             auth,
             config,
@@ -131,6 +143,7 @@ impl ProxyConnection {
                                     protocol: PROTOCOL,
                                     token_kind: TOKEN_KIND,
                                     token_service: &self.token_service,
+                                    token_service_aliases: self.token_service_aliases.clone(),
                                     effective_user: self.effective_user.clone(),
                                     auth: self.auth.clone(),
                                     token: None,

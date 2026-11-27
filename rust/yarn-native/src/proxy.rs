@@ -119,6 +119,7 @@ impl ProxyConnection {
                                     protocol: self.protocol.name,
                                     token_kind: self.protocol.token_kind,
                                     token_service: &self.token_service,
+                                    token_service_aliases: Vec::new(),
                                     effective_user: self.effective_user.clone(),
                                     auth: self.auth.clone(),
                                     token,

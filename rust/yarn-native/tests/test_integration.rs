@@ -877,8 +877,9 @@ mod test {
         let registration = am
             .register_application_master("localhost", 0, Some("http://localhost/tracking"))
             .await?;
-        assert!(registration.maximum_resource_capability.memory_mb >= 128);
-        assert_eq!(registration.queue, "root.default");
+        assert!(registration.maximum_resource_capability.unwrap().memory_mb >= 128);
+        assert_eq!(registration.queue.as_deref(), Some("root.default"));
+        assert!(!registration.recovered);
 
         let report = client.get_application_report(application_id).await?;
         assert_eq!(report.state, ApplicationState::Running);

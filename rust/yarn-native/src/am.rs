@@ -162,14 +162,23 @@ impl AmRmClientBuilder {
     }
 }
 
+/// The ResourceManager's answer to a registration.
+///
+/// If the response to a registration was lost and calling
+/// [`AmRmClient::register_application_master`] again found the ApplicationMaster already
+/// registered, the registration is complete but its response can't be fetched again:
+/// `recovered` is set, the capability and queue are `None`, and containers and NMTokens from
+/// previous attempts are not known.
 #[derive(Debug, Clone)]
 pub struct RegisterResponse {
     /// The most resources the cluster grants a single container.
-    pub maximum_resource_capability: Resource,
-    pub queue: String,
+    pub maximum_resource_capability: Option<Resource>,
+    pub queue: Option<String>,
     /// Containers kept from earlier attempts when the application keeps containers across
     /// attempts.
     pub containers_from_previous_attempts: Vec<Container>,
+    /// Whether this completes a registration whose response was lost.
+    pub recovered: bool,
 }
 
 /// A heartbeat to the ResourceManager. See [`ResourceRequest`] for how asks replace
@@ -325,6 +334,8 @@ struct AllocateState {
     /// Set while registering again, so a registration whose response was lost is completed
     /// before the next heartbeat.
     reregistering: bool,
+    /// A first registration whose outcome is unknown because its response was lost.
+    unconfirmed_registration: Option<RegisterApplicationMasterRequestProto>,
     changes: Changes,
     /// The state before the unsent changes, restored if the ResourceManager rejects them.
     unsent_rollback: Option<Box<Changes>>,
@@ -535,16 +546,52 @@ impl AmRmClient {
             ..Default::default()
         };
         let mut state = self.state.lock().await;
-        let response = self.register(&mut state, request).await?;
+        let response = match self.register(&mut state, request.clone()).await {
+            Ok(response) => response,
+            // The ResourceManager rejects a second registration, so if the response to an
+            // earlier one with the same settings was lost, this means it succeeded
+            Err(error)
+                if is_already_registered_error(&error)
+                    && state.registration.is_none()
+                    && state.unconfirmed_registration.as_ref() == Some(&request) =>
+            {
+                warn!(
+                    "The response to registering the ApplicationMaster was lost, but the \
+                     registration succeeded"
+                );
+                state.unconfirmed_registration = None;
+                state.last_response_id = 0;
+                state.registration = Some(request);
+                return Ok(RegisterResponse {
+                    maximum_resource_capability: None,
+                    queue: None,
+                    containers_from_previous_attempts: Vec::new(),
+                    recovered: true,
+                });
+            }
+            Err(error) => {
+                // Unless the ResourceManager answered, it may have registered the
+                // ApplicationMaster without the response arriving
+                if !matches!(
+                    error,
+                    YarnError::RPCError(..) | YarnError::FatalRPCError(..)
+                ) {
+                    state.unconfirmed_registration = Some(request);
+                }
+                return Err(error);
+            }
+        };
+        state.unconfirmed_registration = None;
 
         Ok(RegisterResponse {
-            maximum_resource_capability: response.maximum_capability.unwrap_or_default().into(),
-            queue: response.queue.unwrap_or_default(),
+            maximum_resource_capability: response.maximum_capability.map(Into::into),
+            queue: response.queue,
             containers_from_previous_attempts: response
                 .containers_from_previous_attempts
                 .into_iter()
                 .map(Into::into)
                 .collect(),
+            recovered: false,
         })
     }
 
@@ -1182,5 +1229,125 @@ mod test {
             INVALID_AM_REQUEST_EXCEPTION.to_string(),
             "Invalid responseId in AllocateRequest".to_string(),
         )));
+    }
+
+    /// A ResourceManager that drops the first registration's response, then rejects the retry
+    /// as a duplicate, like a real one that handled the first.
+    async fn lossy_resource_manager() -> String {
+        use hadoop_native::proto::common::{
+            RpcRequestHeaderProto, RpcResponseHeaderProto, RpcSaslProto,
+            rpc_response_header_proto::RpcStatusProto,
+            rpc_sasl_proto::{SaslAuth, SaslState},
+        };
+        use prost::Message;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        async fn read_message(socket: &mut tokio::net::TcpStream) -> Vec<u8> {
+            let mut length = [0u8; 4];
+            socket.read_exact(&mut length).await.unwrap();
+            let mut message = vec![0u8; u32::from_be_bytes(length) as usize];
+            socket.read_exact(&mut message).await.unwrap();
+            message
+        }
+
+        async fn send(socket: &mut tokio::net::TcpStream, messages: &[Vec<u8>]) {
+            let length: usize = messages.iter().map(Vec::len).sum();
+            socket
+                .write_all(&(length as u32).to_be_bytes())
+                .await
+                .unwrap();
+            for message in messages {
+                socket.write_all(message).await.unwrap();
+            }
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            for connection in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut header = [0u8; 7];
+                socket.read_exact(&mut header).await.unwrap();
+                read_message(&mut socket).await;
+                let sasl_header = RpcResponseHeaderProto {
+                    call_id: -33i32 as u32,
+                    status: RpcStatusProto::Success as i32,
+                    ..Default::default()
+                };
+                let negotiate = RpcSaslProto {
+                    state: SaslState::Negotiate as i32,
+                    auths: vec![SaslAuth {
+                        method: "SIMPLE".to_string(),
+                        mechanism: String::new(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                };
+                send(
+                    &mut socket,
+                    &[
+                        sasl_header.encode_length_delimited_to_vec(),
+                        negotiate.encode_length_delimited_to_vec(),
+                    ],
+                )
+                .await;
+                // The client's choice of SIMPLE, the connection context, then the registration
+                read_message(&mut socket).await;
+                read_message(&mut socket).await;
+                let request = read_message(&mut socket).await;
+                if connection == 0 {
+                    // The ResourceManager registers the ApplicationMaster, but the response
+                    // never arrives
+                    continue;
+                }
+                let call_id = RpcRequestHeaderProto::decode_length_delimited(&request[..])
+                    .unwrap()
+                    .call_id;
+                let error = RpcResponseHeaderProto {
+                    call_id: call_id as u32,
+                    status: RpcStatusProto::Error as i32,
+                    exception_class_name: Some(INVALID_AM_REQUEST_EXCEPTION.to_string()),
+                    error_msg: Some(
+                        "Application Master is already registered : application_1_0001".to_string(),
+                    ),
+                    ..Default::default()
+                };
+                send(&mut socket, &[error.encode_length_delimited_to_vec()]).await;
+                let mut rest = Vec::new();
+                let _ = socket.read_to_end(&mut rest).await;
+            }
+        });
+        address
+    }
+
+    #[tokio::test]
+    async fn test_a_registration_whose_response_was_lost_is_recovered() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let address = lossy_resource_manager().await;
+        let client = AmRmClientBuilder::new()
+            .with_config([
+                ("yarn.resourcemanager.scheduler.address", address.as_str()),
+                ("ipc.client.fallback-to-simple-auth-allowed", "true"),
+                ("ipc.client.rpc-timeout.ms", "3000"),
+            ])
+            .with_am_rm_token(token())
+            .build()
+            .unwrap();
+
+        let error = client
+            .register_application_master("am-host", 0, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, YarnError::IOError(_)), "{error:?}");
+
+        let response = client
+            .register_application_master("am-host", 0, None)
+            .await
+            .unwrap();
+        assert!(response.recovered);
+        assert!(response.maximum_resource_capability.is_none());
+        let state = client.state.lock().await;
+        assert!(state.registration.is_some());
+        assert_eq!(state.last_response_id, 0);
     }
 }

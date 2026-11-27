@@ -34,7 +34,7 @@ protobuf-src = { version = "2", optional = true }
 [dev-dependencies]
 env_logger = { workspace = true }
 serial_test = "4"
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "io-util"] }
 
 [[bin]]
 # A minimal ApplicationMaster that the integration tests have YARN launch
