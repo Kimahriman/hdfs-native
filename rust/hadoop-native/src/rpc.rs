@@ -385,10 +385,11 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
                     Some(m) => {
                         m.insert(call_id, response_sender);
                     }
+                    // The request was never sent, so callers may retry it anywhere
                     None => {
                         return Err(HadoopError::IOError(std::io::Error::new(
-                            ErrorKind::ConnectionAborted,
-                            "RPC listener disconnected",
+                            ErrorKind::NotConnected,
+                            "RPC listener disconnected before the request was sent",
                         )));
                     }
                 }
@@ -405,8 +406,8 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
 
             if sender.send(request).await.is_err() {
                 return Err(HadoopError::IOError(std::io::Error::new(
-                    ErrorKind::ConnectionAborted,
-                    "RPC sender disconnected",
+                    ErrorKind::NotConnected,
+                    "RPC sender disconnected before the request was sent",
                 )));
             }
 
@@ -521,10 +522,16 @@ impl<C: RpcAlignmentContext> RpcListener<C> {
                         rpc_response.exception_class_name(),
                         rpc_response.error_msg()
                     );
-                    return Err(HadoopError::FatalRPCError(
-                        rpc_response.exception_class_name().to_string(),
-                        rpc_response.error_msg().to_string(),
-                    ));
+                    let error = || {
+                        HadoopError::FatalRPCError(
+                            rpc_response.exception_class_name().to_string(),
+                            rpc_response.error_msg().to_string(),
+                        )
+                    };
+                    // The server closes the connection after a fatal error. The call it answered
+                    // gets the error itself, and the other pending calls a disconnect.
+                    let _ = call.send(Err(error()));
+                    return Err(error());
                 }
             }
         }
@@ -743,6 +750,73 @@ mod tests {
 
         assert_eq!(&header[..4], b"hrpc");
         assert_eq!(header[6] as i8, -33, "expected the SASL auth protocol");
+    }
+
+    #[test]
+    fn fatal_responses_reach_the_call() {
+        use prost::Message;
+
+        use crate::proto::common::{
+            RpcRequestHeaderProto, RpcResponseHeaderProto,
+            rpc_response_header_proto::RpcStatusProto,
+        };
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let config = Configuration::new(None, None).unwrap();
+        let error = runtime.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = listener.local_addr().unwrap().to_string();
+            tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut header = [0u8; 7];
+                socket.read_exact(&mut header).await.unwrap();
+                // The connection context, then the call
+                let mut call = Vec::new();
+                for _ in 0..2 {
+                    let mut length = [0u8; 4];
+                    socket.read_exact(&mut length).await.unwrap();
+                    call = vec![0u8; u32::from_be_bytes(length) as usize];
+                    socket.read_exact(&mut call).await.unwrap();
+                }
+                let request = RpcRequestHeaderProto::decode_length_delimited(&call[..]).unwrap();
+                let response = RpcResponseHeaderProto {
+                    call_id: request.call_id as u32,
+                    status: RpcStatusProto::Fatal as i32,
+                    exception_class_name: Some("org.example.FatalException".to_string()),
+                    error_msg: Some("fatal".to_string()),
+                    ..Default::default()
+                }
+                .encode_length_delimited_to_vec();
+                socket
+                    .write_all(&(response.len() as u32).to_be_bytes())
+                    .await
+                    .unwrap();
+                socket.write_all(&response).await.unwrap();
+                let mut rest = Vec::new();
+                let _ = socket.read_to_end(&mut rest).await;
+            });
+
+            let options = RpcConnectionOptions {
+                protocol: "org.apache.hadoop.example.Protocol",
+                token_kind: "EXAMPLE_TOKEN",
+                token_service: "example",
+                effective_user: None,
+                auth: None,
+                token: None,
+            };
+            let connection =
+                RpcConnection::<()>::connect(&url, options, None, &config, runtime.handle())
+                    .await
+                    .unwrap();
+            connection.call("method", &[]).await.err().unwrap()
+        });
+        assert!(
+            matches!(&error, crate::HadoopError::FatalRPCError(class, _) if class == "org.example.FatalException"),
+            "{error:?}"
+        );
     }
 
     /// A server that offers TOKEN/DIGEST-MD5, then reports success without sending `rspauth`,

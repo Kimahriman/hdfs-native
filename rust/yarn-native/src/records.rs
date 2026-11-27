@@ -413,6 +413,10 @@ impl From<QueueInfoProto> for QueueInfo {
 }
 
 /// The location of a [`LocalResource`], such as `hdfs://namenode:8020/apps/app.jar`.
+///
+/// Like Hadoop's `URL` record, the parts are decoded: `file` is the path as the filesystem
+/// names it, so `hdfs://nn/my%20app.jar` has the file `/my app.jar`. Parsing decodes and
+/// [`Display`](fmt::Display) encodes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceUrl {
     pub scheme: String,
@@ -420,6 +424,31 @@ pub struct ResourceUrl {
     pub port: Option<i32>,
     pub file: String,
     pub user_info: Option<String>,
+}
+
+/// Characters a URI path or user info can't hold literally, like Java's `URI` constructor
+/// quotes them.
+const URI_COMPONENT: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'[')
+    .add(b'\\')
+    .add(b']')
+    .add(b'^')
+    .add(b'`')
+    .add(b'{')
+    .add(b'|')
+    .add(b'}');
+
+fn decode(value: &str) -> String {
+    percent_encoding::percent_decode_str(value)
+        .decode_utf8_lossy()
+        .into_owned()
 }
 
 impl FromStr for ResourceUrl {
@@ -431,8 +460,8 @@ impl FromStr for ResourceUrl {
         })?;
         let user_info = match (url.username(), url.password()) {
             ("", None) => None,
-            (user, None) => Some(user.to_string()),
-            (user, Some(password)) => Some(format!("{user}:{password}")),
+            (user, None) => Some(decode(user)),
+            (user, Some(password)) => Some(format!("{}:{}", decode(user), decode(password))),
         };
         Ok(Self {
             scheme: url.scheme().to_string(),
@@ -441,7 +470,7 @@ impl FromStr for ResourceUrl {
                 .filter(|host| !host.is_empty())
                 .map(str::to_string),
             port: url.port().map(i32::from),
-            file: url.path().to_string(),
+            file: decode(url.path()),
             user_info,
         })
     }
@@ -453,14 +482,22 @@ impl fmt::Display for ResourceUrl {
         if let Some(host) = &self.host {
             write!(f, "//")?;
             if let Some(user_info) = &self.user_info {
-                write!(f, "{user_info}@")?;
+                let encoded = percent_encoding::utf8_percent_encode(user_info, URI_COMPONENT)
+                    .to_string()
+                    .replace('@', "%40")
+                    .replace('/', "%2F");
+                write!(f, "{encoded}@")?;
             }
             write!(f, "{host}")?;
             if let Some(port) = self.port {
                 write!(f, ":{port}")?;
             }
         }
-        write!(f, "{}", self.file)
+        write!(
+            f,
+            "{}",
+            percent_encoding::utf8_percent_encode(&self.file, URI_COMPONENT)
+        )
     }
 }
 
@@ -681,9 +718,11 @@ impl From<ApplicationSubmissionContext> for ApplicationSubmissionContextProto {
 
 /// Asks the ResourceManager for containers.
 ///
-/// A request is keyed by its priority, resource name, capability and allocation request ID.
-/// Sending a request replaces the outstanding request with the same key, so `num_containers`
-/// is the total still needed, not an increment.
+/// Like Hadoop 3's scheduler, a request is keyed by its priority, allocation request ID and
+/// resource name. Sending a request replaces the outstanding request with the same key, so
+/// `num_containers` is the total still needed, not an increment, and a new `capability`
+/// replaces the old one. To ask for containers of different sizes at once, give each size its
+/// own priority or allocation request ID.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResourceRequest {
     pub priority: i32,
@@ -818,6 +857,25 @@ mod tests {
         assert_eq!(url.port, Some(8020));
         assert_eq!(url.file, "/apps/app.jar");
         assert!("not a url".parse::<ResourceUrl>().is_err());
+    }
+
+    #[test]
+    fn test_resource_url_paths_are_decoded_like_java() {
+        // Java's URL record holds the decoded path and encodes it again when it builds a URI,
+        // so an encoded path would be escaped twice
+        let url: ResourceUrl = "hdfs://namenode:8020/apps/my%20app%25v1.jar"
+            .parse()
+            .unwrap();
+        assert_eq!(url.file, "/apps/my app%v1.jar");
+        assert_eq!(
+            UrlProto::from(url.clone()).file.as_deref(),
+            Some("/apps/my app%v1.jar")
+        );
+        assert_eq!(
+            url.to_string(),
+            "hdfs://namenode:8020/apps/my%20app%25v1.jar"
+        );
+        assert_eq!(url.to_string().parse::<ResourceUrl>().unwrap(), url);
     }
 
     #[test]

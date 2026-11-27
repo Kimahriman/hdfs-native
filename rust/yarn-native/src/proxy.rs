@@ -383,11 +383,14 @@ impl ServiceProxy {
                     failovers += 1;
                     let num_proxies = self.proxy_connections.len() as u32;
                     if failovers.is_multiple_of(num_proxies) {
-                        tokio::time::sleep(exponential_failover_sleep(
-                            self.failover.sleep_base_millis,
-                            self.failover.sleep_max_millis,
-                            failovers / num_proxies,
-                        ))
+                        crate::client::sleep_on(
+                            &self.proxy_connections[0].handle,
+                            exponential_failover_sleep(
+                                self.failover.sleep_base_millis,
+                                self.failover.sleep_max_millis,
+                                failovers / num_proxies,
+                            ),
+                        )
                         .await;
                     }
 

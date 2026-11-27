@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use hadoop_native::security::user::Token;
 use hadoop_native::security::{ClientAuth, KerberosCredentials};
@@ -55,7 +55,17 @@ pub(crate) enum RuntimeHolder {
     Default(Arc<OnceLock<Runtime>>),
 }
 
+/// Waits for `duration` on the runtime of `handle`, so the timer works when the caller isn't
+/// in a Tokio runtime, as when the client created its own.
+pub(crate) async fn sleep_on(handle: &Handle, duration: Duration) {
+    let _ = handle.spawn(tokio::time::sleep(duration)).await;
+}
+
 impl RuntimeHolder {
+    pub(crate) async fn sleep(&self, duration: Duration) {
+        sleep_on(&self.get_handle(), duration).await;
+    }
+
     fn new(rt: Option<IORuntime>) -> Self {
         if let Some(rt) = rt {
             Self::Custom(Arc::new(rt))
@@ -282,7 +292,6 @@ pub struct YarnClient {
     config: Arc<Configuration>,
     // Store the runtime used for spawning all internal tasks. If we are not created
     // inside a tokio runtime, we will create our own to use.
-    #[allow(dead_code)]
     rt_holder: RuntimeHolder,
 }
 
@@ -373,7 +382,7 @@ impl YarnClient {
         {
             return Err(YarnError::OperationFailed(message()));
         }
-        tokio::time::sleep(self.config.poll_interval()).await;
+        self.rt_holder.sleep(self.config.poll_interval()).await;
         Ok(())
     }
 

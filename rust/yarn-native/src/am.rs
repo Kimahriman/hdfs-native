@@ -203,6 +203,20 @@ pub struct AllocateResponse {
     pub resynced: bool,
 }
 
+impl AllocateResponse {
+    /// Combines a replayed heartbeat's response with the next one's.
+    fn merge(mut self, later: AllocateResponse) -> AllocateResponse {
+        self.allocated_containers.extend(later.allocated_containers);
+        self.completed_containers.extend(later.completed_containers);
+        AllocateResponse {
+            allocated_containers: self.allocated_containers,
+            completed_containers: self.completed_containers,
+            am_command: later.am_command.or(self.am_command),
+            ..later
+        }
+    }
+}
+
 /// Identifies an outstanding container request the way the ResourceManager's scheduler does.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct AskKey {
@@ -236,17 +250,40 @@ impl From<&ResourceRequest> for AskKey {
     }
 }
 
-/// What the ResourceManager knows about this ApplicationMaster, so a heartbeat that failed can
-/// be re-sent and the ResourceManager can be brought back in sync after it loses its state,
-/// like Hadoop's `AMRMClientImpl`.
-#[derive(Debug, Default)]
-struct AllocateState {
-    last_response_id: i32,
-    /// The registration to repeat when the ResourceManager has lost this ApplicationMaster.
-    registration: Option<RegisterApplicationMasterRequestProto>,
-    /// The requests the ResourceManager still holds, kept up to date as containers arrive.
+/// Exceptions the ResourceManager throws when it rejects a heartbeat's contents before
+/// handling it, so none of the heartbeat took effect.
+const REQUEST_VALIDATION_EXCEPTIONS: &[&str] = &[
+    "org.apache.hadoop.yarn.exceptions.InvalidContainerReleaseException",
+    "org.apache.hadoop.yarn.exceptions.InvalidResourceRequestException",
+    "org.apache.hadoop.yarn.exceptions.InvalidResourceBlacklistRequestException",
+    "org.apache.hadoop.yarn.exceptions.InvalidLabelResourceRequestException",
+    "org.apache.hadoop.yarn.exceptions.SchedulerInvalidResoureRequestException",
+];
+
+const INVALID_AM_REQUEST_EXCEPTION: &str =
+    "org.apache.hadoop.yarn.exceptions.InvalidApplicationMasterRequestException";
+
+/// Whether the ResourceManager rejected a heartbeat's contents, so none of it took effect.
+fn is_request_validation_error(error: &YarnError) -> bool {
+    matches!(error, YarnError::RPCError(class, _) if REQUEST_VALIDATION_EXCEPTIONS.contains(&class.as_str()))
+}
+
+/// Whether the ResourceManager refused a registration because the attempt is already
+/// registered, as when the response to an earlier registration was lost.
+fn is_already_registered_error(error: &YarnError) -> bool {
+    matches!(
+        error,
+        YarnError::RPCError(class, message)
+            if class == INVALID_AM_REQUEST_EXCEPTION && message.contains("already registered")
+    )
+}
+
+/// The requests, releases and blacklist the ApplicationMaster wants, and which changes to them
+/// the ResourceManager hasn't received yet.
+#[derive(Clone, Debug, Default)]
+struct Changes {
+    /// The requests the ResourceManager should hold, kept up to date as containers arrive.
     asks: HashMap<AskKey, ResourceRequest>,
-    /// Requests not yet acknowledged by a successful allocate.
     unsent_asks: HashSet<AskKey>,
     /// Released containers the ResourceManager has not reported as completed yet.
     pending_releases: HashSet<ContainerId>,
@@ -256,73 +293,145 @@ struct AllocateState {
     unsent_blacklist_removals: HashSet<String>,
 }
 
+impl Changes {
+    fn has_unsent(&self) -> bool {
+        !self.unsent_asks.is_empty()
+            || !self.unsent_releases.is_empty()
+            || !self.unsent_blacklist_additions.is_empty()
+            || !self.unsent_blacklist_removals.is_empty()
+    }
+}
+
+/// A heartbeat sent without a response. It is re-sent unchanged, with the same response ID:
+/// if the ResourceManager handled it, it answers with the response it cached and ignores the
+/// request's contents, so changes made since must go in the next heartbeat.
+#[derive(Debug)]
+struct InFlight {
+    request: AllocateRequestProto,
+    asks: HashSet<AskKey>,
+    /// The state before this heartbeat's changes, restored if the ResourceManager rejects them.
+    rollback: Option<Box<Changes>>,
+}
+
+/// What the ResourceManager knows about this ApplicationMaster, so a heartbeat that failed can
+/// be re-sent and the ResourceManager can be brought back in sync after it loses its state,
+/// like Hadoop's `AMRMClientImpl`.
+#[derive(Debug, Default)]
+struct AllocateState {
+    last_response_id: i32,
+    /// The registration to repeat when the ResourceManager has lost this ApplicationMaster,
+    /// with the latest tracking URL.
+    registration: Option<RegisterApplicationMasterRequestProto>,
+    /// Set while registering again, so a registration whose response was lost is completed
+    /// before the next heartbeat.
+    reregistering: bool,
+    changes: Changes,
+    /// The state before the unsent changes, restored if the ResourceManager rejects them.
+    unsent_rollback: Option<Box<Changes>>,
+    in_flight: Option<InFlight>,
+    /// A response that arrived in a call that then failed, returned by the next call.
+    undelivered: Option<AllocateResponse>,
+}
+
 impl AllocateState {
     /// Records a heartbeat's changes, which stay unsent until an allocate succeeds.
     fn add_request(&mut self, request: AllocateRequest) {
+        if self.unsent_rollback.is_none() {
+            self.unsent_rollback = Some(Box::new(self.changes.clone()));
+        }
+        let changes = &mut self.changes;
         for ask in request.asks {
             let key = AskKey::from(&ask);
-            self.asks.insert(key.clone(), ask);
-            self.unsent_asks.insert(key);
+            changes.asks.insert(key.clone(), ask);
+            changes.unsent_asks.insert(key);
         }
         for container_id in request.releases {
-            self.pending_releases.insert(container_id);
-            self.unsent_releases.insert(container_id);
+            changes.pending_releases.insert(container_id);
+            changes.unsent_releases.insert(container_id);
         }
         for host in request.blacklist_additions {
-            self.unsent_blacklist_removals.remove(&host);
-            self.blacklist.insert(host.clone());
-            self.unsent_blacklist_additions.insert(host);
+            changes.unsent_blacklist_removals.remove(&host);
+            changes.blacklist.insert(host.clone());
+            changes.unsent_blacklist_additions.insert(host);
         }
         for host in request.blacklist_removals {
-            self.unsent_blacklist_additions.remove(&host);
-            self.blacklist.remove(&host);
-            self.unsent_blacklist_removals.insert(host);
+            changes.unsent_blacklist_additions.remove(&host);
+            changes.blacklist.remove(&host);
+            changes.unsent_blacklist_removals.insert(host);
         }
     }
 
     /// Marks everything the ResourceManager should know as unsent, after it lost its state.
     fn resend_all(&mut self) {
         self.last_response_id = 0;
-        self.unsent_asks = self.asks.keys().cloned().collect();
-        self.unsent_releases = self.pending_releases.clone();
-        self.unsent_blacklist_additions = self.blacklist.clone();
-        self.unsent_blacklist_removals.clear();
+        if let Some(in_flight) = self.in_flight.take()
+            && self.unsent_rollback.is_none()
+        {
+            self.unsent_rollback = in_flight.rollback;
+        }
+        let changes = &mut self.changes;
+        changes.unsent_asks = changes.asks.keys().cloned().collect();
+        changes.unsent_releases = changes.pending_releases.clone();
+        changes.unsent_blacklist_additions = changes.blacklist.clone();
+        changes.unsent_blacklist_removals.clear();
     }
 
-    fn build_request(&self, progress: f32, tracking_url: Option<String>) -> AllocateRequestProto {
-        let blacklist_request = if self.unsent_blacklist_additions.is_empty()
-            && self.unsent_blacklist_removals.is_empty()
+    /// The heartbeat to send: the one without a response if there is one, otherwise a new one
+    /// with the unsent changes.
+    fn next_heartbeat(
+        &mut self,
+        progress: f32,
+        tracking_url: Option<String>,
+    ) -> AllocateRequestProto {
+        if let Some(in_flight) = &self.in_flight {
+            return in_flight.request.clone();
+        }
+        let changes = &mut self.changes;
+        let blacklist_request = if changes.unsent_blacklist_additions.is_empty()
+            && changes.unsent_blacklist_removals.is_empty()
         {
             None
         } else {
             Some(ResourceBlacklistRequestProto {
-                blacklist_additions: self.unsent_blacklist_additions.iter().cloned().collect(),
-                blacklist_removals: self.unsent_blacklist_removals.iter().cloned().collect(),
+                blacklist_additions: changes.unsent_blacklist_additions.drain().collect(),
+                blacklist_removals: changes.unsent_blacklist_removals.drain().collect(),
             })
         };
-        AllocateRequestProto {
-            ask: self
-                .unsent_asks
+        let asks = std::mem::take(&mut changes.unsent_asks);
+        let request = AllocateRequestProto {
+            ask: asks
                 .iter()
-                .filter_map(|key| self.asks.get(key))
+                .filter_map(|key| changes.asks.get(key))
                 .cloned()
                 .map(Into::into)
                 .collect(),
-            release: self
-                .unsent_releases
-                .iter()
-                .copied()
-                .map(Into::into)
-                .collect(),
+            release: changes.unsent_releases.drain().map(Into::into).collect(),
             blacklist_request,
             response_id: Some(self.last_response_id),
             progress: Some(progress),
             tracking_url,
             ..Default::default()
+        };
+        self.in_flight = Some(InFlight {
+            request: request.clone(),
+            asks,
+            rollback: self.unsent_rollback.take(),
+        });
+        request
+    }
+
+    /// Undoes the changes in the heartbeat without a response, and any made since, after the
+    /// ResourceManager rejected it.
+    fn reject_in_flight(&mut self) {
+        if let Some(in_flight) = self.in_flight.take() {
+            if let Some(rollback) = in_flight.rollback.or_else(|| self.unsent_rollback.take()) {
+                self.changes = *rollback;
+            }
+            self.unsent_rollback = None;
         }
     }
 
-    /// Updates the state after a successful allocate.
+    /// Updates the state after the heartbeat without a response got one.
     fn on_response(
         &mut self,
         response_id: i32,
@@ -330,25 +439,29 @@ impl AllocateState {
         completed: &[ContainerStatus],
     ) {
         self.last_response_id = response_id;
-        self.unsent_releases.clear();
-        self.unsent_blacklist_additions.clear();
-        self.unsent_blacklist_removals.clear();
-        let sent = std::mem::take(&mut self.unsent_asks);
+        let sent = self
+            .in_flight
+            .take()
+            .map(|in_flight| in_flight.asks)
+            .unwrap_or_default();
         for container in allocated {
             self.remove_satisfied_asks(container, &sent);
         }
-        // Requests for no containers only needed to reach the ResourceManager once
+        // Requests for no containers only needed to reach the ResourceManager once, unless
+        // they changed since
         for key in sent {
-            if self
-                .asks
-                .get(&key)
-                .is_some_and(|ask| ask.num_containers <= 0)
+            if !self.changes.unsent_asks.contains(&key)
+                && self
+                    .changes
+                    .asks
+                    .get(&key)
+                    .is_some_and(|ask| ask.num_containers <= 0)
             {
-                self.asks.remove(&key);
+                self.changes.asks.remove(&key);
             }
         }
         for status in completed {
-            self.pending_releases.remove(&status.container_id);
+            self.changes.pending_releases.remove(&status.container_id);
         }
     }
 
@@ -357,9 +470,10 @@ impl AllocateState {
     /// the request for its host. Rack requests are not tracked down because a container doesn't
     /// name its rack, so after a resync they may ask for more than needed until the next update.
     ///
-    /// Requests the ApplicationMaster set in the heartbeat that returned the container (`sent`)
-    /// are left alone: the scheduler allocated the container before that heartbeat, from the old
-    /// count, and then replaced the count with the one sent.
+    /// Requests set in the heartbeat that returned the container (`sent`) are left alone: the
+    /// scheduler allocated the container before that heartbeat, from the old count, and then
+    /// replaced the count with the one sent. So are requests changed since, whose new count the
+    /// next heartbeat sends.
     fn remove_satisfied_asks(&mut self, container: &Container, sent: &HashSet<AskKey>) {
         for resource_name in [ANY_RESOURCE, container.node_id.host.as_str()] {
             let key = AskKey::new(
@@ -367,13 +481,13 @@ impl AllocateState {
                 resource_name,
                 container.allocation_request_id,
             );
-            if sent.contains(&key) {
+            if sent.contains(&key) || self.changes.unsent_asks.contains(&key) {
                 continue;
             }
-            if let Some(ask) = self.asks.get_mut(&key) {
+            if let Some(ask) = self.changes.asks.get_mut(&key) {
                 ask.num_containers -= 1;
                 if ask.num_containers <= 0 {
-                    self.asks.remove(&key);
+                    self.changes.asks.remove(&key);
                 }
             }
         }
@@ -397,7 +511,6 @@ pub struct AmRmClient {
     // The ResourceManager rejects an allocate whose response ID does not follow the last one,
     // so allocate calls are serialized.
     state: Arc<tokio::sync::Mutex<AllocateState>>,
-    #[allow(dead_code)]
     rt_holder: RuntimeHolder,
 }
 
@@ -451,8 +564,12 @@ impl AmRmClient {
         Ok(response)
     }
 
-    /// Registers again with the original settings after the ResourceManager lost this
-    /// ApplicationMaster.
+    /// Registers again with the original settings and the latest tracking URL after the
+    /// ResourceManager lost this ApplicationMaster, then re-sends everything it should know.
+    ///
+    /// The ResourceManager resets the response ID when it accepts the registration, so if the
+    /// response is lost the next heartbeat registers again first. The ResourceManager then
+    /// refuses the registration as a duplicate, which means the earlier one succeeded.
     async fn reregister(&self, state: &mut AllocateState) -> Result<()> {
         let registration = state.registration.clone().ok_or_else(|| {
             YarnError::InvalidArgument(
@@ -460,12 +577,27 @@ impl AmRmClient {
             )
         })?;
         warn!("ApplicationMaster is out of sync with the ResourceManager, registering again");
-        self.register(state, registration).await?;
+        state.reregistering = true;
+        match self.register(state, registration).await {
+            Ok(_) => {}
+            Err(error) if is_already_registered_error(&error) => {
+                debug!("The earlier registration succeeded");
+                state.last_response_id = 0;
+            }
+            Err(error) => return Err(error),
+        }
+        state.reregistering = false;
+        state.resend_all();
         Ok(())
     }
 
     /// Sends a heartbeat that asks for and releases containers. NMTokens in the response are
     /// stored in the [`NmTokenCache`], and a rolled AMRMToken is used for new connections.
+    ///
+    /// If an earlier heartbeat got no response, it is re-sent unchanged first, and this
+    /// heartbeat's changes follow in a second one. When the ResourceManager rejects a heartbeat's
+    /// contents, for example a release of a container from another attempt, the error is
+    /// returned and the changes not yet acknowledged, including this heartbeat's, are dropped.
     pub async fn allocate(&self, request: AllocateRequest) -> Result<AllocateResponse> {
         let progress = request.progress;
         let tracking_url = request.tracking_url.clone();
@@ -473,25 +605,72 @@ impl AmRmClient {
         let mut state = self.state.lock().await;
         state.add_request(request);
         let mut resynced = false;
+        if state.reregistering {
+            self.reregister(&mut state).await?;
+            resynced = true;
+        }
+
+        let mut result: Option<AllocateResponse> = None;
         let mut resyncs = 0;
-        let response = loop {
-            match self
-                .protocol
-                .allocate(state.build_request(progress, tracking_url.clone()))
-                .await
-            {
+        let mut sent_current = false;
+        while !sent_current {
+            // A replayed heartbeat carries an earlier call's changes, so this call's follow
+            sent_current = state.in_flight.is_none();
+            let heartbeat = state.next_heartbeat(progress, tracking_url.clone());
+            let response = match self.protocol.allocate(heartbeat).await {
+                Ok(response) => response,
                 // The ResourceManager can lose the ApplicationMaster again, for example in
                 // back-to-back failovers, so resync more than once
                 Err(YarnError::ApplicationMasterNotRegistered(_)) if resyncs < MAX_RESYNCS => {
                     self.reregister(&mut state).await?;
-                    state.resend_all();
                     resynced = true;
                     resyncs += 1;
+                    sent_current = false;
+                    continue;
                 }
-                response => break response?,
+                Err(error) => {
+                    if is_request_validation_error(&error) {
+                        state.reject_in_flight();
+                    }
+                    if let Some(response) = result {
+                        state.undelivered = Some(match state.undelivered.take() {
+                            Some(earlier) => earlier.merge(response),
+                            None => response,
+                        });
+                    }
+                    return Err(error);
+                }
+            };
+            let response = self.handle_response(&mut state, response);
+            result = Some(match result {
+                Some(earlier) => earlier.merge(response),
+                None => response,
+            });
+            if sent_current
+                && let (Some(url), Some(registration)) =
+                    (tracking_url.as_ref(), state.registration.as_mut())
+            {
+                registration.tracking_url = Some(url.clone());
             }
-        };
+            // A replayed heartbeat with nothing new since doesn't need a second one
+            if !sent_current && !state.changes.has_unsent() && tracking_url.is_none() {
+                break;
+            }
+        }
 
+        let mut response = result.expect("a heartbeat was sent");
+        if let Some(earlier) = state.undelivered.take() {
+            response = earlier.merge(response);
+        }
+        response.resynced = resynced;
+        Ok(response)
+    }
+
+    fn handle_response(
+        &self,
+        state: &mut AllocateState,
+        response: yarn::AllocateResponseProto,
+    ) -> AllocateResponse {
         let allocated_containers: Vec<Container> = response
             .allocated_containers
             .into_iter()
@@ -507,7 +686,6 @@ impl AmRmClient {
             &allocated_containers,
             &completed_containers,
         );
-        drop(state);
 
         self.nm_tokens.insert_all(response.nm_tokens);
         if let Some(am_rm_token) = response.am_rm_token {
@@ -517,7 +695,7 @@ impl AmRmClient {
             self.protocol.set_token(token);
         }
 
-        Ok(AllocateResponse {
+        AllocateResponse {
             am_command: response
                 .a_m_command
                 .and_then(|command| yarn::AmCommandProto::try_from(command).ok())
@@ -527,8 +705,8 @@ impl AmRmClient {
             completed_containers,
             available_resources: response.limit.unwrap_or_default().into(),
             updated_nodes: response.updated_nodes.into_iter().map(Into::into).collect(),
-            resynced,
-        })
+            resynced: false,
+        }
     }
 
     /// Unregisters the ApplicationMaster with its final status, waiting until the
@@ -546,13 +724,18 @@ impl AmRmClient {
         };
         let mut resyncs = 0;
         loop {
+            let reregistering = self.state.lock().await.reregistering;
+            if reregistering {
+                let mut state = self.state.lock().await;
+                self.reregister(&mut state).await?;
+            }
             match self
                 .protocol
                 .finish_application_master(request.clone())
                 .await
             {
                 Ok(response) if response.is_unregistered() => return Ok(()),
-                Ok(_) => tokio::time::sleep(UNREGISTER_POLL_INTERVAL).await,
+                Ok(_) => self.rt_holder.sleep(UNREGISTER_POLL_INTERVAL).await,
                 Err(YarnError::ApplicationMasterNotRegistered(_)) if resyncs < MAX_RESYNCS => {
                     let mut state = self.state.lock().await;
                     self.reregister(&mut state).await?;
@@ -644,9 +827,20 @@ mod test {
         }
     }
 
-    fn sent_asks(state: &AllocateState) -> HashMap<String, i32> {
+    /// Sends a heartbeat unless one is waiting for a response, and acknowledges it.
+    fn ack(
+        state: &mut AllocateState,
+        response_id: i32,
+        allocated: &[Container],
+        completed: &[ContainerStatus],
+    ) {
+        state.next_heartbeat(0.0, None);
+        state.on_response(response_id, allocated, completed);
+    }
+
+    fn sent_asks(state: &mut AllocateState) -> HashMap<String, i32> {
         state
-            .build_request(0.0, None)
+            .next_heartbeat(0.0, None)
             .ask
             .into_iter()
             .map(|ask| (ask.resource_name.unwrap(), ask.num_containers.unwrap()))
@@ -665,7 +859,7 @@ mod test {
 
         // Nothing was acknowledged, so a later heartbeat sends everything
         state.add_request(AllocateRequest::default());
-        let request = state.build_request(0.5, None);
+        let request = state.next_heartbeat(0.5, None);
         assert_eq!(request.ask.len(), 1);
         assert_eq!(request.release.len(), 1);
         assert_eq!(
@@ -674,8 +868,8 @@ mod test {
         );
         assert_eq!(request.response_id, Some(0));
 
-        state.on_response(1, &[], &[]);
-        let request = state.build_request(0.5, None);
+        ack(&mut state, 1, &[], &[]);
+        let request = state.next_heartbeat(0.5, None);
         assert!(request.ask.is_empty());
         assert!(request.release.is_empty());
         assert!(request.blacklist_request.is_none());
@@ -685,6 +879,7 @@ mod test {
     /// The outstanding request counts, keyed by resource name
     fn outstanding(state: &AllocateState) -> HashMap<String, i32> {
         state
+            .changes
             .asks
             .iter()
             .map(|(key, ask)| (key.resource_name.clone(), ask.num_containers))
@@ -701,11 +896,12 @@ mod test {
             asks: vec![ResourceRequest::new(1, capability, 2), on_host],
             ..Default::default()
         });
-        state.on_response(1, &[], &[]);
+        ack(&mut state, 1, &[], &[]);
 
         // The scheduler rounds capabilities up, so a larger container still matches. A
         // container at another priority does not.
-        state.on_response(
+        ack(
+            &mut state,
             2,
             &[
                 container(1, "host-a", 1024, 1),
@@ -718,7 +914,7 @@ mod test {
             HashMap::from([(ANY_RESOURCE.to_string(), 1), ("host-a".to_string(), 1)])
         );
 
-        state.on_response(3, &[container(3, "host-a", 512, 1)], &[]);
+        ack(&mut state, 3, &[container(3, "host-a", 512, 1)], &[]);
         assert!(outstanding(&state).is_empty());
     }
 
@@ -731,8 +927,9 @@ mod test {
             asks: vec![ResourceRequest::new(0, Resource::new(128, 1), 3)],
             ..Default::default()
         });
-        state.on_response(1, &[], &[]);
-        state.on_response(
+        ack(&mut state, 1, &[], &[]);
+        ack(
+            &mut state,
             2,
             &[
                 container(1, "host-a", 128, 0),
@@ -743,7 +940,7 @@ mod test {
 
         state.resend_all();
         assert_eq!(
-            sent_asks(&state),
+            sent_asks(&mut state),
             HashMap::from([(ANY_RESOURCE.to_string(), 1)])
         );
     }
@@ -756,7 +953,7 @@ mod test {
             asks: vec![ask.clone()],
             ..Default::default()
         });
-        state.on_response(1, &[], &[]);
+        ack(&mut state, 1, &[], &[]);
 
         // The scheduler allocated this container from the old count of 2 before the heartbeat
         // replaced the count with 2 again, so 2 are still outstanding
@@ -764,7 +961,7 @@ mod test {
             asks: vec![ask],
             ..Default::default()
         });
-        state.on_response(2, &[container(1, "host-a", 512, 1)], &[]);
+        ack(&mut state, 2, &[container(1, "host-a", 512, 1)], &[]);
         assert_eq!(
             outstanding(&state),
             HashMap::from([(ANY_RESOURCE.to_string(), 2)])
@@ -778,15 +975,15 @@ mod test {
             asks: vec![ResourceRequest::new(1, Resource::new(1024, 1), 1)],
             ..Default::default()
         });
-        state.on_response(1, &[], &[]);
+        ack(&mut state, 1, &[], &[]);
         state.add_request(AllocateRequest {
             asks: vec![ResourceRequest::new(1, Resource::new(2048, 1), 1)],
             ..Default::default()
         });
-        state.on_response(2, &[], &[]);
+        ack(&mut state, 2, &[], &[]);
 
         state.resend_all();
-        let request = state.build_request(0.0, None);
+        let request = state.next_heartbeat(0.0, None);
         assert_eq!(request.ask.len(), 1);
         assert_eq!(
             request.ask[0].capability.as_ref().unwrap().memory,
@@ -801,19 +998,19 @@ mod test {
             asks: vec![ResourceRequest::new(1, Resource::new(512, 1), 3)],
             ..Default::default()
         });
-        state.on_response(1, &[], &[]);
+        ack(&mut state, 1, &[], &[]);
         state.add_request(AllocateRequest {
             asks: vec![ResourceRequest::new(1, Resource::new(512, 1), 0)],
             ..Default::default()
         });
         assert_eq!(
-            sent_asks(&state),
+            sent_asks(&mut state),
             HashMap::from([(ANY_RESOURCE.to_string(), 0)])
         );
 
-        state.on_response(2, &[], &[]);
+        ack(&mut state, 2, &[], &[]);
         state.resend_all();
-        assert!(sent_asks(&state).is_empty());
+        assert!(sent_asks(&mut state).is_empty());
     }
 
     #[test]
@@ -824,12 +1021,13 @@ mod test {
             releases: vec![released],
             ..Default::default()
         });
-        state.on_response(1, &[], &[]);
+        ack(&mut state, 1, &[], &[]);
 
         state.resend_all();
-        assert_eq!(state.build_request(0.0, None).release.len(), 1);
+        assert_eq!(state.next_heartbeat(0.0, None).release.len(), 1);
 
-        state.on_response(
+        ack(
+            &mut state,
             1,
             &[],
             &[ContainerStatus {
@@ -840,7 +1038,7 @@ mod test {
             }],
         );
         state.resend_all();
-        assert!(state.build_request(0.0, None).release.is_empty());
+        assert!(state.next_heartbeat(0.0, None).release.is_empty());
     }
 
     #[test]
@@ -850,7 +1048,7 @@ mod test {
             blacklist_additions: vec!["a".to_string(), "b".to_string()],
             ..Default::default()
         });
-        state.on_response(1, &[], &[]);
+        ack(&mut state, 1, &[], &[]);
         state.add_request(AllocateRequest {
             blacklist_removals: vec!["a".to_string()],
             blacklist_additions: vec!["c".to_string()],
@@ -860,17 +1058,129 @@ mod test {
             blacklist_removals: vec!["c".to_string()],
             ..Default::default()
         });
-        let blacklist = state.build_request(0.0, None).blacklist_request.unwrap();
+        let blacklist = state.next_heartbeat(0.0, None).blacklist_request.unwrap();
         assert!(blacklist.blacklist_additions.is_empty());
         let mut removals = blacklist.blacklist_removals;
         removals.sort();
         assert_eq!(removals, vec!["a", "c"]);
 
-        state.on_response(2, &[], &[]);
+        ack(&mut state, 2, &[], &[]);
         state.resend_all();
-        let blacklist = state.build_request(0.0, None).blacklist_request.unwrap();
+        let blacklist = state.next_heartbeat(0.0, None).blacklist_request.unwrap();
         assert_eq!(blacklist.blacklist_additions, vec!["b"]);
         assert!(blacklist.blacklist_removals.is_empty());
-        assert_eq!(state.build_request(0.0, None).response_id, Some(0));
+        assert_eq!(state.next_heartbeat(0.0, None).response_id, Some(0));
+    }
+    #[test]
+    fn test_a_replayed_heartbeat_keeps_its_contents_and_newer_changes_follow() {
+        let mut state = AllocateState::default();
+        let first = ResourceRequest::new(1, Resource::new(512, 1), 1);
+        state.add_request(AllocateRequest {
+            asks: vec![first],
+            ..Default::default()
+        });
+        let sent = state.next_heartbeat(0.1, None);
+
+        // The response was lost. The ResourceManager may have handled the heartbeat, in which
+        // case it answers a replay with its cached response and ignores the contents, so newer
+        // changes must not be merged into it
+        let released: ContainerId = "container_1_0001_01_000002".parse().unwrap();
+        state.add_request(AllocateRequest {
+            asks: vec![ResourceRequest::new(2, Resource::new(512, 1), 1)],
+            releases: vec![released],
+            blacklist_additions: vec!["bad-host".to_string()],
+            ..Default::default()
+        });
+        assert_eq!(state.next_heartbeat(0.2, None), sent);
+
+        state.on_response(1, &[], &[]);
+        let next = state.next_heartbeat(0.2, None);
+        assert_eq!(next.response_id, Some(1));
+        assert_eq!(next.ask.len(), 1);
+        assert_eq!(next.ask[0].priority.as_ref().unwrap().priority, Some(2));
+        assert_eq!(next.release.len(), 1);
+        assert_eq!(
+            next.blacklist_request.unwrap().blacklist_additions,
+            vec!["bad-host"]
+        );
+    }
+
+    #[test]
+    fn test_a_rejected_heartbeat_is_rolled_back() {
+        let mut state = AllocateState::default();
+        state.add_request(AllocateRequest {
+            asks: vec![ResourceRequest::new(1, Resource::new(512, 1), 2)],
+            ..Default::default()
+        });
+        ack(&mut state, 1, &[], &[]);
+
+        // A release of another attempt's container is rejected with the rest of the heartbeat
+        let foreign: ContainerId = "container_1_0001_02_000002".parse().unwrap();
+        state.add_request(AllocateRequest {
+            asks: vec![ResourceRequest::new(1, Resource::new(512, 1), 5)],
+            releases: vec![foreign],
+            blacklist_additions: vec!["host".to_string()],
+            ..Default::default()
+        });
+        state.next_heartbeat(0.0, None);
+        state.reject_in_flight();
+
+        let next = state.next_heartbeat(0.0, None);
+        assert!(next.ask.is_empty());
+        assert!(next.release.is_empty());
+        assert!(next.blacklist_request.is_none());
+        assert_eq!(next.response_id, Some(1));
+        assert!(state.changes.pending_releases.is_empty());
+        assert!(state.changes.blacklist.is_empty());
+        assert_eq!(
+            outstanding(&state),
+            HashMap::from([(ANY_RESOURCE.to_string(), 2)])
+        );
+    }
+
+    #[test]
+    fn test_a_resync_replaces_the_heartbeat_without_a_response() {
+        let mut state = AllocateState::default();
+        state.add_request(AllocateRequest {
+            asks: vec![ResourceRequest::new(1, Resource::new(512, 1), 2)],
+            ..Default::default()
+        });
+        ack(&mut state, 4, &[], &[]);
+        state.add_request(AllocateRequest {
+            blacklist_additions: vec!["host".to_string()],
+            ..Default::default()
+        });
+        state.next_heartbeat(0.0, None);
+
+        state.resend_all();
+        let next = state.next_heartbeat(0.0, None);
+        assert_eq!(next.response_id, Some(0));
+        assert_eq!(next.ask.len(), 1);
+        assert_eq!(
+            next.blacklist_request.unwrap().blacklist_additions,
+            vec!["host"]
+        );
+    }
+
+    #[test]
+    fn test_request_errors_are_classified() {
+        let release = YarnError::RPCError(
+            "org.apache.hadoop.yarn.exceptions.InvalidContainerReleaseException".to_string(),
+            "Cannot release container".to_string(),
+        );
+        assert!(is_request_validation_error(&release));
+        assert!(!is_request_validation_error(&YarnError::IOError(
+            std::io::ErrorKind::ConnectionReset.into()
+        )));
+
+        let registered = YarnError::RPCError(
+            INVALID_AM_REQUEST_EXCEPTION.to_string(),
+            "Application Master is already registered : application_1_0001".to_string(),
+        );
+        assert!(is_already_registered_error(&registered));
+        assert!(!is_already_registered_error(&YarnError::RPCError(
+            INVALID_AM_REQUEST_EXCEPTION.to_string(),
+            "Invalid responseId in AllocateRequest".to_string(),
+        )));
     }
 }

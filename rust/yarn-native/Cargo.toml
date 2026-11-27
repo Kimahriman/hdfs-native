@@ -10,7 +10,7 @@ license = "Apache-2.0"
 
 [dependencies]
 bytes = { workspace = true }
-hadoop-native = { version = "0.1.0", path = "../hadoop-native" }
+hadoop-native = { version = "0.2.0", path = "../hadoop-native" }
 # Only for the integration tests' ApplicationMaster, which refreshes HDFS delegation tokens
 hdfs-native = { version = "0.16.0", path = "../hdfs-native", optional = true }
 log = { workspace = true }
@@ -19,6 +19,7 @@ rand = "0.10"
 roxmltree = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "sync", "time"] }
+percent-encoding = "2"
 url = "2"
 whoami = "2"
 which = { version = "8", optional = true }
