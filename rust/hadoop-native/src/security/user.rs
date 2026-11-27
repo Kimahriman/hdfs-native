@@ -1,5 +1,4 @@
 use bytes::{Buf, Bytes};
-use chrono::Utc;
 use log::debug;
 use prost::Message;
 use std::env;
@@ -7,6 +6,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use whoami::username;
 
@@ -247,6 +247,10 @@ impl User {
     }
 
     pub(crate) fn get_token(&self, kind: &str, service: &str) -> Option<&Token> {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_millis() as i64);
+
         self.tokens
             .iter()
             .filter(|t| t.kind == kind && t.service == service)
@@ -254,7 +258,7 @@ impl User {
                 // Ignore any tokens that are set to expire in the next 60 seconds
                 let token_identifier: TokenIdentifier = t.identifier.clone().try_into().unwrap();
                 debug!("Token Identifier: {:?}", token_identifier);
-                token_identifier.max_date > Utc::now().timestamp_millis() + 60000
+                token_identifier.max_date > now_ms + 60000
             })
     }
 
