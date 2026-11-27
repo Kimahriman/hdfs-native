@@ -42,7 +42,10 @@ struct ProxyConnection {
     url: String,
     inner: Arc<tokio::sync::Mutex<Option<RpcConnection<AlignmentContext>>>>,
     alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
-    nameservice: Option<String>,
+    /// The service of delegation tokens for this NameNode
+    token_service: String,
+    /// Other services that name tokens for this NameNode, tried after `token_service`
+    token_service_aliases: Vec<String>,
     effective_user: Option<String>,
     auth: Option<Arc<ClientAuth>>,
     config: Arc<Configuration>,
@@ -93,17 +96,27 @@ impl ProxyConnection {
     fn new(
         url: String,
         alignment_context: Option<Arc<Mutex<AlignmentContext>>>,
-        nameservice: Option<String>,
+        token_service: String,
         effective_user: Option<String>,
         auth: Option<Arc<ClientAuth>>,
         config: Arc<Configuration>,
         handle: Handle,
     ) -> Self {
+        // Tokens named by the address in the URL, as hdfs-native named them before resolving
+        // addresses like Java, and, in an HA name service, tokens for this NameNode's own
+        // address, like the ones Hadoop clones from the logical token
+        let mut token_service_aliases = Vec::new();
+        for alias in [config.token_service(&url), url.clone()] {
+            if alias != token_service && !token_service_aliases.contains(&alias) {
+                token_service_aliases.push(alias);
+            }
+        }
         ProxyConnection {
             url,
             inner: Arc::new(tokio::sync::Mutex::new(None)),
             alignment_context,
-            nameservice,
+            token_service,
+            token_service_aliases,
             effective_user,
             auth,
             config,
@@ -129,14 +142,11 @@ impl ProxyConnection {
                                 RpcConnectionOptions {
                                     protocol: PROTOCOL,
                                     token_kind: TOKEN_KIND,
-                                    token_service: self
-                                        .nameservice
-                                        .as_ref()
-                                        .map(|nameservice| format!("ha-hdfs:{nameservice}"))
-                                        .as_deref()
-                                        .unwrap_or(&self.url),
+                                    token_service: &self.token_service,
+                                    token_service_aliases: self.token_service_aliases.clone(),
                                     effective_user: self.effective_user.clone(),
                                     auth: self.auth.clone(),
+                                    token: None,
                                 },
                                 self.alignment_context.clone(),
                                 &self.config,
@@ -190,6 +200,7 @@ pub(crate) struct NameServiceProxy {
     failover_max_attempts: u32,
     failover_sleep_base_millis: u64,
     failover_sleep_max_millis: u64,
+    token_service: String,
 }
 
 impl NameServiceProxy {
@@ -229,12 +240,20 @@ impl NameServiceProxy {
             None
         };
 
+        // Delegation tokens for a name service are named by its logical name, and tokens for a
+        // single NameNode by its address, resolved to an IP address like Hadoop's
+        // SecurityUtil.buildTokenService
+        let token_service = match nameservice.port() {
+            Some(port) => config.token_service(&format!("{host}:{port}")),
+            None => format!("ha-hdfs:{host}"),
+        };
+
         let proxy_connections = if let Some(port) = nameservice.port() {
             let url = format!("{}:{}", nameservice.host_str().unwrap(), port);
             vec![ProxyConnection::new(
                 url,
                 alignment_context,
-                None,
+                token_service.clone(),
                 effective_user,
                 auth,
                 Arc::clone(&config),
@@ -249,7 +268,7 @@ impl NameServiceProxy {
                     ProxyConnection::new(
                         url,
                         alignment_context.clone(),
-                        Some(host.to_string()),
+                        token_service.clone(),
                         effective_user.clone(),
                         auth.clone(),
                         Arc::clone(&config),
@@ -277,6 +296,7 @@ impl NameServiceProxy {
                 failover_max_attempts: config.failover_max_attempts(),
                 failover_sleep_base_millis: config.failover_sleep_base_millis(),
                 failover_sleep_max_millis: config.failover_sleep_max_millis(),
+                token_service,
             })
         }
     }
@@ -293,6 +313,11 @@ impl NameServiceProxy {
             }
         }
         Ok(())
+    }
+
+    /// The service name of delegation tokens for this name service.
+    pub(crate) fn token_service(&self) -> &str {
+        &self.token_service
     }
 
     fn is_retriable(exception: &str) -> bool {

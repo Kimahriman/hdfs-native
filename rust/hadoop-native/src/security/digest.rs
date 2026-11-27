@@ -633,6 +633,10 @@ impl SaslSession for DigestSaslSession {
         }
     }
 
+    fn is_complete(&self) -> bool {
+        matches!(self.state, DigestState::Completed(_))
+    }
+
     fn has_security_layer(&self) -> bool {
         match &self.state {
             DigestState::Completed(ctx) => ctx.is_some(),

@@ -19,7 +19,7 @@ use crate::security::DigestSaslSession;
 use crate::{HadoopError as HdfsError, Result};
 
 use super::gssapi::GssapiSession;
-use super::user::{User, UserInfo};
+use super::user::{Token, User, UserInfo};
 
 const SASL_CALL_ID: i32 = -33;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,6 +44,9 @@ pub trait SaslSession: Send + Sync {
 
     fn has_security_layer(&self) -> bool;
 
+    /// Whether the mechanism finished, including authenticating the server where it does so.
+    fn is_complete(&self) -> bool;
+
     fn encode(&mut self, buf: &[u8]) -> Result<Vec<u8>>;
 
     fn decode(&mut self, buf: &[u8]) -> Result<Vec<u8>>;
@@ -51,19 +54,25 @@ pub trait SaslSession: Send + Sync {
     fn get_user_info(&self) -> Result<UserInfo>;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn negotiate_sasl_session(
     stream: TcpStream,
     token_kind: &str,
-    service: &str,
+    services: &[String],
     config: &Configuration,
     effective_user: Option<String>,
     auth: Option<std::sync::Arc<crate::security::ClientAuth>>,
+    token: Option<Token>,
+    sasl: bool,
 ) -> Result<(UserInfo, SaslReader, SaslWriter)> {
     let (reader, writer) = stream.into_split();
     let mut reader = SaslReader::new(reader);
     let mut writer = SaslWriter::new(writer);
 
-    if !config.security_enabled() {
+    let security_enabled = config.security_enabled();
+    let explicit_token = token.is_some();
+    // The caller decided with `use_sasl` and told the server in the connection header
+    if !sasl {
         return Ok((User::get_simple_user(effective_user), reader, writer));
     }
 
@@ -84,11 +93,20 @@ pub(crate) async fn negotiate_sasl_session(
             SaslState::Negotiate => {
                 let auths = std::mem::take(&mut message.auths);
                 let token_kind = token_kind.to_owned();
-                let service = service.to_owned();
+                let services = services.to_vec();
                 let effective_user = effective_user.clone();
                 let auth = auth.clone();
+                let token = token.clone();
                 let (mut selected_auth, selected_session) = run_blocking(move || {
-                    select_method(&auths, &token_kind, &service, effective_user, auth)
+                    select_method(
+                        &auths,
+                        &token_kind,
+                        &services,
+                        effective_user,
+                        auth,
+                        token,
+                        security_enabled,
+                    )
                 })
                 .await?;
                 session = selected_session;
@@ -148,13 +166,30 @@ pub(crate) async fn negotiate_sasl_session(
         }
     }
 
-    // No session means the server asked for simple authentication
-    if session.is_none() && !config.ipc_client_fallback_to_simple_auth_allowed() {
+    // No session means the server asked for simple authentication. That is a downgrade when the
+    // client is configured for secure authentication, like in Hadoop's Java client, or when the
+    // caller supplied a token: the services that take one, such as YARN's ApplicationMaster and
+    // NodeManager endpoints, never accept simple authentication, so only an impostor would ask.
+    if session.is_none()
+        && (security_enabled || explicit_token)
+        && !config.ipc_client_fallback_to_simple_auth_allowed()
+    {
         return Err(HdfsError::SASLError(
             "The server only accepts SIMPLE authentication from this client, but the client is \
-             configured for secure authentication. Set ipc.client.fallback-to-simple-auth-allowed \
-             to allow it"
+             configured for secure authentication or was given a token. Set \
+             ipc.client.fallback-to-simple-auth-allowed to allow it"
                 .to_string(),
+        ));
+    }
+
+    // The server saying SUCCESS isn't enough: the mechanism must have finished too, or the
+    // server didn't prove it knows the token's password (DIGEST-MD5's rspauth) and RPCs would go
+    // over an unprotected connection. Hadoop's SaslRpcClient makes the same check.
+    if let Some(session) = session.as_ref()
+        && !session.is_complete()
+    {
+        return Err(HdfsError::SASLError(
+            "The server reported SASL success before authentication completed".to_string(),
         ));
     }
 
@@ -175,6 +210,20 @@ pub(crate) async fn negotiate_sasl_session(
         writer.set_session(session);
     }
     Ok((user_info, reader, writer))
+}
+
+/// Whether a connection should negotiate SASL rather than use simple authentication. Like
+/// Hadoop's Java client, it does when security is enabled or when it has a token to use: one the
+/// caller supplied, or one for this connection's services in `HADOOP_TOKEN_FILE_LOCATION`.
+pub(crate) fn use_sasl(
+    config: &Configuration,
+    token: Option<&Token>,
+    token_kind: &str,
+    services: &[String],
+) -> bool {
+    config.security_enabled()
+        || token.is_some()
+        || User::get().find_token(token_kind, services).is_some()
 }
 
 async fn step_session(
@@ -210,20 +259,27 @@ where
 fn select_method(
     auths: &[SaslAuth],
     token_kind: &str,
-    service: &str,
+    services: &[String],
     effective_user: Option<String>,
     client_auth: Option<std::sync::Arc<crate::security::ClientAuth>>,
+    explicit_token: Option<Token>,
+    security_enabled: bool,
 ) -> Result<(SaslAuth, Option<Box<dyn SaslSession>>)> {
     let user = User::get();
+    // A token passed for this connection always wins. Tokens from the token file are only used
+    // when the client was not given explicit Kerberos credentials.
+    let token = explicit_token.as_ref().or_else(|| {
+        client_auth
+            .is_none()
+            .then(|| user.find_token(token_kind, services))
+            .flatten()
+    });
     for auth in auths.iter() {
-        match (
-            AuthMethod::parse(&auth.method),
-            user.get_token(token_kind, service),
-        ) {
+        match (AuthMethod::parse(&auth.method), token) {
             (Some(AuthMethod::Simple), _) => {
                 return Ok((auth.clone(), None));
             }
-            (Some(AuthMethod::Kerberos), _) => {
+            (Some(AuthMethod::Kerberos), _) if security_enabled => {
                 let session = GssapiSession::new(
                     auth.protocol(),
                     auth.server_id(),
@@ -232,7 +288,7 @@ fn select_method(
                 )?;
                 return Ok((auth.clone(), Some(Box::new(session))));
             }
-            (Some(AuthMethod::Token), Some(token)) if client_auth.is_none() => {
+            (Some(AuthMethod::Token), Some(token)) => {
                 let session = DigestSaslSession::from_token(
                     auth.protocol().to_string(),
                     auth.server_id().to_string(),
@@ -399,5 +455,122 @@ impl std::fmt::Debug for SaslWriter {
         f.debug_struct("SaslWriter")
             .field("stream", &self.stream)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    fn rm() -> Vec<String> {
+        vec!["rm:8030".to_string()]
+    }
+
+    use std::collections::HashMap;
+
+    use super::{select_method, use_sasl};
+    use crate::config::Configuration;
+    use crate::proto::common::rpc_sasl_proto::SaslAuth;
+    use crate::security::user::Token;
+
+    fn auth(method: &str, mechanism: &str) -> SaslAuth {
+        SaslAuth {
+            method: method.to_owned(),
+            mechanism: mechanism.to_owned(),
+            protocol: Some(String::new()),
+            server_id: Some("default".to_owned()),
+            challenge: None,
+        }
+    }
+
+    fn token() -> Token {
+        Token::new(
+            b"identifier".to_vec(),
+            b"password".to_vec(),
+            "YARN_AM_RM_TOKEN",
+            "",
+        )
+    }
+
+    #[test]
+    fn sasl_is_used_when_security_is_enabled_or_a_token_is_supplied() {
+        let simple = Configuration::new(None, None).unwrap();
+        let kerberos = Configuration::new(
+            None,
+            Some(HashMap::from([(
+                "hadoop.security.authentication".to_owned(),
+                "kerberos".to_owned(),
+            )])),
+        )
+        .unwrap();
+
+        assert!(!use_sasl(&simple, None, "YARN_AM_RM_TOKEN", &rm()));
+        assert!(use_sasl(&simple, Some(&token()), "YARN_AM_RM_TOKEN", &rm()));
+        assert!(use_sasl(&kerberos, None, "YARN_AM_RM_TOKEN", &rm()));
+    }
+
+    #[test]
+    fn explicit_token_selects_token_auth() {
+        let (selected, session) = select_method(
+            &[auth("TOKEN", "DIGEST-MD5")],
+            "YARN_AM_RM_TOKEN",
+            &rm(),
+            None,
+            None,
+            Some(token()),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(selected.method, "TOKEN");
+        assert!(session.is_some());
+    }
+
+    #[test]
+    fn kerberos_is_skipped_when_security_is_disabled() {
+        let (selected, _) = select_method(
+            &[auth("KERBEROS", "GSSAPI"), auth("TOKEN", "DIGEST-MD5")],
+            "YARN_AM_RM_TOKEN",
+            &rm(),
+            None,
+            None,
+            Some(token()),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(selected.method, "TOKEN");
+    }
+
+    #[test]
+    fn token_auth_without_a_token_has_no_mechanism() {
+        let error = select_method(
+            &[auth("TOKEN", "DIGEST-MD5")],
+            "YARN_AM_RM_TOKEN",
+            &rm(),
+            None,
+            None,
+            None,
+            false,
+        )
+        .err()
+        .unwrap();
+
+        assert!(matches!(error, crate::HadoopError::NoSASLMechanism));
+    }
+
+    #[test]
+    fn server_may_ask_a_token_client_for_simple_auth() {
+        let (selected, session) = select_method(
+            &[auth("SIMPLE", "")],
+            "YARN_AM_RM_TOKEN",
+            &rm(),
+            None,
+            None,
+            Some(token()),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(selected.method, "SIMPLE");
+        assert!(session.is_none());
     }
 }

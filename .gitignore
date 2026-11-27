@@ -13,6 +13,7 @@ __pycache__/
 .venv/
 env/
 bin/
+!rust/yarn-native/tests/bin/
 build/
 develop-eggs/
 dist/

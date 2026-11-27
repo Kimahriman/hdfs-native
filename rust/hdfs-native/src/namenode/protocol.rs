@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::Result;
 use crate::acl::{AclEntry, FsAction};
 use crate::namenode::proxy::NameServiceProxy;
+use crate::proto::common;
 use crate::proto::hdfs::{
     self, DataEncryptionKeyProto, FsServerDefaultsProto, GetDataEncryptionKeyResponseProto,
     acl_entry_proto::FsActionProto,
@@ -76,6 +77,69 @@ impl NamenodeProtocol {
         debug!("{} response: {:?}", method_name, decoded);
 
         Ok(decoded)
+    }
+
+    /// Like [Self::call], but only logs the method name, for messages that carry delegation
+    /// token passwords.
+    async fn call_with_credentials<Req, Res>(
+        &self,
+        method_name: &'static str,
+        message: Req,
+        write: bool,
+    ) -> Result<Res>
+    where
+        Req: Message + Default,
+        Res: Message + Default,
+    {
+        debug!("{method_name} request");
+
+        let response = self
+            .proxy
+            .call(
+                method_name,
+                &message.encode_length_delimited_to_vec(),
+                write,
+            )
+            .await?;
+
+        let decoded = Res::decode_length_delimited(response)?;
+        debug!("{method_name} response");
+
+        Ok(decoded)
+    }
+
+    /// The service name of delegation tokens issued by this NameNode or name service.
+    pub(crate) fn token_service(&self) -> &str {
+        self.proxy.token_service()
+    }
+
+    pub(crate) async fn get_delegation_token(
+        &self,
+        renewer: &str,
+    ) -> Result<common::GetDelegationTokenResponseProto> {
+        let message = common::GetDelegationTokenRequestProto {
+            renewer: renewer.to_string(),
+        };
+        self.call_with_credentials("getDelegationToken", message, true)
+            .await
+    }
+
+    pub(crate) async fn renew_delegation_token(
+        &self,
+        token: common::TokenProto,
+    ) -> Result<common::RenewDelegationTokenResponseProto> {
+        let message = common::RenewDelegationTokenRequestProto { token };
+        self.call_with_credentials("renewDelegationToken", message, true)
+            .await
+    }
+
+    pub(crate) async fn cancel_delegation_token(
+        &self,
+        token: common::TokenProto,
+    ) -> Result<common::CancelDelegationTokenResponseProto> {
+        let message = common::CancelDelegationTokenRequestProto { token };
+        self.call_with_credentials("cancelDelegationToken", message, true)
+            .await
     }
 
     pub(crate) async fn get_file_info(&self, src: &str) -> Result<hdfs::GetFileInfoResponseProto> {

@@ -70,6 +70,7 @@ pub use client::WriteOptions;
 pub use client::{Client, ClientBuilder};
 pub use error::HdfsError;
 pub use error::Result;
+pub use hadoop_native::security::user::{Credentials, SerializedFormat, Token};
 
 // Module for testing hooks into non-test code
 #[cfg(feature = "integration-test")]

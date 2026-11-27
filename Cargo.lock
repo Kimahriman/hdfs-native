@@ -891,7 +891,7 @@ dependencies = [
 
 [[package]]
 name = "hadoop-native"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "bumpalo",
@@ -3144,6 +3144,30 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
+name = "yarn-native"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "env_logger",
+ "hadoop-native",
+ "hdfs-native",
+ "libc",
+ "log",
+ "percent-encoding",
+ "prost",
+ "prost-build",
+ "protobuf-src",
+ "rand",
+ "roxmltree",
+ "serial_test",
+ "thiserror",
+ "tokio",
+ "url",
+ "which 8.0.6",
+ "whoami",
+]
 
 [[package]]
 name = "yoke"

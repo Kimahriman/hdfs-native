@@ -19,8 +19,8 @@ use uuid::Uuid;
 use crate::config::Configuration;
 use crate::proto::common;
 use crate::proto::common::rpc_response_header_proto::RpcStatusProto;
-use crate::security::sasl::{SaslReader, SaslWriter, negotiate_sasl_session};
-use crate::security::user::UserInfo;
+use crate::security::sasl::{SaslReader, SaslWriter, negotiate_sasl_session, use_sasl};
+use crate::security::user::{Token, UserInfo};
 use crate::{HadoopError, Result};
 
 // Connect to a remote host and return a TcpStream with standard options we want
@@ -94,8 +94,15 @@ pub struct RpcConnectionOptions<'a> {
     pub protocol: &'a str,
     pub token_kind: &'a str,
     pub token_service: &'a str,
+    /// Other services to look tokens up by in `HADOOP_TOKEN_FILE_LOCATION`, after
+    /// `token_service`, such as the address a token issued under an older naming scheme names.
+    pub token_service_aliases: Vec<String>,
     pub effective_user: Option<String>,
     pub auth: Option<Arc<crate::security::ClientAuth>>,
+    /// A token to authenticate with, taking precedence over tokens of `token_kind` in
+    /// `HADOOP_TOKEN_FILE_LOCATION`. Supplying one makes the connection negotiate SASL even when
+    /// Hadoop security is disabled, matching Hadoop's Java client.
+    pub token: Option<Token>,
 }
 
 #[derive(Debug)]
@@ -185,7 +192,16 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
         // Service class
         stream.write_all(&[0u8]).await?;
         // Auth protocol
-        if config.security_enabled() {
+        let token_services: Vec<String> = std::iter::once(options.token_service.to_string())
+            .chain(options.token_service_aliases)
+            .collect();
+        let sasl = use_sasl(
+            config,
+            options.token.as_ref(),
+            options.token_kind,
+            &token_services,
+        );
+        if sasl {
             stream.write_all(&(-33i8).to_be_bytes()).await?;
         } else {
             stream.write_all(&(0i8).to_be_bytes()).await?;
@@ -194,10 +210,12 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
         let negotiation = negotiate_sasl_session(
             stream,
             options.token_kind,
-            options.token_service,
+            &token_services,
             config,
             options.effective_user,
             options.auth,
+            options.token,
+            sasl,
         );
 
         let rpc_timeout = config.ipc_client_rpc_timeout();
@@ -373,10 +391,11 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
                     Some(m) => {
                         m.insert(call_id, response_sender);
                     }
+                    // The request was never sent, so callers may retry it anywhere
                     None => {
                         return Err(HadoopError::IOError(std::io::Error::new(
-                            ErrorKind::ConnectionAborted,
-                            "RPC listener disconnected",
+                            ErrorKind::NotConnected,
+                            "RPC listener disconnected before the request was sent",
                         )));
                     }
                 }
@@ -393,8 +412,8 @@ impl<C: RpcAlignmentContext> RpcConnection<C> {
 
             if sender.send(request).await.is_err() {
                 return Err(HadoopError::IOError(std::io::Error::new(
-                    ErrorKind::ConnectionAborted,
-                    "RPC sender disconnected",
+                    ErrorKind::NotConnected,
+                    "RPC sender disconnected before the request was sent",
                 )));
             }
 
@@ -509,10 +528,16 @@ impl<C: RpcAlignmentContext> RpcListener<C> {
                         rpc_response.exception_class_name(),
                         rpc_response.error_msg()
                     );
-                    return Err(HadoopError::FatalRPCError(
-                        rpc_response.exception_class_name().to_string(),
-                        rpc_response.error_msg().to_string(),
-                    ));
+                    let error = || {
+                        HadoopError::FatalRPCError(
+                            rpc_response.exception_class_name().to_string(),
+                            rpc_response.error_msg().to_string(),
+                        )
+                    };
+                    // The server closes the connection after a fatal error. The call it answered
+                    // gets the error itself, and the other pending calls a disconnect.
+                    let _ = call.send(Err(error()));
+                    return Err(error());
                 }
             }
         }
@@ -528,7 +553,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use tokio::io::AsyncReadExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::sync::mpsc;
 
@@ -656,8 +681,10 @@ mod tests {
             protocol: "org.apache.hadoop.example.Protocol",
             token_kind: "EXAMPLE_TOKEN",
             token_service: "example",
+            token_service_aliases: Vec::new(),
             effective_user: None,
             auth: None,
+            token: None,
         };
 
         let error = runtime
@@ -682,5 +709,332 @@ mod tests {
                 .contains("Timed out negotiating the connection to 127.0.0.1:"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn supplied_token_negotiates_sasl_without_security() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let config = Configuration::new(
+            None,
+            Some(HashMap::from([(
+                "ipc.client.rpc-timeout.ms".to_owned(),
+                "200".to_owned(),
+            )])),
+        )
+        .unwrap();
+
+        let header = runtime.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = listener.local_addr().unwrap().to_string();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut header = [0u8; 7];
+                socket.read_exact(&mut header).await.unwrap();
+                header
+            });
+
+            let options = RpcConnectionOptions {
+                protocol: "org.apache.hadoop.example.Protocol",
+                token_kind: "EXAMPLE_TOKEN",
+                token_service: "example",
+                token_service_aliases: Vec::new(),
+                effective_user: None,
+                auth: None,
+                token: Some(crate::security::user::Token::new(
+                    b"id".to_vec(),
+                    b"pw".to_vec(),
+                    "EXAMPLE_TOKEN",
+                    "example",
+                )),
+            };
+            // The server never answers the SASL negotiation, so this times out.
+            let _ =
+                RpcConnection::<()>::connect(&url, options, None, &config, runtime.handle()).await;
+            server.await.unwrap()
+        });
+
+        assert_eq!(&header[..4], b"hrpc");
+        assert_eq!(header[6] as i8, -33, "expected the SASL auth protocol");
+    }
+
+    #[test]
+    fn fatal_responses_reach_the_call() {
+        use prost::Message;
+
+        use crate::proto::common::{
+            RpcRequestHeaderProto, RpcResponseHeaderProto,
+            rpc_response_header_proto::RpcStatusProto,
+        };
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let config = Configuration::new(None, None).unwrap();
+        let error = runtime.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = listener.local_addr().unwrap().to_string();
+            tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut header = [0u8; 7];
+                socket.read_exact(&mut header).await.unwrap();
+                // The connection context, then the call
+                let mut call = Vec::new();
+                for _ in 0..2 {
+                    let mut length = [0u8; 4];
+                    socket.read_exact(&mut length).await.unwrap();
+                    call = vec![0u8; u32::from_be_bytes(length) as usize];
+                    socket.read_exact(&mut call).await.unwrap();
+                }
+                let request = RpcRequestHeaderProto::decode_length_delimited(&call[..]).unwrap();
+                let response = RpcResponseHeaderProto {
+                    call_id: request.call_id as u32,
+                    status: RpcStatusProto::Fatal as i32,
+                    exception_class_name: Some("org.example.FatalException".to_string()),
+                    error_msg: Some("fatal".to_string()),
+                    ..Default::default()
+                }
+                .encode_length_delimited_to_vec();
+                socket
+                    .write_all(&(response.len() as u32).to_be_bytes())
+                    .await
+                    .unwrap();
+                socket.write_all(&response).await.unwrap();
+                let mut rest = Vec::new();
+                let _ = socket.read_to_end(&mut rest).await;
+            });
+
+            let options = RpcConnectionOptions {
+                protocol: "org.apache.hadoop.example.Protocol",
+                token_kind: "EXAMPLE_TOKEN",
+                token_service: "example",
+                token_service_aliases: Vec::new(),
+                effective_user: None,
+                auth: None,
+                token: None,
+            };
+            let connection =
+                RpcConnection::<()>::connect(&url, options, None, &config, runtime.handle())
+                    .await
+                    .unwrap();
+            connection.call("method", &[]).await.err().unwrap()
+        });
+        assert!(
+            matches!(&error, crate::HadoopError::FatalRPCError(class, _) if class == "org.example.FatalException"),
+            "{error:?}"
+        );
+    }
+
+    /// A server that offers TOKEN/DIGEST-MD5, then reports success without sending `rspauth`,
+    /// so it never proves that it knows the token's password.
+    async fn unauthenticated_digest_server() -> String {
+        use prost::Message;
+
+        use crate::proto::common::{
+            RpcResponseHeaderProto, RpcSaslProto,
+            rpc_response_header_proto::RpcStatusProto,
+            rpc_sasl_proto::{SaslAuth, SaslState},
+        };
+
+        async fn send(socket: &mut tokio::net::TcpStream, message: RpcSaslProto) {
+            let header = RpcResponseHeaderProto {
+                call_id: -33i32 as u32,
+                status: RpcStatusProto::Success as i32,
+                ..Default::default()
+            }
+            .encode_length_delimited_to_vec();
+            let message = message.encode_length_delimited_to_vec();
+            let length = (header.len() + message.len()) as u32;
+            socket.write_all(&length.to_be_bytes()).await.unwrap();
+            socket.write_all(&header).await.unwrap();
+            socket.write_all(&message).await.unwrap();
+        }
+
+        async fn read_message(socket: &mut tokio::net::TcpStream) {
+            let mut length = [0u8; 4];
+            socket.read_exact(&mut length).await.unwrap();
+            let mut message = vec![0u8; u32::from_be_bytes(length) as usize];
+            socket.read_exact(&mut message).await.unwrap();
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut header = [0u8; 7];
+            socket.read_exact(&mut header).await.unwrap();
+            read_message(&mut socket).await;
+
+            let challenge = b"realm=\"default\",nonce=\"bm9uY2U=\",qop=\"auth\",\
+                charset=utf-8,algorithm=md5-sess";
+            send(
+                &mut socket,
+                RpcSaslProto {
+                    state: SaslState::Negotiate as i32,
+                    auths: vec![SaslAuth {
+                        method: "TOKEN".to_string(),
+                        mechanism: "DIGEST-MD5".to_string(),
+                        protocol: Some(String::new()),
+                        server_id: Some("default".to_string()),
+                        challenge: Some(challenge.to_vec()),
+                    }],
+                    ..Default::default()
+                },
+            )
+            .await;
+            // The client's DIGEST-MD5 response, answered with a bare SUCCESS
+            read_message(&mut socket).await;
+            send(
+                &mut socket,
+                RpcSaslProto {
+                    state: SaslState::Success as i32,
+                    ..Default::default()
+                },
+            )
+            .await;
+            let mut rest = Vec::new();
+            let _ = socket.read_to_end(&mut rest).await;
+        });
+        addr
+    }
+
+    #[test]
+    fn success_before_the_server_authenticates_is_refused() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let options = RpcConnectionOptions {
+            protocol: "org.apache.hadoop.example.Protocol",
+            token_kind: "EXAMPLE_TOKEN",
+            token_service: "example",
+            token_service_aliases: Vec::new(),
+            effective_user: None,
+            auth: None,
+            token: Some(crate::security::user::Token::new(
+                b"id".to_vec(),
+                b"pw".to_vec(),
+                "EXAMPLE_TOKEN",
+                "example",
+            )),
+        };
+        let config = Configuration::new(None, None).unwrap();
+        let error = runtime
+            .block_on(async {
+                let url = unauthenticated_digest_server().await;
+                RpcConnection::<()>::connect(&url, options, None, &config, runtime.handle()).await
+            })
+            .err()
+            .unwrap();
+        assert!(
+            matches!(&error, crate::HadoopError::SASLError(message) if message.contains("before authentication completed")),
+            "{error:?}"
+        );
+    }
+
+    /// A server that answers the SASL negotiation by offering only SIMPLE authentication.
+    async fn simple_only_server() -> String {
+        use prost::Message;
+
+        use crate::proto::common::{
+            RpcResponseHeaderProto, RpcSaslProto,
+            rpc_response_header_proto::RpcStatusProto,
+            rpc_sasl_proto::{SaslAuth, SaslState},
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            // The connection header, then the client's negotiate message
+            let mut header = [0u8; 7];
+            socket.read_exact(&mut header).await.unwrap();
+            let mut length = [0u8; 4];
+            socket.read_exact(&mut length).await.unwrap();
+            let mut message = vec![0u8; u32::from_be_bytes(length) as usize];
+            socket.read_exact(&mut message).await.unwrap();
+
+            let response_header = RpcResponseHeaderProto {
+                call_id: -33i32 as u32,
+                status: RpcStatusProto::Success as i32,
+                ..Default::default()
+            }
+            .encode_length_delimited_to_vec();
+            let negotiate = RpcSaslProto {
+                state: SaslState::Negotiate as i32,
+                auths: vec![SaslAuth {
+                    method: "SIMPLE".to_string(),
+                    mechanism: String::new(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }
+            .encode_length_delimited_to_vec();
+            let length = (response_header.len() + negotiate.len()) as u32;
+            socket.write_all(&length.to_be_bytes()).await.unwrap();
+            socket.write_all(&response_header).await.unwrap();
+            socket.write_all(&negotiate).await.unwrap();
+            // Keep the connection open while the client decides
+            let mut rest = Vec::new();
+            let _ = socket.read_to_end(&mut rest).await;
+        });
+        addr
+    }
+
+    #[test]
+    fn supplied_token_refuses_simple_authentication() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let options = || RpcConnectionOptions {
+            protocol: "org.apache.hadoop.example.Protocol",
+            token_kind: "EXAMPLE_TOKEN",
+            token_service: "example",
+            token_service_aliases: Vec::new(),
+            effective_user: None,
+            auth: None,
+            token: Some(crate::security::user::Token::new(
+                b"id".to_vec(),
+                b"pw".to_vec(),
+                "EXAMPLE_TOKEN",
+                "example",
+            )),
+        };
+
+        // A server that asks a client with a token for SIMPLE authentication is not one that
+        // issued the token, so the client must not talk to it unauthenticated
+        let config = Configuration::new(None, None).unwrap();
+        let error = runtime
+            .block_on(async {
+                let url = simple_only_server().await;
+                RpcConnection::<()>::connect(&url, options(), None, &config, runtime.handle()).await
+            })
+            .err()
+            .unwrap();
+        assert!(
+            matches!(error, crate::HadoopError::SASLError(_)),
+            "{error:?}"
+        );
+
+        // Unless fallback is explicitly allowed
+        let fallback = Configuration::new(
+            None,
+            Some(HashMap::from([(
+                "ipc.client.fallback-to-simple-auth-allowed".to_owned(),
+                "true".to_owned(),
+            )])),
+        )
+        .unwrap();
+        runtime
+            .block_on(async {
+                let url = simple_only_server().await;
+                RpcConnection::<()>::connect(&url, options(), None, &fallback, runtime.handle())
+                    .await
+            })
+            .unwrap();
     }
 }
