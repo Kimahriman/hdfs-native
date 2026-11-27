@@ -887,6 +887,10 @@ impl SaslSession for GssapiSession {
         }
     }
 
+    fn is_complete(&self) -> bool {
+        matches!(self.state, GssapiState::Completed(..))
+    }
+
     fn has_security_layer(&self) -> bool {
         matches!(self.state, GssapiState::Completed((_, Some(_))))
     }

@@ -249,8 +249,13 @@ impl Credentials {
     }
 
     /// Writes a Hadoop credentials file that Java's `Credentials.readTokenStorageFile` reads.
+    ///
+    /// The file holds reusable secrets, so it is written to a new temporary file that only the
+    /// current user can read (mode `0600` on Unix) in the same directory, which then replaces
+    /// `path`. Readers never see a partial file, and an existing file's permissions are not
+    /// reused.
     pub fn write_token_file(&self, path: &Path, format: SerializedFormat) -> io::Result<()> {
-        fs::write(path, self.to_bytes(format))
+        write_private_file(path, &self.to_bytes(format))
     }
 
     /// Parses the contents of a Hadoop credentials file in either format.
@@ -460,6 +465,53 @@ impl std::fmt::Debug for Token {
             .field("password", &"[REDACTED]")
             .finish()
     }
+}
+
+/// Writes `contents` to a new file readable only by the current user, then atomically renames
+/// it over `path`.
+fn write_private_file(path: &Path, contents: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    let file_name = path.file_name().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} is not a file path", path.display()),
+        )
+    })?;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.subsec_nanos());
+    let mut temp_name = std::ffi::OsString::from(".");
+    temp_name.push(file_name);
+    temp_name.push(format!(
+        ".{}.{}.{}.tmp",
+        std::process::id(),
+        nanos,
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let temp_path = path.with_file_name(temp_name);
+
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    let result = options.open(&temp_path).and_then(|mut file| {
+        file.write_all(contents)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temp_path, path)
+    });
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
 }
 
 fn ensure_remaining(reader: &impl Buf, length: usize) -> io::Result<()> {
@@ -871,6 +923,39 @@ mod tests {
             .write_token_file(file.path(), SerializedFormat::default())
             .unwrap();
         assert_eq!(Token::read_token_file(file.path()).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_credentials_files_are_private_and_replaced_atomically() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tokens");
+        // An existing world-readable file must not keep its permissions.
+        fs::write(&path, b"old").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+
+        let credentials = Credentials::from(vec![Token::new(
+            b"id".to_vec(),
+            b"pw".to_vec(),
+            "KIND",
+            "svc",
+        )]);
+        credentials
+            .write_token_file(&path, SerializedFormat::default())
+            .unwrap();
+
+        assert_eq!(Credentials::read_token_file(&path).unwrap(), credentials);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // No temporary files are left behind.
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 
     #[test]

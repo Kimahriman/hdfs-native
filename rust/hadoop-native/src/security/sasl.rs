@@ -44,6 +44,9 @@ pub trait SaslSession: Send + Sync {
 
     fn has_security_layer(&self) -> bool;
 
+    /// Whether the mechanism finished, including authenticating the server where it does so.
+    fn is_complete(&self) -> bool;
+
     fn encode(&mut self, buf: &[u8]) -> Result<Vec<u8>>;
 
     fn decode(&mut self, buf: &[u8]) -> Result<Vec<u8>>;
@@ -176,6 +179,17 @@ pub(crate) async fn negotiate_sasl_session(
              configured for secure authentication or was given a token. Set \
              ipc.client.fallback-to-simple-auth-allowed to allow it"
                 .to_string(),
+        ));
+    }
+
+    // The server saying SUCCESS isn't enough: the mechanism must have finished too, or the
+    // server didn't prove it knows the token's password (DIGEST-MD5's rspauth) and RPCs would go
+    // over an unprotected connection. Hadoop's SaslRpcClient makes the same check.
+    if let Some(session) = session.as_ref()
+        && !session.is_complete()
+    {
+        return Err(HdfsError::SASLError(
+            "The server reported SASL success before authentication completed".to_string(),
         ));
     }
 

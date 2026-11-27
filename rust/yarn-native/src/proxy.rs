@@ -298,6 +298,9 @@ impl ServiceProxy {
 
     /// Calls a protocol method. `write` marks calls that change server state: they are only
     /// retried when the error shows the server did not handle the request.
+    ///
+    /// Only the method name is logged. YARN messages carry reusable credentials, such as
+    /// delegation token passwords, AMRM and NM tokens, and launch context credentials.
     pub(crate) async fn call<Req, Res>(
         &self,
         method_name: &'static str,
@@ -305,10 +308,10 @@ impl ServiceProxy {
         write: bool,
     ) -> Result<Res>
     where
-        Req: Message + Default + std::fmt::Debug,
-        Res: Message + Default + std::fmt::Debug,
+        Req: Message + Default,
+        Res: Message + Default,
     {
-        debug!("{} request: {:?}", method_name, message);
+        debug!("{method_name} request");
 
         let response = self
             .call_inner(
@@ -319,7 +322,7 @@ impl ServiceProxy {
             .await?;
 
         let decoded = Res::decode_length_delimited(response)?;
-        debug!("{} response: {:?}", method_name, decoded);
+        debug!("{method_name} response");
 
         Ok(decoded)
     }

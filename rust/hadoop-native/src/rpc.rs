@@ -745,6 +745,112 @@ mod tests {
         assert_eq!(header[6] as i8, -33, "expected the SASL auth protocol");
     }
 
+    /// A server that offers TOKEN/DIGEST-MD5, then reports success without sending `rspauth`,
+    /// so it never proves that it knows the token's password.
+    async fn unauthenticated_digest_server() -> String {
+        use prost::Message;
+
+        use crate::proto::common::{
+            RpcResponseHeaderProto, RpcSaslProto,
+            rpc_response_header_proto::RpcStatusProto,
+            rpc_sasl_proto::{SaslAuth, SaslState},
+        };
+
+        async fn send(socket: &mut tokio::net::TcpStream, message: RpcSaslProto) {
+            let header = RpcResponseHeaderProto {
+                call_id: -33i32 as u32,
+                status: RpcStatusProto::Success as i32,
+                ..Default::default()
+            }
+            .encode_length_delimited_to_vec();
+            let message = message.encode_length_delimited_to_vec();
+            let length = (header.len() + message.len()) as u32;
+            socket.write_all(&length.to_be_bytes()).await.unwrap();
+            socket.write_all(&header).await.unwrap();
+            socket.write_all(&message).await.unwrap();
+        }
+
+        async fn read_message(socket: &mut tokio::net::TcpStream) {
+            let mut length = [0u8; 4];
+            socket.read_exact(&mut length).await.unwrap();
+            let mut message = vec![0u8; u32::from_be_bytes(length) as usize];
+            socket.read_exact(&mut message).await.unwrap();
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut header = [0u8; 7];
+            socket.read_exact(&mut header).await.unwrap();
+            read_message(&mut socket).await;
+
+            let challenge = b"realm=\"default\",nonce=\"bm9uY2U=\",qop=\"auth\",\
+                charset=utf-8,algorithm=md5-sess";
+            send(
+                &mut socket,
+                RpcSaslProto {
+                    state: SaslState::Negotiate as i32,
+                    auths: vec![SaslAuth {
+                        method: "TOKEN".to_string(),
+                        mechanism: "DIGEST-MD5".to_string(),
+                        protocol: Some(String::new()),
+                        server_id: Some("default".to_string()),
+                        challenge: Some(challenge.to_vec()),
+                    }],
+                    ..Default::default()
+                },
+            )
+            .await;
+            // The client's DIGEST-MD5 response, answered with a bare SUCCESS
+            read_message(&mut socket).await;
+            send(
+                &mut socket,
+                RpcSaslProto {
+                    state: SaslState::Success as i32,
+                    ..Default::default()
+                },
+            )
+            .await;
+            let mut rest = Vec::new();
+            let _ = socket.read_to_end(&mut rest).await;
+        });
+        addr
+    }
+
+    #[test]
+    fn success_before_the_server_authenticates_is_refused() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let options = RpcConnectionOptions {
+            protocol: "org.apache.hadoop.example.Protocol",
+            token_kind: "EXAMPLE_TOKEN",
+            token_service: "example",
+            effective_user: None,
+            auth: None,
+            token: Some(crate::security::user::Token::new(
+                b"id".to_vec(),
+                b"pw".to_vec(),
+                "EXAMPLE_TOKEN",
+                "example",
+            )),
+        };
+        let config = Configuration::new(None, None).unwrap();
+        let error = runtime
+            .block_on(async {
+                let url = unauthenticated_digest_server().await;
+                RpcConnection::<()>::connect(&url, options, None, &config, runtime.handle()).await
+            })
+            .err()
+            .unwrap();
+        assert!(
+            matches!(&error, crate::HadoopError::SASLError(message) if message.contains("before authentication completed")),
+            "{error:?}"
+        );
+    }
+
     /// A server that answers the SASL negotiation by offering only SIMPLE authentication.
     async fn simple_only_server() -> String {
         use prost::Message;
