@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::Result;
 use crate::acl::{AclEntry, FsAction};
 use crate::namenode::proxy::NameServiceProxy;
+use crate::proto::common;
 use crate::proto::hdfs::{
     self, DataEncryptionKeyProto, FsServerDefaultsProto, GetDataEncryptionKeyResponseProto,
     acl_entry_proto::FsActionProto,
@@ -76,6 +77,37 @@ impl NamenodeProtocol {
         debug!("{} response: {:?}", method_name, decoded);
 
         Ok(decoded)
+    }
+
+    /// The service name of delegation tokens issued by this NameNode or name service.
+    pub(crate) fn token_service(&self) -> &str {
+        self.proxy.token_service()
+    }
+
+    pub(crate) async fn get_delegation_token(
+        &self,
+        renewer: &str,
+    ) -> Result<common::GetDelegationTokenResponseProto> {
+        let message = common::GetDelegationTokenRequestProto {
+            renewer: renewer.to_string(),
+        };
+        self.call("getDelegationToken", message, true).await
+    }
+
+    pub(crate) async fn renew_delegation_token(
+        &self,
+        token: common::TokenProto,
+    ) -> Result<common::RenewDelegationTokenResponseProto> {
+        let message = common::RenewDelegationTokenRequestProto { token };
+        self.call("renewDelegationToken", message, true).await
+    }
+
+    pub(crate) async fn cancel_delegation_token(
+        &self,
+        token: common::TokenProto,
+    ) -> Result<common::CancelDelegationTokenResponseProto> {
+        let message = common::CancelDelegationTokenRequestProto { token };
+        self.call("cancelDelegationToken", message, true).await
     }
 
     pub(crate) async fn get_file_info(&self, src: &str) -> Result<hdfs::GetFileInfoResponseProto> {

@@ -8,6 +8,7 @@ This project provides native Hadoop and HDFS clients for Rust and Python. The Ca
 
 - `rust/hadoop-native/`: Hadoop-wide Rust foundations, including configuration, security, protobuf, and RPC support. This crate has no HDFS-specific APIs.
 - `rust/hdfs-native/`: Native Rust HDFS client, including NameNode, DataNode, encryption, and glob functionality. Depends on `hadoop-native`.
+- `rust/yarn-native/`: Native Rust YARN clients for the ResourceManager client, ApplicationMaster, and ContainerManagement protocols. Depends on `hadoop-native`.
 - `python/`: Python bindings, CLI, and fsspec integration. Built with maturin.
 - `docs/`: Documentation sources.
 - `wheels/`: Pre-built Python wheel files for various platforms.
@@ -19,6 +20,7 @@ This project provides native Hadoop and HDFS clients for Rust and Python. The Ca
 - Run Rust tests with `cargo test --workspace`, or scope them with `cargo test -p hadoop-native` or `cargo test -p hdfs-native`.
 - Run a single Rust test with `cargo test -p <crate> <testname>`.
 - Run HDFS integration tests with `cargo test -p hdfs-native --features integration-test`. This requires Java and Maven to be installed.
+- Run YARN integration tests with `cargo test -p yarn-native --features integration-test`. This also requires Java and Maven; it starts a `MiniYARNCluster`.
 - On macOS with Homebrew Kerberos, export `DYLD_LIBRARY_PATH="$(brew --prefix krb5)/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"` before running integration tests. Homebrew's GSSAPI supports the credential stores exercised by the explicit keytab/cache tests.
 
 #### Rust benchmarks
@@ -44,7 +46,7 @@ This project provides native Hadoop and HDFS clients for Rust and Python. The Ca
 
 - Agents can automate builds, tests, and packaging for both Rust and Python.
 - Use CI/CD to ensure code quality and cross-platform compatibility.
-- Rust releases are independent: pushing `hadoop-v<version>` publishes `hadoop-native`, while `hdfs-v<version>` publishes `hdfs-native`.
+- Rust releases are independent: pushing `hadoop-v<version>` publishes `hadoop-native`, `hdfs-v<version>` publishes `hdfs-native`, and `yarn-v<version>` publishes `yarn-native`.
 - An `hdfs-v<version>` tag also publishes the Python package. Its version must match `hdfs-native`.
 - See `README.md` and `python/README.md` for more detailed instructions.
 

@@ -39,6 +39,7 @@ Here is a list of currently supported and unsupported but possible future featur
 
 - [x] Kerberos authentication (GSSAPI SASL support) (requires libgssapi_krb5, see below)
 - [x] Token authentication (DIGEST-MD5 SASL support)
+- [x] Delegation tokens (get, renew and cancel), and reading and writing Hadoop token files
 - [x] NameNode SASL connection
 - [x] DataNode SASL connection
 - [x] DataNode data transfer encryption
@@ -148,18 +149,40 @@ The client will attempt to read Hadoop configs `core-site.xml` and `hdfs-site.xm
 
 All other settings are generally assumed to be the defaults currently. Any setups that require other customized Hadoop client configs may not work correctly.
 
+## Supported YARN features
+
+The `yarn-native` crate implements the client side of YARN's three RPC protocols, for submitting applications and for writing ApplicationMasters.
+
+- [x] Client protocol (`YarnClient`): submit, kill, list and report on applications, attempts and containers; cluster metrics, nodes and queues; ResourceManager delegation tokens
+- [x] ApplicationMaster protocol (`AmRmClient`): register, request and release containers, unregister, with AMRMToken rolling
+- [x] Unmanaged ApplicationMasters
+- [x] Resync after a ResourceManager restart or failover: the ApplicationMaster registers again and re-sends its outstanding requests, releases and blacklist
+- [x] ContainerManagement protocol (`NmClient`): start, stop, signal and check containers, authenticated with NMTokens
+- [x] Container credentials, such as HDFS delegation tokens for containers
+- [x] ResourceManager HA
+- [x] Kerberos and token authentication
+
+An ApplicationMaster that YARN runs reads its AMRMToken from the container's token file, so `AmRmClientBuilder` needs no other setup. Give it the delegation tokens it needs, such as HDFS tokens, in its launch context's credentials, with `YarnClient::delegation_token_renewer` as their renewer so the ResourceManager renews them while the application runs.
+
+The ResourceManager can only renew tokens up to their maximum lifetime, 7 days by default. A longer-running ApplicationMaster can be given a keytab, as a private local resource in HDFS, and log in with it to fetch fresh tokens. Application binaries and environments can likewise ship as archives in HDFS. The integration tests' ApplicationMaster (`rust/yarn-native/tests/bin/application_master.rs`) shows both on a Kerberized cluster.
+
+Unmanaged ApplicationMasters on a Kerberized cluster are the exception: the ResourceManager only returns their AMRMToken to a caller whose user name equals the application's user, which a Kerberos principal's full name never is. Submit them as an impersonated user (`with_user`), which requires `hadoop.proxyuser.<principal short name>.*` settings on the cluster.
+
 ## Building
 
 ```
 cargo build
 ```
 
-The Rust implementation is split into two crates:
+The Rust implementation is split into three crates:
 
 - `rust/hadoop-native` contains reusable Hadoop configuration, common protobuf,
   authentication, and IPC/RPC functionality.
 - `rust/hdfs-native` contains the HDFS client, NameNode/DataNode protocols,
   glob handling, erasure coding, and filesystem APIs.
+- `rust/yarn-native` contains the YARN clients: `YarnClient` for the
+  ResourceManager's client protocol, `AmRmClient` for ApplicationMasters, and
+  `NmClient` for starting and stopping containers on NodeManagers.
 
 ## Object store implementation
 
@@ -174,6 +197,12 @@ cargo test -p hdfs-native --features integration-test
 ```
 
 Add `kms-rustls-tls` to the feature list to also run the encryption-zone (KMS) tests: `--features integration-test,kms-rustls-tls`.
+
+The YARN tests use a similar Java application in `rust/yarn-native/miniyarn/` that runs a `MiniYARNCluster`, with the same Java, Maven, Hadoop and Kerberos requirements:
+
+```bash
+cargo test -p yarn-native --features integration-test
+```
 
 On macOS with Homebrew Kerberos, make sure the test binaries load Homebrew's
 GSSAPI library. This version supports credential stores used by the explicit

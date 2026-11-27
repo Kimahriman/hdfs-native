@@ -1,0 +1,48 @@
+[package]
+name = "yarn-native"
+version = "0.1.0"
+edition = "2024"
+authors = ["Adam Binford <adamq43@gmail.com>"]
+repository = "https://github.com/Kimahriman/hdfs-native"
+keywords = ["hadoop", "yarn"]
+description = "Native Apache Hadoop YARN client implementation in Rust"
+license = "Apache-2.0"
+
+[dependencies]
+bytes = { workspace = true }
+hadoop-native = { version = "0.1.0", path = "../hadoop-native" }
+# Only for the integration tests' ApplicationMaster, which refreshes HDFS delegation tokens
+hdfs-native = { version = "0.16.0", path = "../hdfs-native", optional = true }
+log = { workspace = true }
+prost = "0.14"
+rand = "0.10"
+roxmltree = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "sync", "time"] }
+url = "2"
+whoami = "2"
+which = { version = "8", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }
+
+[build-dependencies]
+prost-build = { version = "0.14", optional = true }
+protobuf-src = { version = "2", optional = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }
+serial_test = "4"
+tokio = { workspace = true, features = ["macros"] }
+
+[[bin]]
+# A minimal ApplicationMaster that the integration tests have YARN launch
+name = "yarn-native-test-am"
+path = "tests/bin/application_master.rs"
+required-features = ["integration-test"]
+test = false
+doc = false
+
+[features]
+generate-protobuf = ["prost-build", "protobuf-src", "hadoop-native/generate-protobuf"]
+integration-test = ["which", "dep:libc", "dep:hdfs-native"]

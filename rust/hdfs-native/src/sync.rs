@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use bytes::Bytes;
 use futures::StreamExt;
 use futures::stream::BoxStream;
+use hadoop_native::security::user::Token;
 use tokio::runtime::Runtime;
 
 use crate::acl::{AclEntry, AclStatus, FsAction};
@@ -235,6 +236,21 @@ impl Client {
     /// Get all file statuses matching the glob `pattern`.
     pub fn glob_status(&self, pattern: &str) -> Result<Vec<FileStatus>> {
         self.block_on(self.inner.glob_status(pattern))
+    }
+
+    /// Get a delegation token from each name service this client uses that `renewer` may renew.
+    pub fn get_delegation_tokens(&self, renewer: &str) -> Result<Vec<Token>> {
+        self.block_on(self.inner.get_delegation_tokens(renewer))
+    }
+
+    /// Extend the lifetime of a delegation token, returning its new expiry time in milliseconds.
+    pub fn renew_delegation_token(&self, token: &Token) -> Result<u64> {
+        self.block_on(self.inner.renew_delegation_token(token))
+    }
+
+    /// Cancel a delegation token so it can no longer be used.
+    pub fn cancel_delegation_token(&self, token: &Token) -> Result<()> {
+        self.block_on(self.inner.cancel_delegation_token(token))
     }
 }
 

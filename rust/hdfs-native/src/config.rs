@@ -27,6 +27,7 @@ const DFS_CLIENT_USE_DATANODE_HOSTNAME: &str = "dfs.client.use.datanode.hostname
 const DFS_CLIENT_SOCKET_TIMEOUT: &str = "dfs.client.socket-timeout";
 const DEFAULT_SOCKET_TIMEOUT_MILLIS: u64 = 60_000;
 const VIEWFS_MOUNTTABLE_PREFIX: &str = "fs.viewfs.mounttable";
+const TOKEN_SERVICE_USE_IP: &str = "hadoop.security.token.service.use_ip";
 
 #[cfg(feature = "kms")]
 pub(crate) const HADOOP_SECURITY_KEY_PROVIDER_PATH: &str = "hadoop.security.key.provider.path";
@@ -77,6 +78,27 @@ impl Configuration {
             0 => None,
             millis => Some(Duration::from_millis(millis)),
         }
+    }
+
+    /// The service name of delegation tokens for a NameNode at `address`, like Hadoop's
+    /// `SecurityUtil.buildTokenService`: its IP address and port unless
+    /// `hadoop.security.token.service.use_ip` is false. Java prefers IPv4 addresses.
+    pub(crate) fn token_service(&self, address: &str) -> String {
+        if self.get_boolean(TOKEN_SERVICE_USE_IP, true)
+            && let Ok(addrs) = address.to_socket_addrs()
+        {
+            let mut first = None;
+            for addr in addrs {
+                if addr.is_ipv4() {
+                    return addr.to_string();
+                }
+                first.get_or_insert(addr);
+            }
+            if let Some(resolved) = first {
+                return resolved.to_string();
+            }
+        }
+        address.to_string()
     }
 
     pub(crate) fn failover_max_attempts(&self) -> u32 {
@@ -207,7 +229,7 @@ mod tests {
 
     use super::{
         Configuration, DFS_CLIENT_WRITE_REPLACE_DATANODE_ON_FAILURE_BEST_EFFORT_KEY,
-        VIEWFS_MOUNTTABLE_PREFIX,
+        TOKEN_SERVICE_USE_IP, VIEWFS_MOUNTTABLE_PREFIX,
     };
 
     #[test]
@@ -239,5 +261,22 @@ mod tests {
                 .get_replace_datanode_on_failure_policy()
                 .is_best_effort()
         );
+    }
+
+    #[test]
+    fn token_services_use_ip_addresses_like_java() {
+        let config = Configuration::new(None, None).unwrap();
+        assert_eq!(config.token_service("localhost:9000"), "127.0.0.1:9000");
+        assert_eq!(config.token_service("127.0.0.1:9000"), "127.0.0.1:9000");
+
+        let hostnames = Configuration::new(
+            None,
+            Some(HashMap::from([(
+                TOKEN_SERVICE_USE_IP.to_owned(),
+                "false".to_owned(),
+            )])),
+        )
+        .unwrap();
+        assert_eq!(hostnames.token_service("localhost:9000"), "localhost:9000");
     }
 }

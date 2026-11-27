@@ -2,6 +2,7 @@
 members = [
     "rust/hadoop-native",
     "rust/hdfs-native",
+    "rust/yarn-native",
     "python",
 ]
 resolver = "2"

@@ -18,7 +18,7 @@ use crate::file::{FileReader, FileWriter};
 use crate::namenode::protocol::NamenodeProtocol;
 use crate::namenode::proxy::NameServiceProxy;
 use crate::proto::hdfs::hdfs_file_status_proto::FileType;
-use hadoop_native::security::user::User;
+use hadoop_native::security::user::{Token, User};
 use hadoop_native::security::{ClientAuth, KerberosCredentials};
 
 use crate::glob::{GlobPattern, expand_glob, get_path_components, unescape_component};
@@ -1257,6 +1257,88 @@ impl Client {
         let (link, resolved_path) = self.mount_table.resolve(path);
         link.protocol.check_access(&resolved_path, mode).await?;
 
+        Ok(())
+    }
+
+    /// The NameNode protocols this client uses, one per name service. A viewfs mount table can
+    /// link several paths to the same name service.
+    fn namenode_protocols(&self) -> Vec<&Arc<NamenodeProtocol>> {
+        let mut protocols: Vec<&Arc<NamenodeProtocol>> = Vec::new();
+        for link in self
+            .mount_table
+            .mounts
+            .iter()
+            .chain(std::iter::once(&self.mount_table.fallback))
+        {
+            if !protocols
+                .iter()
+                .any(|protocol| protocol.token_service() == link.protocol.token_service())
+            {
+                protocols.push(&link.protocol);
+            }
+        }
+        protocols
+    }
+
+    /// The protocol of the name service that issued `token`.
+    fn namenode_protocol_for_token(&self, token: &Token) -> Result<&Arc<NamenodeProtocol>> {
+        self.namenode_protocols()
+            .into_iter()
+            .find(|protocol| protocol.token_service() == token.service())
+            .ok_or_else(|| {
+                HdfsError::InvalidArgument(format!(
+                    "Token for service {} was not issued by a NameNode this client uses",
+                    token.service()
+                ))
+            })
+    }
+
+    /// Get a delegation token from each name service this client uses that `renewer` may renew,
+    /// like Hadoop's `FileSystem.addDelegationTokens`. A client for an `hdfs://` URL gets one
+    /// token; a viewfs client gets one per name service in its mount table.
+    ///
+    /// NameNodes only issue delegation tokens to clients that authenticated with Kerberos.
+    /// Each token's service is set so that clients find it in a token file named by
+    /// `HADOOP_TOKEN_FILE_LOCATION`: `ha-hdfs:<nameservice>` for a name service, or the
+    /// NameNode's `host:port`.
+    pub async fn get_delegation_tokens(&self, renewer: &str) -> Result<Vec<Token>> {
+        let mut tokens = Vec::new();
+        for protocol in self.namenode_protocols() {
+            let token = protocol
+                .get_delegation_token(renewer)
+                .await?
+                .token
+                .ok_or_else(|| {
+                    HdfsError::OperationFailed(format!(
+                        "NameNode for {} returned no delegation token; delegation tokens require \
+                         Kerberos authentication",
+                        protocol.token_service()
+                    ))
+                })?;
+            let mut token = Token::from(token);
+            token.set_service(protocol.token_service());
+            tokens.push(token);
+        }
+        Ok(tokens)
+    }
+
+    /// Extend the lifetime of a delegation token issued by one of this client's name services,
+    /// returning its new expiry time in milliseconds since the epoch. Only the token's renewer
+    /// may renew it, and never beyond its maximum lifetime.
+    pub async fn renew_delegation_token(&self, token: &Token) -> Result<u64> {
+        let response = self
+            .namenode_protocol_for_token(token)?
+            .renew_delegation_token(token.to_proto())
+            .await?;
+        Ok(response.new_expiry_time)
+    }
+
+    /// Cancel a delegation token issued by one of this client's name services, so it can no
+    /// longer be used.
+    pub async fn cancel_delegation_token(&self, token: &Token) -> Result<()> {
+        self.namenode_protocol_for_token(token)?
+            .cancel_delegation_token(token.to_proto())
+            .await?;
         Ok(())
     }
 
