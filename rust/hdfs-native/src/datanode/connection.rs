@@ -1,9 +1,9 @@
 use std::collections::{HashMap, VecDeque};
 use std::default::Default;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use chrono::{TimeDelta, prelude::*};
 use crc::{CRC_32_ISO_HDLC, Crc, Table};
 use once_cell::sync::Lazy;
 use prost::Message;
@@ -23,7 +23,7 @@ use crate::{HdfsError, Result};
 
 const DATA_TRANSFER_VERSION: u16 = 28;
 const MAX_PACKET_HEADER_SIZE: usize = 33;
-const DATANODE_CACHE_EXPIRY: TimeDelta = TimeDelta::seconds(3);
+const DATANODE_CACHE_EXPIRY: Duration = Duration::from_secs(3);
 
 const CRC32: Crc<u32, Table<16>> = Crc::<u32, Table<16>>::new(&CRC_32_ISO_HDLC);
 
@@ -468,7 +468,7 @@ impl DatanodeWriter {
     }
 }
 
-type DatanodeConnectionCacheEntry = VecDeque<(DateTime<Utc>, DatanodeConnection)>;
+type DatanodeConnectionCacheEntry = VecDeque<(Instant, DatanodeConnection)>;
 
 pub(crate) struct DatanodeConnectionCache {
     cache: Mutex<HashMap<String, DatanodeConnectionCacheEntry>>,
@@ -502,7 +502,7 @@ impl DatanodeConnectionCache {
     }
 
     pub(crate) fn release(&self, conn: DatanodeConnection) {
-        let expire_at = Utc::now() + DATANODE_CACHE_EXPIRY;
+        let expire_at = Instant::now() + DATANODE_CACHE_EXPIRY;
         let mut cache = self.cache.lock().unwrap();
         cache
             .entry(conn.url.clone())
@@ -512,7 +512,7 @@ impl DatanodeConnectionCache {
 
     fn remove_expired(&self) {
         let mut cache = self.cache.lock().unwrap();
-        let now = Utc::now();
+        let now = Instant::now();
         for values in cache.values_mut() {
             values.retain(|(expire_at, _)| expire_at > &now)
         }

@@ -1,8 +1,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use chrono::Utc;
 use log::{debug, warn};
 use prost::Message;
 use tokio::runtime::Handle;
@@ -146,10 +145,14 @@ impl NamenodeProtocol {
         let server_defaults = self.get_cached_server_defaults().await?;
         if server_defaults.encrypt_data_transfer() {
             let mut encryption_key = self.encryption_key.lock().await;
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_millis() as i64);
+
             // Check if we have an encryption key and that it's not expired (with a 10 second buffer)
             if encryption_key
                 .as_ref()
-                .is_some_and(|key| (key.expiry_date as i64) > Utc::now().timestamp_millis() + 10000)
+                .is_some_and(|key| (key.expiry_date as i64) > now_ms + 10000)
             {
                 Ok(encryption_key.clone())
             } else {

@@ -1,13 +1,12 @@
 package main;
 
-import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.InputStreamReader;
 import java.net.URL;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.crypto.key.KeyProvider;
@@ -235,28 +234,48 @@ public class Main {
 
         hdfsConf.writeXml(new FileOutputStream("target/test/core-site.xml"));
 
+        final MiniDFSCluster shutdownDfs = dfs;
+        final StateStoreDFSCluster shutdownRouterDfs = routerDfs;
+        final MiniKMS shutdownKms = kms;
+        final MiniKdc shutdownKdc = kdc;
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (shutdownDfs != null) {
+                try {
+                    shutdownDfs.close();
+                } catch (Exception e) {
+                    e.printStackTrace(System.err);
+                }
+            }
+            if (shutdownRouterDfs != null) {
+                try {
+                    shutdownRouterDfs.shutdown();
+                } catch (Exception e) {
+                    e.printStackTrace(System.err);
+                }
+            }
+            if (shutdownKms != null) {
+                try {
+                    shutdownKms.stop();
+                } catch (Exception e) {
+                    e.printStackTrace(System.err);
+                }
+            }
+            if (shutdownKdc != null) {
+                try {
+                    shutdownKdc.stop();
+                } catch (Exception e) {
+                    e.printStackTrace(System.err);
+                }
+            }
+        }, "minidfs-shutdown"));
+
         System.out.println("Ready!");
         if (flags.contains("security")) {
             System.out.println(kdc.getKrb5conf().toPath().toString());
         }
 
-        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-        reader.readLine();
-
-        if (dfs != null) {
-            dfs.close();
-        }
-        if (routerDfs != null) {
-            routerDfs.shutdown();
-        }
-
-        if (kms != null) {
-            kms.stop();
-        }
-
-        if (flags.contains("security")) {
-            kdc.stop();
-        }
+        // SIGTERM triggers the JVM shutdown hook above, which closes the cluster.
+        new CountDownLatch(1).await();
     }
 
     /**
